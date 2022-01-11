@@ -23,16 +23,16 @@ import Network.HTTP.Types
 import qualified Database.Bloodhound
 
 
-type DefinitionName = Text
 type Token = ByteString
 type Host = ByteString
 data Session = Session { tlsmanager :: Manager
                        , serverhost :: Host
                        , cobtoken   :: Cookie }
 
+type DefinitionName = Text
+newtype Definition a = Definition DefinitionName
 
 class ToJSON a => Record a where
-    definitionName :: a -> DefinitionName
 
 
 makeSession :: Host -> Token -> IO Session
@@ -62,12 +62,12 @@ cobDefaultRequest session =
                        , host      = serverhost session
                        , cookieJar = Just $ createCookieJar [cobtoken session] }
 
-integrationPOST :: Record a => Session -> a -> IO ()
-integrationPOST session record = do
+integrationPOST :: Record a => Definition a -> Session -> a -> IO ()
+integrationPOST (Definition definitionName) session record = do
     let request = setRequestBodyJSON
 
                   (object
-                      [ "type"   .= definitionName record
+                      [ "type"   .= definitionName
                       , "values" .= record ])
 
                   (cobDefaultRequest session)
@@ -77,6 +77,11 @@ integrationPOST session record = do
     response <- httpJSON request
     print $ "The status code was: " <> show (getResponseStatusCode response)
     print $ toJSON (getResponseBody response :: Value)
+
+
+
+
+
 
 
 -- TODO: How to name this, see bloodhound aggregations
