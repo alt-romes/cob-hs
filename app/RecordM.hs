@@ -3,8 +3,12 @@ module RecordM where
 
 import GHC.Generics
 import Control.Lens hiding ((.=))
+import qualified Data.Vector as V
+import Data.Bifunctor
 import Data.Functor
 import Control.Monad
+import Control.Monad.Trans.Class
+import Data.Maybe
 
 import Data.Aeson
 import Data.Aeson.Types
@@ -14,26 +18,30 @@ import Data.Time.Clock
 import Data.Time.Calendar
 import Data.Text as T (Text)
 import Data.Text.Encoding
-import Data.ByteString as BS
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 
 import Network.HTTP.Conduit as Net
 import Network.HTTP.Simple
 import Network.HTTP.Types
 
-import qualified Database.Bloodhound
+-- import qualified Database.Bloodhound
 
 
+type DefinitionName = ByteString
+newtype Definition a = Definition DefinitionName
+
+class (ToJSON a, FromJSON a) => Record a where
+
+
+
+--- Sessions
 type Token = ByteString
 type Host = ByteString
 data Session = Session { tlsmanager :: Manager
                        , serverhost :: Host
                        , cobtoken   :: Cookie }
-
-type DefinitionName = Text
-newtype Definition a = Definition DefinitionName
-
-class ToJSON a => Record a where
-
 
 makeSession :: Host -> Token -> IO Session
 makeSession host tok = do
@@ -62,12 +70,50 @@ cobDefaultRequest session =
                        , host      = serverhost session
                        , cookieJar = Just $ createCookieJar [cobtoken session] }
 
-integrationPOST :: Record a => Definition a -> Session -> a -> IO ()
-integrationPOST (Definition definitionName) session record = do
+
+
+--- Definition Search
+data RecordMQuery = RecordMQuery { rmQ         :: ByteString
+                                 , rmFrom      :: Int
+                                 , rmSize      :: Int
+                                 , rmSort      :: Maybe ByteString
+                                 , rmAscending :: Maybe Bool }
+
+defaultRMQuery :: RecordMQuery
+defaultRMQuery = RecordMQuery { rmQ         = "*"
+                              , rmFrom      = 0
+                              , rmSize      = 5
+                              , rmSort      = Nothing
+                              , rmAscending = Nothing }
+
+
+rmDefinitionSearch :: Record a => Session -> Definition a -> RecordMQuery -> IO (Maybe [a])
+rmDefinitionSearch session (Definition defName) rmQuery = do
+    let request = (cobDefaultRequest session)
+                      { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
+                      , queryString = renderRMQuery rmQuery}
+    response <- httpJSON request :: IO (Response Value)
+    let hits = parseMaybe parseJSON =<< (getResponseBody response ^? key "hits" . key "hits") :: Maybe [Value]
+    let hitsSources = mapMaybe (^? key "_source") <$> hits -- Sources are then parsed into records
+    return $ parseMaybe parseJSON . Array . V.fromList =<< hitsSources
+
+    where
+    renderRMQuery :: RecordMQuery -> ByteString
+    renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
+        [ Just ("q", rmQ q)
+        , Just ("from", BSC.pack $ show $ rmFrom q)
+        , Just ("size", BSC.pack $ show $ rmSize q)
+        , (,) "sort" <$> rmSort q
+        , (,) "ascending" . BSC.pack . show <$> rmAscending q ]
+
+            
+--- Integration
+integrationPOST :: Record a => Session -> Definition a -> a -> IO ()
+integrationPOST session (Definition defName) record = do
     let request = setRequestBodyJSON
 
                   (object
-                      [ "type"   .= definitionName
+                      [ "type"   .= decodeUtf8 defName
                       , "values" .= record ])
 
                   (cobDefaultRequest session)
@@ -79,16 +125,6 @@ integrationPOST (Definition definitionName) session record = do
     print $ toJSON (getResponseBody response :: Value)
 
 
-
-
-
-
-
--- TODO: How to name this, see bloodhound aggregations
-
--- definitionSearch :: Session -> DefinitionName -> IO Int
--- definitionSearch session defname = do
---     print $ toJSON $ mkAggregateSearch Nothing $ mkAggregations "users" $ TermsAgg $ mkTermsAggregation "user"
 
 newtype Val = Val {
     value :: Int
@@ -107,9 +143,15 @@ definitionSearch session defname query = do
     print response
     let x = getResponseBody response ^? key "aggregations" . key "sum#soma"
     print x
-    return $ value <$> (result2Maybe =<< (fromJSON <$> x :: Maybe (Result Val)))
+    return $ value <$> (parseMaybe parseJSON =<< x )
 
-    where
-    result2Maybe :: Result a -> Maybe a
-    result2Maybe (Error _) = Nothing
-    result2Maybe (Success x) = Just x
+
+
+
+
+-- TODO: How to name this, see bloodhound aggregations
+
+-- definitionSearch :: Session -> DefinitionName -> IO Int
+-- definitionSearch session defname = do
+--     print $ toJSON $ mkAggregateSearch Nothing $ mkAggregations "users" $ TermsAgg $ mkTermsAggregation "user"
+
