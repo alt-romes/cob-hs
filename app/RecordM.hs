@@ -29,10 +29,20 @@ import Network.HTTP.Types
 -- import qualified Database.Bloodhound
 
 
+
+(//) :: Monad m => m (Maybe a) -> a -> m a
+ma // d = fromMaybe d <$> ma
+
+--- Definitions and Records
 type DefinitionName = ByteString
 newtype Definition a = Definition DefinitionName
 
 class (ToJSON a, FromJSON a) => Record a where
+
+--- Record Reference (Id)
+newtype Ref a = Ref Int
+instance ToJSON (Ref a) where
+    toJSON (Ref i) = toJSON i
 
 
 
@@ -73,10 +83,10 @@ cobDefaultRequest session =
 
 
 --- Definition Search
-data RecordMQuery = RecordMQuery { rmQ         :: ByteString
+data RecordMQuery = RecordMQuery { rmQ         :: Text
                                  , rmFrom      :: Int
                                  , rmSize      :: Int
-                                 , rmSort      :: Maybe ByteString
+                                 , rmSort      :: Maybe Text
                                  , rmAscending :: Maybe Bool }
 
 defaultRMQuery :: RecordMQuery
@@ -87,6 +97,7 @@ defaultRMQuery = RecordMQuery { rmQ         = "*"
                               , rmAscending = Nothing }
 
 
+-- TODO: Handle errors for this and below better: Network errors, parsing errors, etc (Left Error)
 rmDefinitionSearch :: Record a => Session -> Definition a -> RecordMQuery -> IO (Maybe [a])
 rmDefinitionSearch session (Definition defName) rmQuery = do
     let request = (cobDefaultRequest session)
@@ -100,31 +111,27 @@ rmDefinitionSearch session (Definition defName) rmQuery = do
     where
     renderRMQuery :: RecordMQuery -> ByteString
     renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
-        [ Just ("q", rmQ q)
+        [ Just ("q", encodeUtf8 $ rmQ q)
         , Just ("from", BSC.pack $ show $ rmFrom q)
         , Just ("size", BSC.pack $ show $ rmSize q)
-        , (,) "sort" <$> rmSort q
+        , (,) "sort" . encodeUtf8 <$> rmSort q
         , (,) "ascending" . BSC.pack . show <$> rmAscending q ]
 
             
---- Integration
-integrationPOST :: Record a => Session -> Definition a -> a -> IO ()
-integrationPOST session (Definition defName) record = do
+--- Add instance
+rmAddInstance :: Record a => Session -> Definition a -> a -> IO (Maybe (Ref a))
+rmAddInstance session (Definition defName) record = do
     let request = setRequestBodyJSON
-
                   (object
                       [ "type"   .= decodeUtf8 defName
                       , "values" .= record ])
-
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
-
-    response <- httpJSON request
+    response <- httpJSON request :: IO (Response Value)
     print $ "The status code was: " <> show (getResponseStatusCode response)
-    print $ toJSON (getResponseBody response :: Value)
-
-
+    let id = parseMaybe parseJSON =<< (getResponseBody response ^? key "id") 
+    return (Ref <$> id)
 
 newtype Val = Val {
     value :: Int
