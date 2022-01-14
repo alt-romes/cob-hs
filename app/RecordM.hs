@@ -40,10 +40,13 @@ newtype Definition a = Definition DefinitionName
 class (ToJSON a, FromJSON a) => Record a where
 
 --- Record Reference (Id)
-newtype Ref a = Ref Int
+newtype Ref a = Ref Int deriving (Show)
 instance ToJSON (Ref a) where
     toJSON (Ref i) = toJSON i
-
+instance FromJSON (Ref a) where
+    parseJSON (Object v) = do
+        id <- v .: "id"
+        return (Ref id)
 
 
 --- Sessions
@@ -98,15 +101,21 @@ defaultRMQuery = RecordMQuery { rmQ         = "*"
 
 
 -- TODO: Handle errors for this and below better: Network errors, parsing errors, etc (Left Error)
-rmDefinitionSearch :: Record a => Session -> Definition a -> RecordMQuery -> IO (Maybe [a])
+rmDefinitionSearch :: (Show a, Record a) => Session -> Definition a -> RecordMQuery -> IO (Maybe [(Ref a, a)])
 rmDefinitionSearch session (Definition defName) rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
                       , queryString = renderRMQuery rmQuery}
     response <- httpJSON request :: IO (Response Value)
+    print response
     let hits = parseMaybe parseJSON =<< (getResponseBody response ^? key "hits" . key "hits") :: Maybe [Value]
     let hitsSources = mapMaybe (^? key "_source") <$> hits -- Sources are then parsed into records
-    return $ parseMaybe parseJSON . Array . V.fromList =<< hitsSources
+    let ids = mapMaybe (parseMaybe parseJSON) <$> hitsSources :: Maybe [Ref a]
+    print $ ids
+    let records = parseMaybe parseJSON . Array . V.fromList =<< hitsSources :: Record a => Maybe [a]
+    print $ records
+    print $ "The status code was: " <> show (getResponseStatusCode response)
+    return $ zip <$> ids <*> records
 
     where
     renderRMQuery :: RecordMQuery -> ByteString
@@ -129,9 +138,25 @@ rmAddInstance session (Definition defName) record = do
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
     response <- httpJSON request :: IO (Response Value)
-    print $ "The status code was: " <> show (getResponseStatusCode response)
     let id = parseMaybe parseJSON =<< (getResponseBody response ^? key "id") 
     return (Ref <$> id)
+
+-- TODO: Propagate errors
+
+--- Update instance (should individual instance update be done through integration?
+rmUpdateInstance :: Record a => Session -> Definition a -> Ref a -> a -> IO ()
+rmUpdateInstance session (Definition defName) (Ref id) record = do
+    let request = setRequestBodyJSON
+                  (object
+                      [ "type"      .= decodeUtf8 defName
+                      , "condition" .= ("id:" <> show id)
+                      , "values"    .= record ])
+                  (cobDefaultRequest session)
+                      { method = "PUT"
+                      , path   = "/recordm/recordm/instances/integration" }
+    response <- httpJSON request :: IO (Response Value)
+    return ()
+
 
 newtype Val = Val {
     value :: Int
