@@ -35,6 +35,9 @@ import Network.HTTP.Types
 (//) :: Monad m => m (Maybe a) -> a -> m a
 ma // d = fromMaybe d <$> ma
 
+(///) :: Monad m => Maybe a -> RMError -> ExceptT RMError m a
+mb /// err = maybe (throwE err) return mb
+
 --- Definitions and Records
 type DefinitionName = ByteString
 newtype Definition a = Definition DefinitionName
@@ -124,10 +127,9 @@ rmDefinitionSearch session (Definition defName) rmQuery = do
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                        -- Get id from each _source
     records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources -- Parse record from each _source
     return $ zip ids records                                                     -- Return list of (id, record)
-
             
 --- Add instance
-rmAddInstance :: Record a => Session -> Definition a -> a -> IO (Maybe (Ref a))
+rmAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> a -> ExceptT RMError m (Ref a)
 rmAddInstance session (Definition defName) record = do
     let request = setRequestBodyJSON
                   (object
@@ -136,9 +138,9 @@ rmAddInstance session (Definition defName) record = do
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
-    response <- httpJSON request :: IO (Response Value)
-    let id = parseMaybe parseJSON =<< (getResponseBody response ^? key "id") 
-    return (Ref <$> id)
+    response :: Response Value <- httpJSON request
+    let id = except . parseEither parseJSON =<< ((getResponseBody response ^? key "id") /// "Couldn't get created record id on add instance!")
+    Ref <$> id
 
 -- TODO: Propagate errors
 
@@ -188,10 +190,8 @@ getResponseHitsHits response = maybe
         (getResponseBody response ^? key "hits" . key "hits") -- Find hits.hits in response body
 
 validateStatusCode :: Monad m => Show a => Response a -> ExceptT RMError m ()
-validateStatusCode r = let s = getResponseStatus r in
-                           if statusIsSuccessful s
-                              then pure ()
-                              else throwE $ "Request failed with status: "
-                                          <> show (getResponseStatus r)
-                                          <> "\nResponse:\n" <> show r
+validateStatusCode r = unless (statusIsSuccessful (getResponseStatus r)) $
+                           throwE $ "Request failed with status: "
+                           <> show (getResponseStatus r)
+                           <> "\nResponse:\n" <> show r
 
