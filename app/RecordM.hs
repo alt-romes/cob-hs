@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables, DeriveGeneric, OverloadedStrings #-}
 module RecordM where
 
 import GHC.Generics
@@ -7,6 +7,8 @@ import qualified Data.Vector as V
 import Data.Bifunctor
 import Data.Functor
 import Control.Monad
+import Control.Monad.Trans
+import Control.Monad.Trans.Except
 import Control.Monad.Trans.Class
 import Data.Maybe
 
@@ -48,6 +50,7 @@ instance FromJSON (Ref a) where
         id <- v .: "id"
         return (Ref id)
 
+type RMError = String
 
 --- Sessions
 type Token = ByteString
@@ -99,32 +102,28 @@ defaultRMQuery = RecordMQuery { rmQ         = "*"
                               , rmSort      = Nothing
                               , rmAscending = Nothing }
 
+renderRMQuery :: RecordMQuery -> ByteString
+renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
+    [ Just ("q", encodeUtf8 $ rmQ q)
+    , Just ("from", BSC.pack $ show $ rmFrom q)
+    , Just ("size", BSC.pack $ show $ rmSize q)
+    , (,) "sort" . encodeUtf8 <$> rmSort q
+    , (,) "ascending" . BSC.pack . show <$> rmAscending q ]
+
 
 -- TODO: Handle errors for this and below better: Network errors, parsing errors, etc (Left Error)
-rmDefinitionSearch :: (Show a, Record a) => Session -> Definition a -> RecordMQuery -> IO (Maybe [(Ref a, a)])
+rmDefinitionSearch :: (Show a, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError IO [(Ref a, a)]
 rmDefinitionSearch session (Definition defName) rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
                       , queryString = renderRMQuery rmQuery}
-    response <- httpJSON request :: IO (Response Value)
-    print response
-    let hits = parseMaybe parseJSON =<< (getResponseBody response ^? key "hits" . key "hits") :: Maybe [Value]
-    let hitsSources = mapMaybe (^? key "_source") <$> hits -- Sources are then parsed into records
-    let ids = mapMaybe (parseMaybe parseJSON) <$> hitsSources :: Maybe [Ref a]
-    print $ ids
-    let records = parseMaybe parseJSON . Array . V.fromList =<< hitsSources :: Record a => Maybe [a]
-    print $ records
-    print $ "The status code was: " <> show (getResponseStatusCode response)
-    return $ zip <$> ids <*> records
-
-    where
-    renderRMQuery :: RecordMQuery -> ByteString
-    renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
-        [ Just ("q", encodeUtf8 $ rmQ q)
-        , Just ("from", BSC.pack $ show $ rmFrom q)
-        , Just ("size", BSC.pack $ show $ rmSize q)
-        , (,) "sort" . encodeUtf8 <$> rmSort q
-        , (,) "ascending" . BSC.pack . show <$> rmAscending q ]
+    response :: (Response Value) <- lift $ httpJSON request
+    validateStatusCode response                                                  -- Make sure status code is successful
+    hits <- getResponseHitsHits response                                         -- Get hits.hits from response body
+    let hitsSources = mapMaybe (^? key "_source") hits                           -- Get _source from each hit
+    let ids = mapMaybe (parseMaybe parseJSON) hitsSources                        -- Get id from each _source
+    records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources -- Parse record from each _source
+    return $ zip ids records                                                     -- Return list of (id, record)
 
             
 --- Add instance
@@ -179,11 +178,20 @@ definitionSearch session defname query = do
 
 
 
+--- Util
 
+-- Gets hits.hits from response body, parsed as an array of JSON values
+getResponseHitsHits :: (Monad m, AsValue a) => Response a -> ExceptT RMError m [Value]
+getResponseHitsHits response = maybe
+        (throwE "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
+        (except . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
+        (getResponseBody response ^? key "hits" . key "hits") -- Find hits.hits in response body
 
--- TODO: How to name this, see bloodhound aggregations
-
--- definitionSearch :: Session -> DefinitionName -> IO Int
--- definitionSearch session defname = do
---     print $ toJSON $ mkAggregateSearch Nothing $ mkAggregations "users" $ TermsAgg $ mkTermsAggregation "user"
+validateStatusCode :: Monad m => Show a => Response a -> ExceptT RMError m ()
+validateStatusCode r = let s = getResponseStatus r in
+                           if statusIsSuccessful s
+                              then pure ()
+                              else throwE $ "Request failed with status: "
+                                          <> show (getResponseStatus r)
+                                          <> "\nResponse:\n" <> show r
 
