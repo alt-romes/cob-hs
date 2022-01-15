@@ -112,12 +112,12 @@ renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
 
 
 -- TODO: Handle errors for this and below better: Network errors, parsing errors, etc (Left Error)
-rmDefinitionSearch :: (Show a, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError IO [(Ref a, a)]
+rmDefinitionSearch :: (MonadIO m, Show a, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError m [(Ref a, a)]
 rmDefinitionSearch session (Definition defName) rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
                       , queryString = renderRMQuery rmQuery}
-    response :: (Response Value) <- lift $ httpJSON request
+    response :: (Response Value) <- httpJSON request
     validateStatusCode response                                                  -- Make sure status code is successful
     hits <- getResponseHitsHits response                                         -- Get hits.hits from response body
     let hitsSources = mapMaybe (^? key "_source") hits                           -- Get _source from each hit
@@ -143,7 +143,7 @@ rmAddInstance session (Definition defName) record = do
 -- TODO: Propagate errors
 
 --- Update instance (should individual instance update be done through integration?
-rmUpdateInstance :: Record a => Session -> Definition a -> Ref a -> a -> IO ()
+rmUpdateInstance :: (MonadIO m, Record a) => Session -> Definition a -> Ref a -> a -> ExceptT RMError m ()
 rmUpdateInstance session (Definition defName) (Ref id) record = do
     let request = setRequestBodyJSON
                   (object
@@ -153,7 +153,7 @@ rmUpdateInstance session (Definition defName) (Ref id) record = do
                   (cobDefaultRequest session)
                       { method = "PUT"
                       , path   = "/recordm/recordm/instances/integration" }
-    response <- httpJSON request :: IO (Response Value)
+    response :: Response Value <- httpJSON request
     return ()
 
 
