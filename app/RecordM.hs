@@ -1,6 +1,7 @@
-{-# LANGUAGE ScopedTypeVariables, DeriveGeneric, OverloadedStrings #-}
+{-# LANGUAGE TupleSections, TemplateHaskell, ScopedTypeVariables, DeriveGeneric, OverloadedStrings #-}
 module RecordM where
 
+import Debug.Trace
 import GHC.Generics
 import Control.Lens hiding ((.=))
 import qualified Data.Vector as V
@@ -35,8 +36,8 @@ import Network.HTTP.Types
 (//) :: Monad m => m (Maybe a) -> a -> m a
 ma // d = fromMaybe d <$> ma
 
-(///) :: Monad m => Maybe a -> RMError -> ExceptT RMError m a
-mb /// err = maybe (throwE err) return mb
+(///) :: Monad m => Maybe a -> m a -> m a
+mb /// err = maybe err return mb
 
 --- Definitions and Records
 type DefinitionName = ByteString
@@ -49,7 +50,7 @@ newtype Ref a = Ref Int deriving (Show)
 instance ToJSON (Ref a) where
     toJSON (Ref i) = toJSON i
 instance FromJSON (Ref a) where
-    parseJSON (Object v) = do
+    parseJSON = withObject "record ref" $ \v -> do
         id <- v .: "id"
         return (Ref id)
 
@@ -92,31 +93,40 @@ cobDefaultRequest session =
 
 
 --- Definition Search
-data RecordMQuery = RecordMQuery { rmQ         :: Text
-                                 , rmFrom      :: Int
-                                 , rmSize      :: Int
-                                 , rmSort      :: Maybe Text
-                                 , rmAscending :: Maybe Bool }
+data RecordMQuery = RecordMQuery { _q         :: Text
+                                 , _from      :: Int
+                                 , _size      :: Int
+                                 , _sort      :: Maybe Text
+                                 , _ascending :: Maybe Bool }
+makeLenses ''RecordMQuery
 
 defaultRMQuery :: RecordMQuery
-defaultRMQuery = RecordMQuery { rmQ         = "*"
-                              , rmFrom      = 0
-                              , rmSize      = 5
-                              , rmSort      = Nothing
-                              , rmAscending = Nothing }
+defaultRMQuery = RecordMQuery { _q         = "*"
+                              , _from      = 0
+                              , _size      = 5
+                              , _sort      = Nothing
+                              , _ascending = Nothing }
 
 renderRMQuery :: RecordMQuery -> ByteString
 renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
-    [ Just ("q", encodeUtf8 $ rmQ q)
-    , Just ("from", BSC.pack $ show $ rmFrom q)
-    , Just ("size", BSC.pack $ show $ rmSize q)
-    , (,) "sort" . encodeUtf8 <$> rmSort q
-    , (,) "ascending" . BSC.pack . show <$> rmAscending q ]
+    [ Just ("q", encodeUtf8 $ _q q)
+    , Just ("from", BSC.pack $ show $ _from q)
+    , Just ("size", BSC.pack $ show $ _size q)
+    , (,) "sort" . encodeUtf8 <$> _sort q
+    , (,) "ascending" . BSC.pack . show <$> _ascending q ]
 
+
+rmGetOrAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> Text -> a -> ExceptT RMError m (Ref a, a)
+rmGetOrAddInstance session definition rmQuery newRecord = do
+    records <- rmDefinitionSearch session definition (defaultRMQuery & q .~ rmQuery)
+    case records of
+      [] -> (, newRecord) <$> rmAddInstance session definition newRecord
+      record:_ -> return record
+ 
 
 -- TODO: Handle errors for this and below better: Network errors, parsing errors, etc (Left Error)
-rmDefinitionSearch :: (MonadIO m, Show a, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError m [(Ref a, a)]
-rmDefinitionSearch session (Definition defName) rmQuery = do
+rmDefinitionSearch :: (MonadIO m, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError m [(Ref a, a)]
+rmDefinitionSearch session (Definition defName) rmQuery = trace ("search definition " <> BSC.unpack defName) $ do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
                       , queryString = renderRMQuery rmQuery}
@@ -126,11 +136,11 @@ rmDefinitionSearch session (Definition defName) rmQuery = do
     let hitsSources = mapMaybe (^? key "_source") hits                           -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                        -- Get id from each _source
     records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources -- Parse record from each _source
-    return $ zip ids records                                                     -- Return list of (id, record)
+    return (zip ids records)                                                     -- Return list of (id, record)
             
 --- Add instance
 rmAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> a -> ExceptT RMError m (Ref a)
-rmAddInstance session (Definition defName) record = do
+rmAddInstance session (Definition defName) record = trace ("add instance to definition " <> BSC.unpack defName) $ do
     let request = setRequestBodyJSON
                   (object
                       [ "type"   .= decodeUtf8 defName
@@ -138,11 +148,12 @@ rmAddInstance session (Definition defName) record = do
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
+    -- TODO: Move to httpJSONEither
+    -- response :: Response Value <- httpJSONEither request
     response :: Response Value <- httpJSON request
-    let id = except . parseEither parseJSON =<< ((getResponseBody response ^? key "id") /// "Couldn't get created record id on add instance!")
-    Ref <$> id
-
--- TODO: Propagate errors
+    validateStatusCode response
+    id <- except . parseEither parseJSON =<< ((getResponseBody response ^? key "id") /// throwE "Couldn't get created record id on add instance!")
+    return (Ref id)
 
 --- Update instance (should individual instance update be done through integration?
 rmUpdateInstance :: (MonadIO m, Record a) => Session -> Definition a -> Ref a -> a -> ExceptT RMError m ()
@@ -156,6 +167,7 @@ rmUpdateInstance session (Definition defName) (Ref id) record = do
                       { method = "PUT"
                       , path   = "/recordm/recordm/instances/integration" }
     response :: Response Value <- httpJSON request
+    validateStatusCode response
     return ()
 
 
