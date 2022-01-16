@@ -9,6 +9,7 @@ import Data.Bifunctor
 import Data.Functor
 import Control.Monad
 import Control.Monad.Trans
+import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.Class
 import Data.Maybe
@@ -112,23 +113,35 @@ renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
     , (,) "ascending" . BSC.pack . show <$> _ascending q ]
 
 
+--- Cob Monad Stack
+type CobT m a = ExceptT RMError (ReaderT Session m) a
+
+liftCob :: Monad m => m a -> CobT m a
+liftCob = lift . lift
+
+runCob :: Monad m => Session -> CobT m a -> m (Either RMError a)
+runCob session cob = runReaderT (runExceptT cob) session
+
+
 --- Get or add instance 
-rmGetOrAddInstanceM :: (MonadIO m, Record a) => Session -> Definition a -> Text -> ExceptT RMError m a -> ExceptT RMError m (Ref a, a)
-rmGetOrAddInstanceM session definition rmQuery newRecordMIO = do
-    records <- rmDefinitionSearch session definition (defaultRMQuery & q .~ rmQuery)
+rmGetOrAddInstanceM :: (MonadIO m, Record a) => Definition a -> Text -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceM definition rmQuery newRecordMIO = do
+    session <- lift ask
+    records <- rmDefinitionSearch definition (defaultRMQuery & q .~ rmQuery)
     case records of
       [] -> do
           newRecord <- newRecordMIO -- Execute IO actions to retrieve value
-          (, newRecord) <$> rmAddInstance session definition newRecord
+          (, newRecord) <$> rmAddInstance definition newRecord
       record:_ -> return record
 
-rmGetOrAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> Text -> a -> ExceptT RMError m (Ref a, a)
-rmGetOrAddInstance s d q newRecord = rmGetOrAddInstanceM s d q (return newRecord)
+rmGetOrAddInstance :: (MonadIO m, Record a) => Definition a -> Text -> a -> CobT m (Ref a, a)
+rmGetOrAddInstance d q newRecord = rmGetOrAddInstanceM d q (return newRecord)
 
 
 --- Search definition
-rmDefinitionSearch :: (MonadIO m, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError m [(Ref a, a)]
-rmDefinitionSearch session (Definition defName) rmQuery = trace ("search definition " <> BSC.unpack defName) $ do
+rmDefinitionSearch :: (MonadIO m, Record a) => Definition a -> RecordMQuery -> CobT m [(Ref a, a)]
+rmDefinitionSearch (Definition defName) rmQuery = trace ("search definition " <> BSC.unpack defName) $ do
+    session <- lift ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
                       , queryString = renderRMQuery rmQuery}
@@ -139,10 +152,12 @@ rmDefinitionSearch session (Definition defName) rmQuery = trace ("search definit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                        -- Get id from each _source
     records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources -- Parse record from each _source
     return (zip ids records)                                                     -- Return list of (id, record)
-            
+
+
 --- Add instance
-rmAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> a -> ExceptT RMError m (Ref a)
-rmAddInstance session (Definition defName) record = trace ("add instance to definition " <> BSC.unpack defName) $ do
+rmAddInstance :: (MonadIO m, Record a) => Definition a -> a -> CobT m (Ref a)
+rmAddInstance (Definition defName) record = trace ("add instance to definition " <> BSC.unpack defName) $ do
+    session <- lift ask
     let request = setRequestBodyJSON
                   (object
                       [ "type"   .= decodeUtf8 defName
@@ -158,8 +173,9 @@ rmAddInstance session (Definition defName) record = trace ("add instance to defi
     return (Ref id)
 
 --- Update instance (should individual instance update be done through integration?
-rmUpdateInstance :: (MonadIO m, Record a) => Session -> Definition a -> Ref a -> a -> ExceptT RMError m ()
-rmUpdateInstance session (Definition defName) (Ref id) record = do
+rmUpdateInstance :: (MonadIO m, Record a) => Definition a -> Ref a -> a -> CobT m ()
+rmUpdateInstance (Definition defName) (Ref id) record = do
+    session <- lift ask
     let request = setRequestBodyJSON
                   (object
                       [ "type"      .= decodeUtf8 defName
@@ -197,15 +213,15 @@ definitionSearch session defname query = do
 --- Util
 
 -- Gets hits.hits from response body, parsed as an array of JSON values
-getResponseHitsHits :: (Monad m, AsValue a) => Response a -> ExceptT RMError m [Value]
+getResponseHitsHits :: (Monad m, AsValue a) => Response a -> CobT m [Value]
 getResponseHitsHits response = maybe
         (throwE "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
         (except . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
         (getResponseBody response ^? key "hits" . key "hits") -- Find hits.hits in response body
 
-validateStatusCode :: Monad m => Show a => Response a -> ExceptT RMError m ()
+validateStatusCode :: Monad m => Show a => Response a -> CobT m ()
 validateStatusCode r = unless (statusIsSuccessful (getResponseStatus r)) $
-                           throwE $ "Request failed with status: "
-                           <> show (getResponseStatus r)
-                           <> "\nResponse:\n" <> show r
+                         throwE $ "Request failed with status: "
+                         <> show (getResponseStatus r)
+                         <> "\nResponse:\n" <> show r
 
