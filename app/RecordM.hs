@@ -1,28 +1,26 @@
-{-# LANGUAGE AllowAmbiguousTypes, TypeApplications, TupleSections, TemplateHaskell, ScopedTypeVariables, DeriveGeneric, OverloadedStrings #-}
+{-# LANGUAGE AllowAmbiguousTypes, TypeApplications, TupleSections, ScopedTypeVariables, OverloadedStrings #-}
 module RecordM where
 
-import Debug.Trace
-import GHC.Generics
-import Control.Lens hiding ((.=))
-import qualified Data.Vector as V
-import Data.Bifunctor
-import Data.Functor
-import Control.Monad
-import Control.Monad.Trans
-import Control.Monad.Trans.Reader
-import Control.Monad.Trans.Except
-import Control.Monad.Trans.Class
-import Data.Maybe
+import Debug.Trace (trace)
+import Control.Lens ((^?))
+import qualified Data.Vector as V (fromList)
 
-import Data.Aeson
+import Control.Monad (unless)
+import Control.Monad.Trans (MonadIO, lift)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
+import Control.Monad.Trans.Except (ExceptT, runExceptT, except, throwE)
+
+import Data.Maybe (catMaybes, mapMaybe)
+
 import Data.Aeson.Types
-import Data.Aeson.Lens
+import Data.Aeson.Lens (key)
+
+import Data.Text       (Text)
+import Data.ByteString (ByteString)
 
 import Data.Time.Clock
 import Data.Time.Calendar
-import Data.Text as T (Text)
 import Data.Text.Encoding
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 
@@ -30,18 +28,70 @@ import Network.HTTP.Conduit as Net
 import Network.HTTP.Simple
 import Network.HTTP.Types
 
--- import qualified Database.Bloodhound
-
-
-(///) :: Monad m => Maybe a -> m a -> m a
-mb /// err = maybe err return mb
 
 --- Definitions and Records
-type DefinitionName = ByteString
-class (ToJSON a, FromJSON a) => Record a where
-    definition :: DefinitionName
+-- | 'Definition' is a type synonym modelling a RecordM Definition
+type Definition = ByteString
 
---- Record Reference (Id)
+-- | A 'Record' is an instance belonging to a RecordM 'Definition'
+-- 
+-- The definition name used depends on the type of the 'Record',
+-- which will allow the compiler to automatically target the correct definition
+-- when generating code to interact with RecordM
+--
+-- In the future, record types for each definition could be generated automatically
+--
+-- ==== __Example__
+--
+-- Given a RecordM definition called /Dogs/ with mandatory fields /Name/, /Owner Name/ and /Age/,
+-- we could define the following type that instances Record:
+--
+-- @
+-- data DogsRecord = DogsRecord Text Text Int
+--
+-- instance ToJSON DogsRecord where
+--     toJSON (DogsRecord name ownerName age) = object
+--         [ \"Name\"       .= name
+--         , \"Owner name\" .= ownerName
+--         , \"Age\"        .= age ]
+-- instance FromJSON DogsRecord where
+--     parseJSON = withObject "user record" $ \v -> do
+--         [name] <- v .: "name"
+--         [ownerName] <- v .: "owner_name"
+--         [age] <- v .: "age"
+--         return (DogsRecord name ownerName (read age))
+--
+-- instance Record DogsRecord where
+--     definition = \"Dogs\"
+-- @
+class (ToJSON a, FromJSON a) => Record a where
+    -- | Get the RecordM 'Definition' that has this type of 'Record'
+    definition :: Definition
+
+-- | A 'Ref' of a 'Record' holds the RecordM /id/ of another record
+-- 
+-- ==== __Example__
+--
+-- Taking the above /Dogs/ definition,
+-- and modifying the /Owner Name/ field to a reference to a different table called /Owners/,
+-- the @DogsRecord@ must be modified with `Ref` to reflect this.
+--
+-- @
+-- data OwnersRecord ...
+-- data DogsRecord = DogsRecord Text (Ref OwnersRecord) Int
+--
+-- instance ToJSON DogsRecord where
+--     toJSON (DogsRecord name (Ref ownerId) age) = object
+--         [ \"Name\" .= name
+--         , \"Owner name\" .= show ownerId
+--         , \"Age\" .= age ]
+-- instance FromJSON DogsRecord where
+--     parseJSON = withObject "user record" $ \v -> do
+--         [name] <- v .: "name"
+--         [ownerId] <- v .: "owner_name"
+--         [age] <- v .: "age"
+--         return (DogsRecord name (Ref (read ownerId)) (read age))
+-- @
 newtype Ref a = Ref Int deriving (Show)
 instance ToJSON (Ref a) where
     toJSON (Ref i) = toJSON i
@@ -50,35 +100,38 @@ instance FromJSON (Ref a) where
         id <- v .: "id"
         return (Ref id)
 
-type RMError = String
-
 --- Sessions
-type Token   = ByteString
-type Host    = ByteString
-data Session = Session { tlsmanager :: Manager
-                       , serverhost :: Host
-                       , cobtoken   :: Cookie }
+type CobToken  = ByteString
+type Host      = ByteString
+-- | A RecordM session, required to use the API as an argument to 'runCob'.
+-- It should be created using 'makeSession' unless finer control over the TLS session manager or cobtoken cookie is needed
+data RMSession = RMSession { tlsmanager :: Manager
+                           , serverhost :: Host
+                           , cobtoken   :: Cookie }
 
-makeSession :: Host -> Token -> IO Session
+-- | Make a `RMSession` with the default @TLS Manager@ given the `Host` and `CobToken`
+makeSession :: Host -> CobToken -> IO RMSession
 makeSession host tok = do
     manager <- newManager tlsManagerSettings
-    return $ Session manager host $ Cookie { cookie_name             = "cobtoken"
-                                           , cookie_value            = tok
-                                           , cookie_secure_only      = True
-                                           , cookie_path             = "/"
-                                           , cookie_domain           = host
-                                           , cookie_expiry_time      = future
-                                           , cookie_creation_time    = past
-                                           , cookie_last_access_time = past
-                                           , cookie_persistent       = True
-                                           , cookie_host_only        = False
-                                           , cookie_http_only        = False }
+    return $ RMSession manager host $ Cookie { cookie_name             = "cobtoken"
+                                             , cookie_value            = tok
+                                             , cookie_secure_only      = True
+                                             , cookie_path             = "/"
+                                             , cookie_domain           = host
+                                             , cookie_expiry_time      = future
+                                             , cookie_creation_time    = past
+                                             , cookie_last_access_time = past
+                                             , cookie_persistent       = True
+                                             , cookie_host_only        = False
+                                             , cookie_http_only        = False }
     where
     past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
 
 
-cobDefaultRequest :: Session -> Request
+-- | The default http request used internally (targeting RecordM) in this module, given an RMSession.
+-- (Session managed TLS to session host:443 with session's cobtoken)
+cobDefaultRequest :: RMSession -> Request
 cobDefaultRequest session =
     setRequestManager (tlsmanager session) $
     Net.defaultRequest { secure    = True
@@ -88,14 +141,29 @@ cobDefaultRequest session =
 
 
 
---- Definition Search
+-- | A RecordM query
 data RecordMQuery = RecordMQuery { _q         :: Text
                                  , _from      :: Int
                                  , _size      :: Int
-                                 , _sort      :: Maybe Text
+                                 , _sort      :: Maybe ByteString
                                  , _ascending :: Maybe Bool }
-makeLenses ''RecordMQuery
 
+-- | The default RecordM query
+--      * q = "*"
+--      * from = 0
+--      * size = 5
+--      * sort = 'Nothing'
+--      * ascending = 'Nothing'
+--
+-- ==== __Example__
+--
+-- @
+-- rmDefinitionSearch (defaultRMQuery { _q = "id:123"
+--                                    , _from = 1
+--                                    , _size = 21
+--                                    , _sort = Just \"id\"
+--                                    , _ascending = Just True })
+-- @
 defaultRMQuery :: RecordMQuery
 defaultRMQuery = RecordMQuery { _q         = "*"
                               , _from      = 0
@@ -103,41 +171,29 @@ defaultRMQuery = RecordMQuery { _q         = "*"
                               , _sort      = Nothing
                               , _ascending = Nothing }
 
+-- | Render a 'RecordMQuery'
 renderRMQuery :: RecordMQuery -> ByteString
 renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
-    [ Just ("q", encodeUtf8 $ _q q)
+    [ Just ("q"   , encodeUtf8 (_q q))
     , Just ("from", BSC.pack $ show $ _from q)
     , Just ("size", BSC.pack $ show $ _size q)
-    , (,) "sort" . encodeUtf8 <$> _sort q
-    , (,) "ascending" . BSC.pack . show <$> _ascending q ]
+    ,   (,) "sort"  <$> _sort q
+    ,   (,) "ascending" . BSC.pack . show <$> _ascending q ]
 
 
 --- Cob Monad Stack (TODO: rename to RecordM?)
-type CobT m a = ExceptT RMError (ReaderT Session m) a
+type RMError = String
+type CobT m a = ExceptT RMError (ReaderT RMSession m) a
 
+-- | Lift a computation from the argument monad to constructed 'CobT' monad
 liftCob :: Monad m => m a -> CobT m a
 liftCob = lift . lift
 
-runCob :: Monad m => Session -> CobT m a -> m (Either RMError a)
+-- | The inverse of 'CobT'
+runCob :: Monad m => RMSession -> CobT m a -> m (Either RMError a)
 runCob session cob = runReaderT (runExceptT cob) session
 
-
---- Get or add instance 
-rmGetOrAddInstanceM :: (MonadIO m, Record a) => Text -> CobT m a -> CobT m (Ref a, a)
-rmGetOrAddInstanceM rmQuery newRecordMIO = do
-    session <- lift ask
-    records <- rmDefinitionSearch (defaultRMQuery & q .~ rmQuery)
-    case records of
-      [] -> do
-          newRecord <- newRecordMIO -- Execute IO actions to retrieve value
-          (, newRecord) <$> rmAddInstance newRecord
-      record:_ -> return record
-
-rmGetOrAddInstance :: (MonadIO m, Record a) => Text -> a -> CobT m (Ref a, a)
-rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
-
-
---- Search definition
+-- | Search a 'Definition' given a 'RecordMQuery'
 rmDefinitionSearch :: forall m a. (MonadIO m, Record a) => RecordMQuery -> CobT m [(Ref a, a)]
 rmDefinitionSearch rmQuery = trace ("search definition " <> BSC.unpack (definition @a)) $ do
     session <- lift ask
@@ -153,7 +209,7 @@ rmDefinitionSearch rmQuery = trace ("search definition " <> BSC.unpack (definiti
     return (zip ids records)                                                     -- Return list of (id, record)
 
 
---- Add instance
+-- | Add an instance given a new 'Record'
 rmAddInstance :: forall m a. (MonadIO m, Record a) => a -> CobT m (Ref a)
 rmAddInstance record = trace ("add instance to definition " <> BSC.unpack (definition @a)) $ do
     session <- lift ask
@@ -171,7 +227,7 @@ rmAddInstance record = trace ("add instance to definition " <> BSC.unpack (defin
     id <- except . parseEither parseJSON =<< ((getResponseBody response ^? key "id") /// throwE "Couldn't get created record id on add instance!")
     return (Ref id)
 
---- Update instance (should individual instance update be done through integration?
+-- | Update an instance given its 'Ref' and the updated 'Record'
 rmUpdateInstance :: forall m a. (MonadIO m, Record a) => Ref a -> a -> CobT m ()
 rmUpdateInstance (Ref id) record = do
     session <- lift ask
@@ -187,32 +243,47 @@ rmUpdateInstance (Ref id) record = do
     validateStatusCode response
     return ()
 
+-- | Get or add an instance given a query and a new 'Record'
+rmGetOrAddInstance :: (MonadIO m, Record a) => Text -> a -> CobT m (Ref a, a)
+rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 
-newtype Val = Val {
-    value :: Int
-} deriving (Generic)
-instance FromJSON Val
+-- | Get or add an instance given a query and a new 'Record' inside a 'CobT' monadic context
+rmGetOrAddInstanceM :: (MonadIO m, Record a) => Text -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceM rmQuery newRecordMIO = do
+    session <- lift ask
+    records <- rmDefinitionSearch (defaultRMQuery { _q = rmQuery })
+    case records of
+      [] -> do
+          newRecord <- newRecordMIO -- Execute IO computation to retrieve value
+          (, newRecord) <$> rmAddInstance newRecord
+      record:_ -> return record
 
-definitionSearch :: Session -> DefinitionName -> Value -> IO (Maybe Int)
-definitionSearch session defname query = do
-    print query
-    let request = setRequestBodyJSON query
-                  (cobDefaultRequest session)
-                      { method = "POST"
-                      , path   = "/recordm/recordm/definitions/search/advanced/11?size=0" }
 
-    response <- httpJSON request :: IO (Response Value)
-    print response
-    let x = getResponseBody response ^? key "aggregations" . key "sum#soma"
-    print x
-    return $ value <$> (parseMaybe parseJSON =<< x )
+-- newtype Val = Val {
+--     value :: Int
+-- } deriving (Generic)
+-- instance FromJSON Val
+
+-- definitionSearch :: Session -> DefinitionName -> Value -> IO (Maybe Int)
+-- definitionSearch session defname query = do
+--     print query
+--     let request = setRequestBodyJSON query
+--                   (cobDefaultRequest session)
+--                       { method = "POST"
+--                       , path   = "/recordm/recordm/definitions/search/advanced/11?size=0" }
+
+--     response <- httpJSON request :: IO (Response Value)
+--     print response
+--     let x = getResponseBody response ^? key "aggregations" . key "sum#soma"
+--     print x
+--     return $ value <$> (parseMaybe parseJSON =<< x )
 
 
 
 --- Util
 
 -- Gets hits.hits from response body, parsed as an array of JSON values
-getResponseHitsHits :: (Monad m, AsValue a) => Response a -> CobT m [Value]
+getResponseHitsHits :: Monad m => Response Value -> CobT m [Value]
 getResponseHitsHits response = maybe
         (throwE "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
         (except . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
@@ -224,3 +295,5 @@ validateStatusCode r = unless (statusIsSuccessful (getResponseStatus r)) $
                          <> show (getResponseStatus r)
                          <> "\nResponse:\n" <> show r
 
+(///) :: Monad m => Maybe a -> m a -> m a
+mb /// err = maybe err return mb
