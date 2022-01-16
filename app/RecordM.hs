@@ -32,10 +32,6 @@ import Network.HTTP.Types
 -- import qualified Database.Bloodhound
 
 
-
-(//) :: Monad m => m (Maybe a) -> a -> m a
-ma // d = fromMaybe d <$> ma
-
 (///) :: Monad m => Maybe a -> m a -> m a
 mb /// err = maybe err return mb
 
@@ -116,15 +112,21 @@ renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
     , (,) "ascending" . BSC.pack . show <$> _ascending q ]
 
 
-rmGetOrAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> Text -> a -> ExceptT RMError m (Ref a, a)
-rmGetOrAddInstance session definition rmQuery newRecord = do
+--- Get or add instance 
+rmGetOrAddInstanceM :: (MonadIO m, Record a) => Session -> Definition a -> Text -> ExceptT RMError m a -> ExceptT RMError m (Ref a, a)
+rmGetOrAddInstanceM session definition rmQuery newRecordMIO = do
     records <- rmDefinitionSearch session definition (defaultRMQuery & q .~ rmQuery)
     case records of
-      [] -> (, newRecord) <$> rmAddInstance session definition newRecord
+      [] -> do
+          newRecord <- newRecordMIO -- Execute IO actions to retrieve value
+          (, newRecord) <$> rmAddInstance session definition newRecord
       record:_ -> return record
- 
 
--- TODO: Handle errors for this and below better: Network errors, parsing errors, etc (Left Error)
+rmGetOrAddInstance :: (MonadIO m, Record a) => Session -> Definition a -> Text -> a -> ExceptT RMError m (Ref a, a)
+rmGetOrAddInstance s d q newRecord = rmGetOrAddInstanceM s d q (return newRecord)
+
+
+--- Search definition
 rmDefinitionSearch :: (MonadIO m, Record a) => Session -> Definition a -> RecordMQuery -> ExceptT RMError m [(Ref a, a)]
 rmDefinitionSearch session (Definition defName) rmQuery = trace ("search definition " <> BSC.unpack defName) $ do
     let request = (cobDefaultRequest session)
