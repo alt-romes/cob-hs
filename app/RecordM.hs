@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections, TemplateHaskell, ScopedTypeVariables, DeriveGeneric, OverloadedStrings #-}
+{-# LANGUAGE AllowAmbiguousTypes, TypeApplications, TupleSections, TemplateHaskell, ScopedTypeVariables, DeriveGeneric, OverloadedStrings #-}
 module RecordM where
 
 import Debug.Trace
@@ -38,9 +38,8 @@ mb /// err = maybe err return mb
 
 --- Definitions and Records
 type DefinitionName = ByteString
-newtype Definition a = Definition DefinitionName
-
 class (ToJSON a, FromJSON a) => Record a where
+    definition :: DefinitionName
 
 --- Record Reference (Id)
 newtype Ref a = Ref Int deriving (Show)
@@ -54,8 +53,8 @@ instance FromJSON (Ref a) where
 type RMError = String
 
 --- Sessions
-type Token = ByteString
-type Host = ByteString
+type Token   = ByteString
+type Host    = ByteString
 data Session = Session { tlsmanager :: Manager
                        , serverhost :: Host
                        , cobtoken   :: Cookie }
@@ -75,7 +74,7 @@ makeSession host tok = do
                                            , cookie_host_only        = False
                                            , cookie_http_only        = False }
     where
-    past = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
+    past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
 
 
@@ -113,7 +112,7 @@ renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
     , (,) "ascending" . BSC.pack . show <$> _ascending q ]
 
 
---- Cob Monad Stack
+--- Cob Monad Stack (TODO: rename to RecordM?)
 type CobT m a = ExceptT RMError (ReaderT Session m) a
 
 liftCob :: Monad m => m a -> CobT m a
@@ -124,26 +123,26 @@ runCob session cob = runReaderT (runExceptT cob) session
 
 
 --- Get or add instance 
-rmGetOrAddInstanceM :: (MonadIO m, Record a) => Definition a -> Text -> CobT m a -> CobT m (Ref a, a)
-rmGetOrAddInstanceM definition rmQuery newRecordMIO = do
+rmGetOrAddInstanceM :: (MonadIO m, Record a) => Text -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceM rmQuery newRecordMIO = do
     session <- lift ask
-    records <- rmDefinitionSearch definition (defaultRMQuery & q .~ rmQuery)
+    records <- rmDefinitionSearch (defaultRMQuery & q .~ rmQuery)
     case records of
       [] -> do
           newRecord <- newRecordMIO -- Execute IO actions to retrieve value
-          (, newRecord) <$> rmAddInstance definition newRecord
+          (, newRecord) <$> rmAddInstance newRecord
       record:_ -> return record
 
-rmGetOrAddInstance :: (MonadIO m, Record a) => Definition a -> Text -> a -> CobT m (Ref a, a)
-rmGetOrAddInstance d q newRecord = rmGetOrAddInstanceM d q (return newRecord)
+rmGetOrAddInstance :: (MonadIO m, Record a) => Text -> a -> CobT m (Ref a, a)
+rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 
 
 --- Search definition
-rmDefinitionSearch :: (MonadIO m, Record a) => Definition a -> RecordMQuery -> CobT m [(Ref a, a)]
-rmDefinitionSearch (Definition defName) rmQuery = trace ("search definition " <> BSC.unpack defName) $ do
+rmDefinitionSearch :: forall m a. (MonadIO m, Record a) => RecordMQuery -> CobT m [(Ref a, a)]
+rmDefinitionSearch rmQuery = trace ("search definition " <> BSC.unpack (definition @a)) $ do
     session <- lift ask
     let request = (cobDefaultRequest session)
-                      { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False defName
+                      { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False (definition @a)
                       , queryString = renderRMQuery rmQuery}
     response :: (Response Value) <- httpJSON request
     validateStatusCode response                                                  -- Make sure status code is successful
@@ -155,12 +154,12 @@ rmDefinitionSearch (Definition defName) rmQuery = trace ("search definition " <>
 
 
 --- Add instance
-rmAddInstance :: (MonadIO m, Record a) => Definition a -> a -> CobT m (Ref a)
-rmAddInstance (Definition defName) record = trace ("add instance to definition " <> BSC.unpack defName) $ do
+rmAddInstance :: forall m a. (MonadIO m, Record a) => a -> CobT m (Ref a)
+rmAddInstance record = trace ("add instance to definition " <> BSC.unpack (definition @a)) $ do
     session <- lift ask
     let request = setRequestBodyJSON
                   (object
-                      [ "type"   .= decodeUtf8 defName
+                      [ "type"   .= decodeUtf8 (definition @a)
                       , "values" .= record ])
                   (cobDefaultRequest session)
                       { method = "POST"
@@ -173,12 +172,12 @@ rmAddInstance (Definition defName) record = trace ("add instance to definition "
     return (Ref id)
 
 --- Update instance (should individual instance update be done through integration?
-rmUpdateInstance :: (MonadIO m, Record a) => Definition a -> Ref a -> a -> CobT m ()
-rmUpdateInstance (Definition defName) (Ref id) record = do
+rmUpdateInstance :: forall m a. (MonadIO m, Record a) => Ref a -> a -> CobT m ()
+rmUpdateInstance (Ref id) record = do
     session <- lift ask
     let request = setRequestBodyJSON
                   (object
-                      [ "type"      .= decodeUtf8 defName
+                      [ "type"      .= decodeUtf8 (definition @a)
                       , "condition" .= ("id:" <> show id)
                       , "values"    .= record ])
                   (cobDefaultRequest session)
