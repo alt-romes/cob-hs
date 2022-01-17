@@ -184,14 +184,15 @@ renderRMQuery q = renderQuery True $ simpleQueryToQuery $ catMaybes
 --- Cob Monad Stack (TODO: rename to RecordM?)
 type RMError = String
 type CobT m a = ExceptT RMError (ReaderT RMSession m) a
+type Cob a = CobT IO a
 
 -- | Lift a computation from the argument monad to constructed 'CobT' monad
-liftCob :: Monad m => m a -> CobT m a
-liftCob = lift . lift
+liftCobT :: Monad m => m a -> CobT m a
+liftCobT = lift . lift
 
 -- | The inverse of 'CobT'
-runCob :: Monad m => RMSession -> CobT m a -> m (Either RMError a)
-runCob session cob = runReaderT (runExceptT cob) session
+runCobT :: Monad m => RMSession -> CobT m a -> m (Either RMError a)
+runCobT session cob = runReaderT (runExceptT cob) session
 
 -- | Search a 'Definition' given a 'RecordMQuery'
 rmDefinitionSearch :: forall m a. (MonadIO m, Record a) => RecordMQuery -> CobT m [(Ref a, a)]
