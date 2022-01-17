@@ -18,15 +18,14 @@ import Data.Aeson.Lens (key)
 import Data.Text       (Text)
 import Data.ByteString (ByteString)
 
-import Data.Time.Clock
-import Data.Time.Calendar
-import Data.Text.Encoding
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BSC
+import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
+import Data.Time.Calendar (Day(..))
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import qualified Data.ByteString.Char8 as BSC (pack, unpack)
 
 import Network.HTTP.Conduit as Net
-import Network.HTTP.Simple
-import Network.HTTP.Types
+import Network.HTTP.Simple (httpJSON, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody)
+import Network.HTTP.Types (urlEncode, renderQuery, simpleQueryToQuery, statusIsSuccessful)
 
 
 --- Definitions and Records
