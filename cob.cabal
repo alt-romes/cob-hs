@@ -21,16 +21,15 @@ maintainer:         rodrigo.m.mesquita@gmail.com
 -- category:
 extra-source-files: CHANGELOG.md
 
-executable cob
-    main-is:          Main.hs
-    other-modules:    RecordM
+library
+    exposed-modules:  RecordM
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
 
     build-depends:    base ^>=4.15.0.0,
 
-                      text ^>=2.0,
+                      text ^>=1.2.5.0,
                       bytestring ^>=0.11.2.0,
 
                       mtl ^>=2.2.2,
