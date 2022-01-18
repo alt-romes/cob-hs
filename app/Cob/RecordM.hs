@@ -128,11 +128,11 @@ instance RecordMQuery ((,) Text Int) where
                                       , _size = i }
 
 -- | The default 'RecordMQuery'
---      * q = "*"
---      * from = 0
---      * size = 5
---      * sort = 'Nothing'
---      * ascending = 'Nothing'
+--   (q = "*"
+--   , from = 0
+--   , size = 5
+--   , sort = 'Nothing'
+--   , ascending = 'Nothing')
 --
 -- It is best used with the record update syntax to construct the desired query.
 --
@@ -164,10 +164,8 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 -- ==== __Example__
 --
 -- @
--- -- Search with Text and explicitly type the value
 -- dogs :: [(Ref DogsRecord, Dogs)] <- rmDefinitionSearch "bobby"
 --
--- -- Search with StandardRecordMQuery
 -- rmDefinitionSearch (defaultRMQuery { _q = "id:123"
 --                                    , _from = 1
 --                                    , _size = 21
@@ -308,7 +306,7 @@ getResponseHitsHits response = maybe
         (getResponseBody response ^? key "hits" . key "hits") -- Find hits.hits in response body
 
 
--- | @Internal@ Validate the status of the response is successful, or throw an exception
+-- | @Internal@ Validate if the status of the response is successful, or throw an exception
 validateStatusCode :: Monad m => Show a => Response a -> CobT m ()
 validateStatusCode r = unless (statusIsSuccessful (getResponseStatus r)) $
                          throwE $ "Request failed with status: "
