@@ -10,6 +10,7 @@ import Control.Monad.Trans (MonadIO, lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, except, throwE)
 
+import Data.Either (either)
 import Data.Maybe (catMaybes, mapMaybe)
 
 import Data.Aeson.Types
@@ -22,7 +23,7 @@ import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.ByteString.Char8 as BSC (pack, unpack)
 
 import Network.HTTP.Conduit (Request(..), Response)
-import Network.HTTP.Simple (httpJSON, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody)
+import Network.HTTP.Simple (httpJSONEither, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody)
 import Network.HTTP.Types (urlEncode, renderQuery, simpleQueryToQuery, statusIsSuccessful)
 
 import Cob
@@ -185,13 +186,13 @@ rmDefinitionSearch rmQuery = trace ("search definition " <> BSC.unpack (definiti
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False (definition @a)
                       , queryString = renderRMQuery rmQuery}
-    response :: (Response Value) <- httpJSON request
-    validateStatusCode response                                                  -- Make sure status code is successful
-    hits <- getResponseHitsHits response                                         -- Get hits.hits from response body
-    let hitsSources = mapMaybe (^? key "_source") hits                           -- Get _source from each hit
-    let ids = mapMaybe (parseMaybe parseJSON) hitsSources                        -- Get id from each _source
-    records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources -- Parse record from each _source
-    return (zip ids records)                                                     -- Return list of (id, record)
+    response       <- httpJSONEither request
+    rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
+    hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
+    let hitsSources = mapMaybe (^? key "_source") hits                            -- Get _source from each hit
+    let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
+    records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    return (zip ids records)                                                      -- Return list of (id, record)
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
 -- 'rmDefinitionSearch', but ignore the records references ('Ref').
@@ -220,11 +221,9 @@ rmAddInstance record = trace ("add instance to definition " <> BSC.unpack (defin
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
-    -- TODO: Move to httpJSONEither
-    -- response :: Response Value <- httpJSONEither request
-    response :: Response Value <- httpJSON request
-    validateStatusCode response
-    id <- except . parseEither parseJSON =<< ((getResponseBody response ^? key "id") /// throwE "Couldn't get created record id on add instance!")
+    response       <- httpJSONEither request
+    rbody :: Value <- unwrapValid response
+    id             <- except . parseEither parseJSON =<< ((rbody ^? key "id") /// throwE "Couldn't get created record id on add instance!")
     return (Ref id)
 
 -- | Update in @RecordM@ an instance given its 'Ref' and the updated 'Record'
@@ -239,8 +238,8 @@ rmUpdateInstance (Ref id) record = do
                   (cobDefaultRequest session)
                       { method = "PUT"
                       , path   = "/recordm/recordm/instances/integration" }
-    response :: Response Value <- httpJSON request
-    validateStatusCode response
+    response <- httpJSONEither request
+    unwrapValid response :: CobT m Value
     return ()
 
 -- | Get or add an instance given a query and a new 'Record'
@@ -304,16 +303,18 @@ renderRMQuery q' =
 
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
-getResponseHitsHits :: Monad m => Response Value -> CobT m [Value]
-getResponseHitsHits response = maybe
+getResponseHitsHits :: Monad m => Value -> CobT m [Value]
+getResponseHitsHits responseBody = maybe
         (throwE "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
         (except . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
-        (getResponseBody response ^? key "hits" . key "hits") -- Find hits.hits in response body
+        (responseBody ^? key "hits" . key "hits") -- Find hits.hits in response body
 
 
 -- | @Internal@ Validate if the status of the response is successful, or throw an exception
-validateStatusCode :: Monad m => Show a => Response a -> CobT m ()
-validateStatusCode r = unless (statusIsSuccessful (getResponseStatus r)) $
-                         throwE $ "Request failed with status: "
-                                <> show (getResponseStatus r)
-                                <> "\nResponse:\n" <> show r
+unwrapValid :: Monad m => Show a => Response (Either JSONException a) -> CobT m a
+unwrapValid r = do
+    unless (statusIsSuccessful (getResponseStatus r)) $
+        throwE $ "Request failed with status: "
+            <> show (getResponseStatus r)
+            <> "\nResponse:\n" <> show r
+    either (throwE . show) return (getResponseBody r)
