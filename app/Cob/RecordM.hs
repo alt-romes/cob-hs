@@ -15,7 +15,7 @@ import Data.Maybe (catMaybes, mapMaybe)
 import Data.Aeson.Types
 import Data.Aeson.Lens (key)
 
-import Data.Text       (Text)
+import Data.Text as T  (Text, pack)
 import Data.ByteString (ByteString)
 
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
@@ -108,8 +108,6 @@ data StandardRecordMQuery = StandardRecordMQuery { _q         :: Text
                                                  , _ascending :: Maybe Bool }
 
 -- | Any datatype implementing this typeclass can be used to search @RecordM@.
---
--- By default, 'StandardRecordMQuery' and 'Text' instance 'RecordMQuery'
 class RecordMQuery a where
     -- | Convert the implementing type to a 'StandardRecordMQuery'
     toRMQuery :: a -> StandardRecordMQuery
@@ -122,24 +120,30 @@ instance RecordMQuery StandardRecordMQuery where
 instance RecordMQuery Text where
     toRMQuery t = defaultRMQuery { _q = t }
 
--- | Use the default query with argument 'Text' as the query text and argument 'Int' as the maximum number of elements to retrieve
-instance RecordMQuery ((,) Text Int) where
-    toRMQuery (t, i) = defaultRMQuery { _q = t
-                                      , _size = i }
+-- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Int' value to set the size
+instance RecordMQuery a => RecordMQuery ((,) a Int) where
+    toRMQuery (t, i) = (toRMQuery t) { _size = i }
+
+-- | Query for the exact 'Record' using a 'Ref'
+instance RecordMQuery (Ref a) where
+    toRMQuery (Ref x) = defaultRMQuery { _q = "id:" <> T.pack (show x) }
+
 
 -- | The default 'RecordMQuery'
---   (q = "*"
---   , from = 0
---   , size = 5
---   , sort = 'Nothing'
---   , ascending = 'Nothing')
+-- @
+-- defaultRMQuery = StandardRecordMQuery { _q         = "*"
+--                                       , _from      = 0
+--                                       , _size      = 5
+--                                       , _sort      = Nothing
+--                                       , _ascending = Nothing }
+-- @
 --
 -- It is best used with the record update syntax to construct the desired query.
 --
 -- ==== __Example__
 --
 -- @
--- rmDefinitionSearch_ (defaultRMQuery { _q = "id:123"
+-- rmDefinitionSearch_ (defaultRMQuery { _q = "id:123*"
 --                                     , _from = 1
 --                                     , _size = 21
 --                                     , _sort = Just \"id\"
@@ -156,8 +160,6 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', and return a list of references ('Ref') of a record and the corresponding records ('Record').
 --
--- The types that implement 'RecordMQuery' by default are 'Text', @('Text', 'Int')@ and 'StandardRecordMQuery'
---
 -- The 'Record' type to search for is inferred from the usage of the return element.
 -- When the information available isn't enough to correctly infer the search 'Record' type, an explicit type can be used to help the compiler.
 --
@@ -171,6 +173,9 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 --                                    , _size = 21
 --                                    , _sort = Just \"id\"
 --                                    , _ascending = Just True })
+--
+-- rmDefinitionSearch (Ref 11223)
+--
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above

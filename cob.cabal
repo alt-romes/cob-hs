@@ -40,6 +40,8 @@ library
 
                       lens ^>=5.1,
 
+                      template-haskell ^>=2.17.0.0,
+
                       -- Network
                       http-conduit ^>=2.3.8,
                       http-types ^>=0.12.3,
