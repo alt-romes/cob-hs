@@ -31,7 +31,7 @@ import Cob
 
 --- Definitions and Records
 -- | 'Definition' is a type synonym modelling a RecordM Definition
-type Definition = ByteString
+type Definition = String
 
 -- | A 'Record' is an instance belonging to a RecordM 'Definition'
 -- 
@@ -181,10 +181,10 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
 rmDefinitionSearch :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m [(Ref a, a)]
-rmDefinitionSearch rmQuery = trace ("search definition " <> BSC.unpack (definition @a)) $ do
+rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
     session <- lift ask
     let request = (cobDefaultRequest session)
-                      { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False (definition @a)
+                      { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False (BSC.pack $ definition @a)
                       , queryString = renderRMQuery rmQuery}
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
@@ -212,11 +212,11 @@ rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
 --      rmAddInstance (DogsRecord name ownerName 0)
 -- @
 rmAddInstance :: forall m a. (MonadIO m, Record a) => a -> CobT m (Ref a)
-rmAddInstance record = trace ("add instance to definition " <> BSC.unpack (definition @a)) $ do
+rmAddInstance record = trace ("add instance to definition " <> definition @a) $ do
     session <- lift ask
     let request = setRequestBodyJSON
                   (object
-                      [ "type"   .= decodeUtf8 (definition @a)
+                      [ "type"   .= pack (definition @a)
                       , "values" .= record ])
                   (cobDefaultRequest session)
                       { method = "POST"
@@ -232,7 +232,7 @@ rmUpdateInstance (Ref id) record = do
     session <- lift ask
     let request = setRequestBodyJSON
                   (object
-                      [ "type"      .= decodeUtf8 (definition @a)
+                      [ "type"      .= pack (definition @a)
                       , "condition" .= ("id:" <> show id)
                       , "values"    .= record ])
                   (cobDefaultRequest session)
