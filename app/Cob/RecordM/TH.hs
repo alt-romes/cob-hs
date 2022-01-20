@@ -55,8 +55,7 @@ mkToJSON tys fields = [e| object $(ListE <$> zipWithM mkToJSONItem tys fields) |
         mkToJSONItem ty field = [e| $(mkString $ unpack field) .= $(varName ty) |]
             where
                 varName RefT       = [e| show $(mkVarE $ fieldNormalizeRef field) |]
-                varName IntT = [e| show $(mkVarE $ fieldNormalize field) |]
-                varName (OtherT _) = [e| show $(mkVarE $ fieldNormalize field) |]
+                varName IntT       = [e| show $(mkVarE $ fieldNormalize field) |]
                 varName _          = mkVarE $ fieldNormalize field
 
 mkParseJSON :: Name -> [SupportedRecordType] -> [Text] -> Q Exp
@@ -71,7 +70,7 @@ mkParseJSON tyConName tys fields = do
         exp `foldConArgs` (ty, field) = AppE exp <$>
             case ty of
               RefT -> [e| Ref (read $(mkVarE $ fieldNormalize field)) |]
-              IntT -> [e| (read $ $(mkVarE $ fieldNormalize field)) |]
+              IntT -> [e| (read $(mkVarE $ fieldNormalize field)) |]
               _    -> [e| $(mkVarE $ fieldNormalize field) |]
               
 mkRecordPat :: Name -> [SupportedRecordType] -> [Text] -> Q Pat
@@ -84,7 +83,7 @@ mkRecordPat tyConName tyConArgList fields = do
             StringT     -> defaultRet
             TextT       -> defaultRet
             ByteStringT -> defaultRet
-            RefT        -> ConP ''Ref . (:[]) <$> mkVarP (fieldNormalizeRef field)
+            RefT        -> ConP 'Ref . (:[]) <$> mkVarP (fieldNormalizeRef field)
             IntT        -> defaultRet
             OtherT _    -> defaultRet
             where
@@ -114,8 +113,10 @@ recordTypeInfo ty = do
     case tyInfo of
       TyConI tyConDecl ->
           case tyConDecl of
-            DataD _ tyName [] _ [NormalC tyConName tyConArgList] _ -> return (tyName, tyConName, map snd tyConArgList)
+            DataD    _ tyName [] _ [NormalC tyConName tyConArgList] _ -> return (tyName, tyConName, map snd tyConArgList)
             NewtypeD _ tyName [] _ (NormalC tyConName tyConArgList) _ -> return (tyName, tyConName, map snd tyConArgList)
+            DataD    _ tyName [] _ [RecC tyConName tyConArgList]    _ -> return (tyName, tyConName, map (\(_,_,t) -> t) tyConArgList)
+            NewtypeD _ tyName [] _ (RecC tyConName tyConArgList)    _ -> return (tyName, tyConName, map (\(_,_,t) -> t) tyConArgList)
             _ -> fail "makeRecord should be called on a datatype or newtype declaration with only one normal constructor and no type variables"
       _ -> fail "makeRecord should be called on a datatype or newtype"
 
