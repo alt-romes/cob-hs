@@ -100,7 +100,11 @@ parseTyConArgList = mapM parseTyConArg
               | conTy == ''Text       -> return TextT
               | conTy == ''ByteString -> return ByteStringT
               | conTy == ''Int        -> return IntT
-              | otherwise             -> return (OtherT conTy)
+              | otherwise             -> do
+                  tyInfo <- reify conTy
+                  case tyInfo of
+                    TyConI (TySynD _ _ synTy) -> parseTyConArg synTy -- If type is a type synonym, parse synonym type instead
+                    _ -> return (OtherT conTy)                       -- Type isn't a type synonym, so it's just something else
               -- fail $ "Records with constructed types other than 'Int', 'String', 'Text' or 'ByteString' are not supported. Attempted: " <> show t
             t@(AppT (ConT conTy) _)
                 | conTy == ''Ref -> return RefT
