@@ -124,6 +124,17 @@ recordTypeInfo ty = do
             _ -> fail "makeRecord should be called on a datatype or newtype declaration with only one normal constructor and no type variables"
       _ -> fail "makeRecord should be called on a datatype or newtype"
 
+-- | mkRecord is able to fully generate instances from ToJSON, FromJSON and Record for a data type in accordance with @RecordM@
+--
+-- It receives the Type, the name of the table, and a list of ordered fields (matching the type constructor arguments)
+--
+-- @
+-- data Owner = Owner Text
+-- data Dog = Dog (Ref Owner) Text Int
+--
+-- mkRecord ''Owner "Owners" ["Owner Name"]
+-- mkRecord ''Dog "Dogs" ["Owner", "Dog Name", "Dog Age"]
+-- @
 mkRecord :: Name -> String -> [Text] -> Q [Dec]
 mkRecord ty definitionName fields = do
     (tyName, tyConName, tyConArgList') <- recordTypeInfo ty
@@ -158,3 +169,4 @@ mkVarE = return . VarE . mkName
 
 mkVarP :: String -> Q Pat
 mkVarP = return . VarP . mkName
+
