@@ -48,37 +48,37 @@ data SupportedRecordType = StringT
                          | IntT
                          | OtherT Name
 
-mkToJSON :: [SupportedRecordType] -> [Text] -> Q Exp
+mkToJSON :: [SupportedRecordType] -> [Field] -> Q Exp
 mkToJSON tys fields = [e| object $(ListE <$> zipWithM mkToJSONItem tys fields) |]
     where
-        mkToJSONItem :: SupportedRecordType -> Text -> Q Exp
-        mkToJSONItem ty field = [e| $(mkString $ unpack field) .= $(varName ty) |]
+        mkToJSONItem :: SupportedRecordType -> Field -> Q Exp
+        mkToJSONItem ty field = [e| pack $(mkString field) .= $(varName ty) |]
             where
                 varName RefT       = [e| show $(mkVarE $ fieldNormalizeRef field) |]
                 varName IntT       = [e| show $(mkVarE $ fieldNormalize field) |]
                 varName _          = mkVarE $ fieldNormalize field
 
-mkParseJSON :: Name -> [SupportedRecordType] -> [Text] -> Q Exp
+mkParseJSON :: Name -> [SupportedRecordType] -> [Field] -> Q Exp
 mkParseJSON tyConName tys fields = do
         finalStmt <- NoBindS . AppE (VarE $ mkName "return") <$> foldM foldConArgs (ConE tyConName) (zip tys fields)
         LamE [VarP $ mkName "v"] . DoE Nothing . (++ [finalStmt]) <$> zipWithM mkParseJSONItem tys fields
     where
-        mkParseJSONItem :: SupportedRecordType -> Text -> Q Stmt
-        mkParseJSONItem ty field = BindS <$> [p| [$(mkVarP $ fieldNormalize field)] |] <*> [e| v .: $(mkString $ fieldNormalize field) |]
+        mkParseJSONItem :: SupportedRecordType -> Field -> Q Stmt
+        mkParseJSONItem ty field = BindS <$> [p| [$(mkVarP $ fieldNormalize field)] |] <*> [e| v .: pack $(mkString $ fieldNormalize field) |]
 
-        foldConArgs :: Exp -> (SupportedRecordType, Text) -> Q Exp
+        foldConArgs :: Exp -> (SupportedRecordType, Field) -> Q Exp
         exp `foldConArgs` (ty, field) = AppE exp <$>
             case ty of
               RefT -> [e| Ref (read $(mkVarE $ fieldNormalize field)) |]
               IntT -> [e| (read $(mkVarE $ fieldNormalize field)) |]
               _    -> [e| $(mkVarE $ fieldNormalize field) |]
               
-mkRecordPat :: Name -> [SupportedRecordType] -> [Text] -> Q Pat
+mkRecordPat :: Name -> [SupportedRecordType] -> [Field] -> Q Pat
 mkRecordPat tyConName tyConArgList fields = do
     pats <- zipWithM mkArgPat tyConArgList fields
     return $ ConP tyConName pats
     where
-        mkArgPat :: SupportedRecordType -> Text -> Q Pat
+        mkArgPat :: SupportedRecordType -> Field -> Q Pat
         mkArgPat ty field = case ty of
             StringT     -> defaultRet
             TextT       -> defaultRet
@@ -135,7 +135,8 @@ recordTypeInfo ty = do
 -- mkRecord ''Owner "Owners" ["Owner Name"]
 -- mkRecord ''Dog "Dogs" ["Owner", "Dog Name", "Dog Age"]
 -- @
-mkRecord :: Name -> String -> [Text] -> Q [Dec]
+type Field = String
+mkRecord :: Name -> String -> [Field] -> Q [Dec]
 mkRecord ty definitionName fields = do
     (tyName, tyConName, tyConArgList') <- recordTypeInfo ty
     tyConArgList <- parseTyConArgList tyConArgList'
@@ -152,10 +153,10 @@ mkRecord ty definitionName fields = do
       |]
 
 --- Util
-fieldNormalize :: Text -> String
-fieldNormalize = map (toLower . \c -> if c == ' ' then '_' else c) . unpack
+fieldNormalize :: Field -> String
+fieldNormalize = map (toLower . \c -> if c == ' ' then '_' else c)
 
-fieldNormalizeRef :: Text -> String
+fieldNormalizeRef :: Field -> String
 fieldNormalizeRef = (<> "_id") . fieldNormalize
 
 mkTy :: Name -> Q Type

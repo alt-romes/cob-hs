@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes, ScopedTypeVariables, OverloadedStrings #-}
 module Cob where
 
+import Data.String (fromString)
 import Data.ByteString (ByteString)
 
 import Control.Monad.Trans (lift)
@@ -68,9 +69,9 @@ liftCobT = lift . lift
 --- Sessions
 
 -- | A priviledge granting 'CobToken'
-type CobToken  = ByteString
+type CobToken  = String
 -- | A cob server host such as \"test.cultofbits.com\".
-type Host      = ByteString
+type Host      = String
 -- | A 'Cob' session, required an argument to run a 'Cob' computation with 'runCob'.
 -- It should be created using 'makeSession' unless finer control over the TLS
 -- session manager or the cobtoken cookie is needed.
@@ -83,10 +84,10 @@ makeSession :: Host -> CobToken -> IO CobSession
 makeSession host tok = do
     manager <- newManager tlsManagerSettings
     return $ CobSession manager host $ Cookie { cookie_name             = "cobtoken"
-                                              , cookie_value            = tok
+                                              , cookie_value            = fromString tok
                                               , cookie_secure_only      = True
                                               , cookie_path             = "/"
-                                              , cookie_domain           = host
+                                              , cookie_domain           = fromString host
                                               , cookie_expiry_time      = future
                                               , cookie_creation_time    = past
                                               , cookie_last_access_time = past
@@ -106,7 +107,7 @@ cobDefaultRequest session =
     setRequestManager (tlsmanager session) $
     Net.defaultRequest { secure    = True
                        , port      = 443
-                       , host      = serverhost session
+                       , host      = fromString $ serverhost session
                        , cookieJar = Just $ createCookieJar [cobtoken session] }
 
 

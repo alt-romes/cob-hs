@@ -23,10 +23,48 @@ extra-source-files: CHANGELOG.md
 
 library
     exposed-modules:  Cob,
-                      Cob.RecordM
+                      Cob.RecordM,
+                      Cob.RecordM.TH
 
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
+    ghc-options:      -fllvm
+    build-depends:    base ^>=4.15.0.0,
+
+                      -- text ^>=1.2.5.0,
+                      -- bytestring ^>=0.11.2.0,
+                      text,
+                      bytestring,
+
+                      mtl ^>=2.2.2,
+                      transformers ^>=0.5.6.2,
+
+                      lens ^>=5.1,
+
+                      template-haskell ^>=2.17.0.0,
+
+                      -- Network
+                      http-conduit ^>=2.3.8,
+                      http-types ^>=0.12.3,
+
+                      -- JSON
+                      -- aeson ^>=2.0.3.0,
+                      aeson ^>=1.5.6.0,
+                      lens-aeson ^>=1.1.3,
+
+                      -- Util
+                      vector ^>=0.12.3.1,
+                      time ^>=1.9.3
+
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
+executable main
+    main-is:          Main.hs
+    other-modules:    Cob,
+                      Cob.RecordM,
+                      Cob.RecordM.TH
+
+    ghc-options:      -threaded -fllvm -ddump-splices
 
     build-depends:    base ^>=4.15.0.0,
 

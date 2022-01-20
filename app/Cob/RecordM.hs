@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleInstances, AllowAmbiguousTypes, TypeApplications, TupleSections, ScopedTypeVariables, OverloadedStrings #-}
 module Cob.RecordM where
 
+import Data.String (fromString)
+
 import Debug.Trace (trace)
 import Control.Lens ((^?))
 import qualified Data.Vector as V (fromList)
@@ -116,6 +118,10 @@ class RecordMQuery a where
 -- | Identity
 instance RecordMQuery StandardRecordMQuery where
     toRMQuery = id
+
+-- | Use the default query with argument 'String as the query text
+instance RecordMQuery String where
+    toRMQuery t = defaultRMQuery { _q = fromString t }
 
 -- | Use the default query with argument 'Text' as the query text
 instance RecordMQuery Text where
