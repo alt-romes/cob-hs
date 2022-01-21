@@ -25,11 +25,13 @@
 -- @
 module Cob.RecordM.TH (mkRecord) where
 
+
 import Data.Char (toLower)
+import Data.Maybe (catMaybes, listToMaybe)
 
 import Control.Monad (zipWithM, foldM)
 
-import Data.Text (Text, unpack)
+import Data.Text (Text, unpack, pack)
 import Data.ByteString (ByteString)
 
 import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:))
@@ -46,17 +48,24 @@ data SupportedRecordType = StringT
                          | ByteStringT
                          | RefT
                          | IntT
+                         | DoubleT
+                         | MaybeT SupportedRecordType
                          | OtherT Name
 
 mkToJSON :: [SupportedRecordType] -> [Field] -> Q Exp
-mkToJSON tys fields = [e| object $(ListE <$> zipWithM mkToJSONItem tys fields) |]
+mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem tys fields)) |]
     where
         mkToJSONItem :: SupportedRecordType -> Field -> Q Exp
-        mkToJSONItem ty field = [e| pack $(mkString field) .= $(varName ty) |]
+        mkToJSONItem ty field = [e| (pack $(mkString field) .=) <$> $(mods ty) ($(toMaybe ty) $(mkVarE $ fieldNormalizeVar field)) |]
             where
-                varName RefT       = [e| show $(mkVarE $ fieldNormalizeRef field) |]
-                varName IntT       = [e| show $(mkVarE $ fieldNormalize field) |]
-                varName _          = mkVarE $ fieldNormalize field
+                mods RefT        = [e| ((show . ref_id) <$>) |]
+                mods IntT        = [e| (show <$>)            |]
+                mods DoubleT     = [e| (show <$>)            |]
+                mods (MaybeT mt) = [e| $(mods mt)            |]
+                mods _           = [e| id                    |]
+
+                toMaybe (MaybeT _ ) = [e| id   |]
+                toMaybe _           = [e| Just |]
 
 mkParseJSON :: Name -> [SupportedRecordType] -> [Field] -> Q Exp
 mkParseJSON tyConName tys fields = do
@@ -64,14 +73,21 @@ mkParseJSON tyConName tys fields = do
         LamE [VarP $ mkName "v"] . DoE Nothing . (++ [finalStmt]) <$> zipWithM mkParseJSONItem tys fields
     where
         mkParseJSONItem :: SupportedRecordType -> Field -> Q Stmt
-        mkParseJSONItem ty field = BindS <$> [p| [$(mkVarP $ fieldNormalize field)] |] <*> [e| v .: pack $(mkString $ fieldNormalize field) |]
+        mkParseJSONItem (MaybeT _) field =
+            BindS <$> [p|  $(mkVarP $ fieldNormalizeVar field)  |] <*> [e| v .:? pack $(mkString $ fieldNormalize field) |]
+        mkParseJSONItem _ field =
+            BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| v .: pack $(mkString $ fieldNormalize field) |]
 
         foldConArgs :: Exp -> (SupportedRecordType, Field) -> Q Exp
-        exp `foldConArgs` (ty, field) = AppE exp <$>
-            case ty of
-              RefT -> [e| Ref (read $(mkVarE $ fieldNormalize field)) |]
-              IntT -> [e| (read $(mkVarE $ fieldNormalize field)) |]
-              _    -> [e| $(mkVarE $ fieldNormalize field) |]
+        exp `foldConArgs` (ty, field) = AppE exp <$> [e| $(mods ty) $(mkVarE $ fieldNormalizeVar field) |]
+
+        mods :: SupportedRecordType -> Q Exp
+        mods ty = case ty of
+              RefT       -> [e| Ref . read                            |]
+              IntT       -> [e| read                                  |]
+              DoubleT    -> [e| read                                  |]
+              MaybeT ty2 -> [e| ($(mods ty2) <$>) . (listToMaybe =<<) |]
+              _          -> [e| id                                    |]
               
 mkRecordPat :: Name -> [SupportedRecordType] -> [Field] -> Q Pat
 mkRecordPat tyConName tyConArgList fields = do
@@ -83,12 +99,14 @@ mkRecordPat tyConName tyConArgList fields = do
             StringT     -> defaultRet
             TextT       -> defaultRet
             ByteStringT -> defaultRet
-            RefT        -> ConP 'Ref . (:[]) <$> mkVarP (fieldNormalizeRef field)
+            RefT        -> defaultRet -- ConP 'Ref . (:[]) <$> mkVarP (fieldNormalizeRef field)
             IntT        -> defaultRet
+            DoubleT     -> defaultRet
+            MaybeT _    -> defaultRet
             OtherT _    -> defaultRet
             where
                 defaultRet :: Q Pat
-                defaultRet = mkVarP $ fieldNormalize field
+                defaultRet = mkVarP $ fieldNormalizeVar field
 
 parseTyConArgList :: [Type] -> Q [SupportedRecordType]
 parseTyConArgList = mapM parseTyConArg
@@ -100,14 +118,15 @@ parseTyConArgList = mapM parseTyConArg
               | conTy == ''Text       -> return TextT
               | conTy == ''ByteString -> return ByteStringT
               | conTy == ''Int        -> return IntT
+              | conTy == ''Double     -> return DoubleT
               | otherwise             -> do
                   tyInfo <- reify conTy
                   case tyInfo of
                     TyConI (TySynD _ _ synTy) -> parseTyConArg synTy -- If type is a type synonym, parse synonym type instead
                     _ -> return (OtherT conTy)                       -- Type isn't a type synonym, so it's just something else
-              -- fail $ "Records with constructed types other than 'Int', 'String', 'Text' or 'ByteString' are not supported. Attempted: " <> show t
-            t@(AppT (ConT conTy) _)
+            t@(AppT (ConT conTy) t2)
                 | conTy == ''Ref -> return RefT
+                | conTy == ''Maybe -> MaybeT <$> parseTyConArg t2
                 | otherwise -> fail $ "Records with applied constructed types other than 'Ref' are not supported. Attempted: " <> show t
             t -> fail $ "Unknown unsupported: " <> show t
 
@@ -135,6 +154,18 @@ recordTypeInfo ty = do
 -- mkRecord ''Owner "Owners" ["Owner Name"]
 -- mkRecord ''Dog "Dogs" ["Owner", "Dog Name", "Dog Age"]
 -- @
+--
+-- The type can be constructed in a number of ways. Type synonyms are automatically followed
+-- By default:
+--
+-- 'Maybe' will represent an optional @RecordM@ field, that may or may not exist for a given record.
+--
+-- 'Ref' will automatically parse a reference to another table
+-- 
+-- 'Int' will automatically parse an Int
+-- 'Double' will automatically parse a Double
+--
+-- Note: If a double from @RecordM@ is incorrectly described as an int, a no parse error will be thrown
 type Field = String
 mkRecord :: Name -> String -> [Field] -> Q [Dec]
 mkRecord ty definitionName fields = do
@@ -156,8 +187,11 @@ mkRecord ty definitionName fields = do
 fieldNormalize :: Field -> String
 fieldNormalize = map (toLower . \c -> if c == ' ' then '_' else c)
 
+fieldNormalizeVar :: Field -> String
+fieldNormalizeVar = ("___" <>) . fieldNormalize
+
 fieldNormalizeRef :: Field -> String
-fieldNormalizeRef = (<> "_id") . fieldNormalize
+fieldNormalizeRef = (<> "_id") . fieldNormalizeVar
 
 mkTy :: Name -> Q Type
 mkTy = return . ConT 

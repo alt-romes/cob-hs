@@ -2,97 +2,70 @@
 module Main where
 
 import Data.Aeson
+import System.Environment
+
 import Control.Monad
-import Data.Text
+
 import Cob
 import Cob.RecordM
 import Cob.RecordM.TH
 
+import Data.Function
 
-type DogName = String
-type Name    = String
+data Classificação = Classificação
+type Observação = String
+type DataMov = String
+type Movimento = Double
+type Conta = String
+type Data = String
+type UltimoSaldo = String
 
-newtype Owner = Owner Name
-data    Dog   = Dog (Ref Owner) DogName deriving (Show)
+data MovimentoR = MovimentoR { rclass :: Maybe (Ref Classificação)
+                             , desc   :: Maybe Observação
+                             , datmv  :: DataMov
+                             , mov    :: Movimento
+                             , conta  :: Conta
+                             , dta    :: Data
+                             , ulsal  :: UltimoSaldo }
 
-mkRecord ''Owner "Owners" ["Owner"]
-mkRecord ''Dog   "Dogs"   ["Owner", "Dog"]
 
-logic :: Cob [(Ref Dog, Dog)]
+mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observação", "Data mov", "Movimento", "Conta", "Data", "Último Saldo"]
+
+
+parseArgs :: [String] -> [(Ref a, Double)]
+parseArgs = map (parseArg . break (== ':'))
+    where
+    parseArg (x, ':':y) = (Ref (read x), read y)
+
+
+
+logic :: Cob ()
 logic = do
-    dogs <- rmDefinitionSearch "bobby"
-    id <- rmAddInstance (Owner "David")
-    rmAddInstance (Dog id "deus")
-    return dogs
+    -- Get and parse cmd arguments
+    prim:args <- getArgs & liftCob
+    let [(movimentoId, total)] = parseArgs [prim]
+    let splits = parseArgs args
 
+    -- Total equals splits
+    guard (total == foldl (\x y -> x + snd y) 0 splits)
+
+    -- Get record and update primary movement
+    [movimento] <- rmDefinitionSearch_ movimentoId
+    rmUpdateInstance movimentoId movimento { rclass = Just (Ref 76564) }
+
+    -- Create instances
+    let commonMov = MovimentoR (Just (Ref 76564)) (Just ("Desdobramento automático: " <> show movimentoId)) (datmv movimento) 0 (conta movimento) (dta movimento) "Não"
+    forM_ splits $ \(refclass, amount) -> do
+        rmAddInstance commonMov { rclass = Just refclass, mov = amount }
+    
+    forM_ splits $ \(_, amount) -> do
+        rmAddInstance commonMov { mov = -amount }
 
 
 main :: IO ()
 main = do
-    session <- makeSession "mimes8.cultofbits.com" "0UAU9pEG7DASG3w41f8/6/Ez8oiG2GSIhBiHErhb5CGDBMuCf74uDnVZe/ACZyLL/eZKYIuK3x7FIbX6zlzXaNlD8kDkb4tkV6Ucf8mEZrpMGBmuz5whCobgr4rOwS+w/dOHqxe8AvObZMH2DvdUYA=="
-    dogs <- runCob session logic
-    print dogs
-    forM_ dogs print
+    session <- makeSession "mimes8.cultofbits.com" "Zwhwb71CwCGmRkvkzbjIW6YESN2gdIyXzdADZSgnKkliQmH6ECcXcxrjVaS5Urt8NfJnQlQgvsV85dpeGx4/EGFT/+OewkHrr2niAIxaWUN4xSXIbeq+n3Ft0TM5T9bF0WL4GCd2gH4UCRKWw5UISg=="
+    either <- runCob session logic
+    print either
+    return ()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
--- data Dog = Dog String String
-
--- $(mkRecord ''Dog "Dogs" ["Owner Name", "Dog Name"])
-
--- type Amount = Int
--- data Exercise = Pushups | Abs | Squats | Kilometers | Unknown Text deriving (Show)
--- type Owner = Text
--- type ActivationCode = Text
--- type MasterUsername = Text
--- type ServerIdentifier = Text
--- type ServerUsername = Text
-
--- newtype UsersRecord = UsersRecord { _masterUsername :: MasterUsername }
-
--- data ServersRecord = ServersRecord { _serverIdentifier :: ServerIdentifier
---                                    , _activationCode   :: ActivationCode
---                                    , _owner            :: Owner }
---                                    deriving (Show)
-
--- data ServerUsersRecord = ServerUsersRecord { _userId         :: Ref UsersRecord
---                                            , _serverId       :: Ref ServersRecord
---                                            , _serverUsername :: ServerUsername }
---                                            deriving (Show)
-
--- data ExercisesRecord = ExercisesRecord { _serverUserId :: Ref ServerUsersRecord
---                                        , _amount       :: Amount
---                                        , _exercise     :: Exercise }
-
-
--- main :: IO ()
--- main = putStrLn "Hi2"
-
--- instance ToJSON Exercise where
---     toJSON = toJSON . toLower . pack . show
--- instance FromJSON Exercise where
---     parseJSON = withText "Exercise" $ \case 
---           "pushups" -> return Pushups
---           "abs" -> return Abs
---           "squats" -> return Squats
---           "kilometers" -> return Kilometers
---           _ -> fail "Error parsing exercise from JSON"
-
-
--- mkRecord ''UsersRecord       "ROMES Pushups Users"        ["Master Username"]
--- mkRecord ''ServersRecord     "ROMES Pushups Servers"      ["Server"         ,  "Activation Code",  "Owner"]
--- mkRecord ''ServerUsersRecord "ROMES Pushups Server Users" ["Master Username",  "Server"         ,  "Server Username"]
--- mkRecord ''ExercisesRecord   "ROMES Pushups Exercises"    ["Master Username",  "Amount"         ,  "Exercise Type"]
---

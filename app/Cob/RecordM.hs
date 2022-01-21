@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances, AllowAmbiguousTypes, TypeApplications, TupleSections, ScopedTypeVariables, OverloadedStrings #-}
 module Cob.RecordM where
 
+import Network.URI.Encode (encode)
 import Data.String (fromString)
 
 import Debug.Trace (trace)
@@ -18,15 +19,14 @@ import Data.Maybe (catMaybes, mapMaybe)
 import Data.Aeson.Types
 import Data.Aeson.Lens (key)
 
-import Data.Text as T  (Text, pack)
+import Data.Text as T  (Text)
 import Data.ByteString (ByteString)
 
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import qualified Data.ByteString.Char8 as BSC (pack, unpack)
 
 import Network.HTTP.Conduit (Request(..), Response)
 import Network.HTTP.Simple (httpJSONEither, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody)
-import Network.HTTP.Types (urlEncode, renderQuery, simpleQueryToQuery, statusIsSuccessful)
+import Network.HTTP.Types (renderQuery, simpleQueryToQuery, statusIsSuccessful)
 
 import Cob
 
@@ -94,7 +94,9 @@ class (ToJSON a, FromJSON a) => Record a where
 --         [age] <- v .: "age"
 --         return (DogsRecord name (Ref (read ownerId)) (read age))
 -- @
-newtype Ref a = Ref Int deriving (Show)
+newtype Ref a = Ref { ref_id :: Int }
+instance Show (Ref a) where
+    show (Ref x) = show x
 instance ToJSON (Ref a) where
     toJSON (Ref i) = toJSON i
 instance FromJSON (Ref a) where
@@ -133,7 +135,7 @@ instance RecordMQuery a => RecordMQuery ((,) a Int) where
 
 -- | Query for the exact 'Record' using a 'Ref'
 instance RecordMQuery (Ref a) where
-    toRMQuery (Ref x) = defaultRMQuery { _q = "id:" <> T.pack (show x) }
+    toRMQuery (Ref x) = defaultRMQuery { _q = "id:" <> fromString (show x) }
 
 
 -- | The default 'RecordMQuery'
@@ -190,7 +192,7 @@ rmDefinitionSearch :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -
 rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
     session <- lift ask
     let request = (cobDefaultRequest session)
-                      { path = "/recordm/recordm/definitions/search/name/" <> urlEncode False (BSC.pack $ definition @a)
+                      { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery rmQuery}
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
@@ -222,7 +224,7 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
     session <- lift ask
     let request = setRequestBodyJSON
                   (object
-                      [ "type"   .= pack (definition @a)
+                      [ "type"   .= definition @a
                       , "values" .= record ])
                   (cobDefaultRequest session)
                       { method = "POST"
@@ -238,7 +240,7 @@ rmUpdateInstance (Ref id) record = do
     session <- lift ask
     let request = setRequestBodyJSON
                   (object
-                      [ "type"      .= pack (definition @a)
+                      [ "type"      .= definition @a
                       , "condition" .= ("id:" <> show id)
                       , "values"    .= record ])
                   (cobDefaultRequest session)
@@ -302,10 +304,10 @@ renderRMQuery q' =
     let q = toRMQuery q' in
         renderQuery True $ simpleQueryToQuery $ catMaybes
             [ Just ("q"   , encodeUtf8 (_q q))
-            , Just ("from", BSC.pack $ show $ _from q)
-            , Just ("size", BSC.pack $ show $ _size q)
+            , Just ("from", fromString $ show $ _from q)
+            , Just ("size", fromString $ show $ _size q)
             ,   (,) "sort"  <$> _sort q
-            ,   (,) "ascending" . BSC.pack . show <$> _ascending q ]
+            ,   (,) "ascending" . fromString . show <$> _ascending q ]
 
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
