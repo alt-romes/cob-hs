@@ -31,10 +31,11 @@ import Data.Maybe (catMaybes, listToMaybe)
 
 import Control.Monad (zipWithM, foldM)
 
-import Data.Text (Text, unpack, pack)
+import Data.Text (Text)
 import Data.ByteString (ByteString)
+import Data.String (fromString)
 
-import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:))
+import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:), (.:?))
 
 import Cob.RecordM (Record(..), Ref(..))
 
@@ -56,7 +57,7 @@ mkToJSON :: [SupportedRecordType] -> [Field] -> Q Exp
 mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem tys fields)) |]
     where
         mkToJSONItem :: SupportedRecordType -> Field -> Q Exp
-        mkToJSONItem ty field = [e| (pack $(mkString field) .=) <$> $(mods ty) ($(toMaybe ty) $(mkVarE $ fieldNormalizeVar field)) |]
+        mkToJSONItem ty field = [e| (fromString $(mkString field) .=) <$> $(mods ty) ($(toMaybe ty) $(mkVarE $ fieldNormalizeVar field)) |]
             where
                 mods RefT        = [e| ((show . ref_id) <$>) |]
                 mods IntT        = [e| (show <$>)            |]
@@ -74,9 +75,9 @@ mkParseJSON tyConName tys fields = do
     where
         mkParseJSONItem :: SupportedRecordType -> Field -> Q Stmt
         mkParseJSONItem (MaybeT _) field =
-            BindS <$> [p|  $(mkVarP $ fieldNormalizeVar field)  |] <*> [e| v .:? pack $(mkString $ fieldNormalize field) |]
+            BindS <$> [p|  $(mkVarP $ fieldNormalizeVar field)  |] <*> [e| v .:? fromString $(mkString $ fieldNormalize field) |]
         mkParseJSONItem _ field =
-            BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| v .: pack $(mkString $ fieldNormalize field) |]
+            BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| v .: fromString $(mkString $ fieldNormalize field) |]
 
         foldConArgs :: Exp -> (SupportedRecordType, Field) -> Q Exp
         exp `foldConArgs` (ty, field) = AppE exp <$> [e| $(mods ty) $(mkVarE $ fieldNormalizeVar field) |]

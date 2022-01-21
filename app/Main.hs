@@ -1,10 +1,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-import Data.Aeson
+-- import Data.Aeson
 import System.Environment
 
+import Data.Bifunctor
 import Control.Monad
+import Data.List
 
 import Cob
 import Cob.RecordM
@@ -31,30 +33,28 @@ data MovimentoR = MovimentoR { rclass :: Maybe (Ref Classificação)
 
 mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observação", "Data mov", "Movimento", "Conta", "Data", "Último Saldo"]
 
-
-parseArgs :: [String] -> [(Ref a, Double)]
-parseArgs = map (parseArg . break (== ':'))
-    where
-    parseArg (x, ':':y) = (Ref (read x), read y)
-
+desdobramento :: Ref Classificação
+desdobramento = Ref 76564
 
 
 logic :: Cob ()
 logic = do
     -- Get and parse cmd arguments
-    prim:args <- getArgs & liftCob
-    let [(movimentoId, total)] = parseArgs [prim]
-    let splits = parseArgs args
+    ([(movimentoId, total)], splits) <- bimap parseArgs parseArgs . splitAt 0 <$> getArgs & liftCob
 
     -- Total equals splits
     guard (total == foldl (\x y -> x + snd y) 0 splits)
 
     -- Get record and update primary movement
     [movimento] <- rmDefinitionSearch_ movimentoId
-    rmUpdateInstance movimentoId movimento { rclass = Just (Ref 76564) }
+    rmUpdateInstance movimentoId movimento { rclass = Just desdobramento }
 
     -- Create instances
-    let commonMov = MovimentoR (Just (Ref 76564)) (Just ("Desdobramento automático: " <> show movimentoId)) (datmv movimento) 0 (conta movimento) (dta movimento) "Não"
+    let commonMov = MovimentoR
+                        (Just desdobramento)
+                        (Just ("Desdobramento automático: " <> show movimentoId))
+                        (datmv movimento) 0 (conta movimento) (dta movimento) "Não"
+
     forM_ splits $ \(refclass, amount) -> do
         rmAddInstance commonMov { rclass = Just refclass, mov = amount }
     
@@ -69,3 +69,5 @@ main = do
     print either
     return ()
 
+parseArgs :: [String] -> [(Ref a, Double)]
+parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))

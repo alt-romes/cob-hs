@@ -1,32 +1,30 @@
 {-# LANGUAGE FlexibleInstances, AllowAmbiguousTypes, TypeApplications, TupleSections, ScopedTypeVariables, OverloadedStrings #-}
 module Cob.RecordM where
 
-import Network.URI.Encode (encode)
-import Data.String (fromString)
+import Debug.Trace                ( trace    )
+import Control.Lens               ( (^?)     )
+import qualified Data.Vector as V ( fromList )
 
-import Debug.Trace (trace)
-import Control.Lens ((^?))
-import qualified Data.Vector as V (fromList)
+import Control.Monad              ( unless                              )
+import Control.Monad.Trans        ( MonadIO, lift                       )
+import Control.Monad.Trans.Reader ( ReaderT, runReaderT, ask            )
+import Control.Monad.Trans.Except ( ExceptT, runExceptT, except, throwE )
 
-import Control.Monad (unless)
-import Control.Monad.Trans (MonadIO, lift)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
-import Control.Monad.Trans.Except (ExceptT, runExceptT, except, throwE)
-
-import Data.Either (either)
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Either        ( either              )
+import Data.Maybe         ( catMaybes, mapMaybe )
 
 import Data.Aeson.Types
-import Data.Aeson.Lens (key)
+import Data.Aeson.Lens    ( key )
 
-import Data.Text as T  (Text)
-import Data.ByteString (ByteString)
+import Data.Text          ( Text       )
+import Data.ByteString    ( ByteString )
+import Data.String        ( fromString )
+import Data.Text.Encoding ( encodeUtf8 )
+import Network.URI.Encode ( encode     )
 
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-
-import Network.HTTP.Conduit (Request(..), Response)
-import Network.HTTP.Simple (httpJSONEither, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody)
-import Network.HTTP.Types (renderQuery, simpleQueryToQuery, statusIsSuccessful)
+import Network.HTTP.Conduit ( Request(..), Response                                                                                    )
+import Network.HTTP.Simple  ( httpJSONEither, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody )
+import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful                                                      )
 
 import Cob
 
