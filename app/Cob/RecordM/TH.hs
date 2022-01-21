@@ -41,9 +41,6 @@ import Cob.RecordM (Record(..), Ref(..))
 
 import Language.Haskell.TH
 
--- noBang :: a -> (Bang, a)
--- noBang = (,) (Bang NoSourceUnpackedness NoSourceStrictness)
-
 data SupportedRecordType = StringT
                          | TextT
                          | ByteStringT
@@ -128,7 +125,7 @@ parseTyConArgList = mapM parseTyConArg
             t@(AppT (ConT conTy) t2)
                 | conTy == ''Ref -> return RefT
                 | conTy == ''Maybe -> MaybeT <$> parseTyConArg t2
-                | otherwise -> fail $ "Records with applied constructed types other than 'Ref' are not supported. Attempted: " <> show t
+                | otherwise -> fail $ "Records with applied constructed types other than 'Ref' and 'Maybe' are not supported. Attempted: " <> show t
             t -> fail $ "Unknown unsupported: " <> show t
 
 recordTypeInfo :: Name -> Q (Name, Name, [Type])
@@ -141,7 +138,7 @@ recordTypeInfo ty = do
             NewtypeD _ tyName [] _ (NormalC tyConName tyConArgList) _ -> return (tyName, tyConName, map snd tyConArgList)
             DataD    _ tyName [] _ [RecC tyConName tyConArgList]    _ -> return (tyName, tyConName, map (\(_,_,t) -> t) tyConArgList)
             NewtypeD _ tyName [] _ (RecC tyConName tyConArgList)    _ -> return (tyName, tyConName, map (\(_,_,t) -> t) tyConArgList)
-            _ -> fail "makeRecord should be called on a datatype or newtype declaration with only one normal constructor and no type variables"
+            _ -> fail "makeRecord should be called on a datatype or newtype declaration with only one normal or record constructor and no type variables"
       _ -> fail "makeRecord should be called on a datatype or newtype"
 
 -- | mkRecord is able to fully generate instances from ToJSON, FromJSON and Record for a data type in accordance with @RecordM@

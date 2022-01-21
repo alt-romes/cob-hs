@@ -1,7 +1,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
--- import Data.Aeson
+import Control.Lens
+import Control.Lens.TH
+
+import Data.Aeson
 import System.Environment
 
 import Data.Bifunctor
@@ -15,6 +18,7 @@ import Cob.RecordM.TH
 import Data.Function
 
 data Classificação = Classificação
+
 type Observação = String
 type DataMov = String
 type Movimento = Double
@@ -22,52 +26,61 @@ type Conta = String
 type Data = String
 type UltimoSaldo = String
 
-data MovimentoR = MovimentoR { rclass :: Maybe (Ref Classificação)
-                             , desc   :: Maybe Observação
-                             , datmv  :: DataMov
-                             , mov    :: Movimento
-                             , conta  :: Conta
-                             , dta    :: Data
-                             , ulsal  :: UltimoSaldo }
-
+data MovimentoR = MovimentoR { _classificação :: Maybe (Ref Classificação)
+                             , _descrição     :: Maybe Observação
+                             , _datmv         :: DataMov
+                             , _mov           :: Movimento
+                             , _conta         :: Conta
+                             , _dta           :: Data
+                             , _ultsaldo      :: UltimoSaldo }
 
 mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observação", "Data mov", "Movimento", "Conta", "Data", "Último Saldo"]
+makeLenses ''MovimentoR
 
-desdobramento :: Ref Classificação
-desdobramento = Ref 76564
+logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Cob ()
+logic (movimentoId, total) splits = do
 
+    guard (total == sum (map snd splits))
 
-logic :: Cob ()
-logic = do
-    -- Get and parse cmd arguments
-    ([(movimentoId, total)], splits) <- bimap parseArgs parseArgs . splitAt 0 <$> getArgs & liftCob
+    [movimento] <- movimentoId ^?^ 1
+    movimentoId ^=^ movimento
+                        & classificação ?~ Ref 76564
 
-    -- Total equals splits
-    guard (total == foldl (\x y -> x + snd y) 0 splits)
-
-    -- Get record and update primary movement
-    [movimento] <- rmDefinitionSearch_ movimentoId
-    rmUpdateInstance movimentoId movimento { rclass = Just desdobramento }
-
-    -- Create instances
-    let commonMov = MovimentoR
-                        (Just desdobramento)
-                        (Just ("Desdobramento automático: " <> show movimentoId))
-                        (datmv movimento) 0 (conta movimento) (dta movimento) "Não"
+    let commonMov = movimento
+                        & classificação ?~ Ref 76564
+                        & descrição ?~ "Desdobramento automático: " <> show movimentoId
+                        & ultsaldo .~ "Não"
 
     forM_ splits $ \(refclass, amount) -> do
-        rmAddInstance commonMov { rclass = Just refclass, mov = amount }
-    
+        (^+^) (commonMov & classificação ?~ refclass & mov .~ amount)
+
     forM_ splits $ \(_, amount) -> do
-        rmAddInstance commonMov { mov = -amount }
+        (^+^) (commonMov & mov .~ -amount)
+
 
 
 main :: IO ()
 main = do
     session <- makeSession "mimes8.cultofbits.com" "Zwhwb71CwCGmRkvkzbjIW6YESN2gdIyXzdADZSgnKkliQmH6ECcXcxrjVaS5Urt8NfJnQlQgvsV85dpeGx4/EGFT/+OewkHrr2niAIxaWUN4xSXIbeq+n3Ft0TM5T9bF0WL4GCd2gH4UCRKWw5UISg=="
-    either <- runCob session logic
+    ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 0 <$> getArgs
+    either <- runCob session (logic prim pargs)
     print either
     return ()
 
 parseArgs :: [String] -> [(Ref a, Double)]
 parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
+
+rmSearch = curry rmDefinitionSearch_
+
+(^?^) :: (Record b, RecordMQuery a) => a -> Int -> Cob [b]
+(^?^) q n = rmDefinitionSearch_ (q, n)
+
+(^=^) :: (Record a) => Ref a -> a -> Cob ()
+(^=^) = rmUpdateInstance
+
+(^+^) :: (Record a) => a -> Cob (Ref a)
+(^+^) = rmAddInstance
+
+infix 0 ^=^
+infix 0 ^+^
+infix 0 ^?^
