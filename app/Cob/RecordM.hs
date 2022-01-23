@@ -5,13 +5,14 @@ import Debug.Trace                ( trace    )
 import Control.Lens               ( (^?)     )
 import qualified Data.Vector as V ( fromList )
 
-import Control.Monad              ( unless                              )
+import Control.Monad              ( unless, forM_                       )
 import Control.Monad.Trans        ( MonadIO, lift                       )
 import Control.Monad.Trans.Reader ( ReaderT, runReaderT, ask            )
 import Control.Monad.Trans.Except ( ExceptT, runExceptT, except, throwE )
 
-import Data.Either        ( either              )
-import Data.Maybe         ( catMaybes, mapMaybe )
+import Data.Bifunctor     ( second                           )
+import Data.Either        ( either                           )
+import Data.Maybe         ( catMaybes, mapMaybe, listToMaybe )
 
 import Data.Aeson.Types
 import Data.Aeson.Lens    ( key )
@@ -232,21 +233,34 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
     id             <- except . parseEither parseJSON =<< ((rbody ^? key "id") /// throwE "Couldn't get created record id on add instance!")
     return (Ref id)
 
--- | Update in @RecordM@ an instance given its 'Ref' and the updated 'Record'
-rmUpdateInstance :: forall m a. (MonadIO m, Record a) => Ref a -> a -> CobT m ()
-rmUpdateInstance (Ref id) record = do
-    session <- lift ask
-    let request = setRequestBodyJSON
-                  (object
-                      [ "type"      .= definition @a
-                      , "condition" .= ("id:" <> show id)
-                      , "values"    .= record ])
-                  (cobDefaultRequest session)
-                      { method = "PUT"
-                      , path   = "/recordm/recordm/instances/integration" }
-    response <- httpJSONEither request
-    unwrapValid response :: CobT m Value
-    return ()
+-- TODO: Move update instance and update field to RecordMQuery instead of Ref?
+
+-- | Update in @RecordM@ all instances matching a query given a function that transforms records, and return the list of updated records
+-- Warning: This update is not atomic (yet? :TODO:). This means that in between
+-- applying the function to the value and sending the update, it might have been
+-- updated somewhere else, and this update will overwrite the record with the
+-- modified previous record. This also means that if more than one record
+-- matches the query, the list of records will NOT be updated in batch.
+rmUpdateInstance :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [(Ref a, a)]
+rmUpdateInstance rmQuery updateRecord = do
+    records <- rmDefinitionSearch rmQuery
+    let updatedRecords = map (second updateRecord) records
+    forM_ updatedRecords $ \(Ref id, updatedRecord) -> do
+        session <- lift ask
+        let request = setRequestBodyJSON
+                      (object
+                          [ "type"      .= definition @a
+                          , "condition" .= ("id:" <> show id)
+                          , "values"    .= updatedRecord ])
+                      (cobDefaultRequest session)
+                          { method = "PUT"
+                          , path   = "/recordm/recordm/instances/integration" }
+        response <- httpJSONEither request
+        unwrapValid response :: CobT m Value
+    return updatedRecords
+
+rmUpdateInstance_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [a]
+rmUpdateInstance_ q f = map snd <$> rmUpdateInstance q f
 
 -- | Get or add an instance given a query and a new 'Record'
 rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q) => q -> a -> CobT m (Ref a, a)

@@ -34,60 +34,36 @@ data MovimentoR = MovimentoR { _classificação :: Maybe (Ref Classificação)
                              , _dta           :: Data
                              , _ultsaldo      :: UltimoSaldo }
 
-mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observação", "Data mov", "Movimento", "Conta", "Data", "Último Saldo"]
 makeLenses ''MovimentoR
+mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observação", "Data mov", "Movimento", "Conta", "Data", "Último Saldo"]
+
+newtype Owner = Owner String
+mkRecord ''Owner "Owners" ["Owner"]
 
 logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Cob ()
 logic (movimentoId, total) splits = do
-
     guard (total == sum (map snd splits))
 
-    [movimento] <- rmSearch(movimentoId)
+    [updatedMov] <- rmUpdateInstance_ movimentoId (classificação ?~ Ref 76564)
 
-    let updatedMov = movimento & classificação ?~ Ref 76564
+    let commonMov = updatedMov & descrição ?~ "Desdobramento automático: " <> show movimentoId
+                               & ultsaldo  .~ "Não"
 
-    rmUpdate(movimentoId, updatedMov)
+    forM_ splits $ \(refclass, amount) ->
+        rmAddInstance (commonMov & classificação ?~ refclass
+                                 & mov .~ amount)
 
-    let commonMov = updatedMov 
-                        & descrição ?~ "Desdobramento automático: " <> show movimentoId
-                        & ultsaldo .~ "Não"
-
-    forM_ splits $ \(refclass, amount) -> do
-        let newMov = commonMov
-                        & classificação ?~ refclass
-                        & mov .~ amount
-        rmAdd(newMov)
-
-    forM_ splits $ \(_, amount) -> do
-        let newMov = commonMov & mov .~ -amount
-        rmAdd(newMov)
-
+    forM_ splits $ \(_, amount) ->
+        rmAddInstance (commonMov & mov .~ -amount)
 
 
 main :: IO ()
 main = do
-    session <- makeSession "mimes8.cultofbits.com" "Zwhwb71CwCGmRkvkzbjIW6YESN2gdIyXzdADZSgnKkliQmH6ECcXcxrjVaS5Urt8NfJnQlQgvsV85dpeGx4/EGFT/+OewkHrr2niAIxaWUN4xSXIbeq+n3Ft0TM5T9bF0WL4GCd2gH4UCRKWw5UISg=="
-    ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 0 <$> getArgs
+    session <- makeSession "mimes8.cultofbits.com" ""
+    ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 1 <$> getArgs
     either <- runCob session (logic prim pargs)
     print either
     return ()
 
 parseArgs :: [String] -> [(Ref a, Double)]
 parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
-
-rmSearch = rmDefinitionSearch_
-rmAdd = rmAddInstance
-rmUpdate = uncurry rmUpdateInstance
-
-(^?^) :: (Record b, RecordMQuery a) => a -> Int -> Cob [b]
-(^?^) q n = rmDefinitionSearch_ (q, n)
-
-(^=^) :: (Record a) => Ref a -> a -> Cob ()
-(^=^) = rmUpdateInstance
-
-(^+^) :: (Record a) => a -> Cob (Ref a)
-(^+^) = rmAddInstance
-
-infix 0 ^=^
-infix 0 ^+^
-infix 0 ^?^
