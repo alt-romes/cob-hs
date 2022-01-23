@@ -42,20 +42,25 @@ logic (movimentoId, total) splits = do
 
     guard (total == sum (map snd splits))
 
-    [movimento] <- movimentoId ^?^ 1
-    movimentoId ^=^ movimento
-                        & classificação ?~ Ref 76564
+    [movimento] <- rmSearch(movimentoId)
 
-    let commonMov = movimento
-                        & classificação ?~ Ref 76564
+    let updatedMov = movimento & classificação ?~ Ref 76564
+
+    rmUpdate(movimentoId, updatedMov)
+
+    let commonMov = updatedMov 
                         & descrição ?~ "Desdobramento automático: " <> show movimentoId
                         & ultsaldo .~ "Não"
 
     forM_ splits $ \(refclass, amount) -> do
-        (^+^) (commonMov & classificação ?~ refclass & mov .~ amount)
+        let newMov = commonMov
+                        & classificação ?~ refclass
+                        & mov .~ amount
+        rmAdd(newMov)
 
     forM_ splits $ \(_, amount) -> do
-        (^+^) (commonMov & mov .~ -amount)
+        let newMov = commonMov & mov .~ -amount
+        rmAdd(newMov)
 
 
 
@@ -70,7 +75,9 @@ main = do
 parseArgs :: [String] -> [(Ref a, Double)]
 parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
 
-rmSearch = curry rmDefinitionSearch_
+rmSearch = rmDefinitionSearch_
+rmAdd = rmAddInstance
+rmUpdate = uncurry rmUpdateInstance
 
 (^?^) :: (Record b, RecordMQuery a) => a -> Int -> Cob [b]
 (^?^) q n = rmDefinitionSearch_ (q, n)
