@@ -235,12 +235,19 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
 
 -- TODO: Move update instance and update field to RecordMQuery instead of Ref?
 
--- | Update in @RecordM@ all instances matching a query given a function that transforms records, and return the list of updated records
--- Warning: This update is not atomic (yet? :TODO:). This means that in between
--- applying the function to the value and sending the update, it might have been
--- updated somewhere else, and this update will overwrite the record with the
--- modified previous record. This also means that if more than one record
--- matches the query, the list of records will NOT be updated in batch.
+-- | Update in @RecordM@ all instances matching a query given a function that
+-- transforms records, and return the list of updated records Warning: This
+-- update is not atomic (yet? :TODO:). This means that in between applying the
+-- function to the value and sending the update, it might have been updated
+-- somewhere else, and this update will overwrite the record with the modified
+-- previous record. This also means that if more than one record matches the
+-- query, the list of records will NOT be updated in batch -- on an error
+-- message, if the error occured in between updating one of the records in the
+-- middle of the list, the first updates might have occurred despite the error
+--
+-- If the need ever arises, an atomic implementation could possibly set the
+-- correct version:x on the query and check for number of successful updates,
+-- though this doesn't solve the list batch update
 rmUpdateInstance :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [(Ref a, a)]
 rmUpdateInstance rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
@@ -299,8 +306,6 @@ rmGetOrAddInstanceM rmQuery newRecordMIO = do
 --     let x = getResponseBody response ^? key "aggregations" . key "sum#soma"
 --     print x
 --     return $ value <$> (parseMaybe parseJSON =<< x )
-
-
 
 
 (///) :: Monad m => Maybe a -> m a -> m a
