@@ -5,10 +5,12 @@ import Debug.Trace                ( trace    )
 import Control.Lens               ( (^?)     )
 import qualified Data.Vector as V ( fromList )
 
-import Control.Monad              ( unless, forM_                       )
-import Control.Monad.Trans        ( MonadIO, lift                       )
-import Control.Monad.Trans.Reader ( ReaderT, runReaderT, ask            )
-import Control.Monad.Trans.Except ( ExceptT, runExceptT, except, throwE )
+import Control.Monad              ( unless, forM_               )
+import Control.Monad.Reader       ( ask                         )
+import Control.Monad.Except       ( throwError                  )
+import Control.Monad.Trans        ( MonadIO, lift               )
+import Control.Monad.Trans.Reader ( ReaderT, runReaderT         )
+import Control.Monad.Trans.Except ( ExceptT, runExceptT, except )
 
 import Data.Bifunctor     ( second                           )
 import Data.Either        ( either                           )
@@ -189,7 +191,7 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
 rmDefinitionSearch :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m [(Ref a, a)]
 rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
-    session <- lift ask
+    session <- ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery rmQuery}
@@ -198,7 +200,7 @@ rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
     hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
     let hitsSources = mapMaybe (^? key "_source") hits                            -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
-    records <- (except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    records <- (CobT . except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                                                      -- Return list of (id, record)
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
@@ -220,7 +222,7 @@ rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
 -- @
 rmAddInstance :: forall m a. (MonadIO m, Record a) => a -> CobT m (Ref a)
 rmAddInstance record = trace ("add instance to definition " <> definition @a) $ do
-    session <- lift ask
+    session <- CobT $ lift ask
     let request = setRequestBodyJSON
                   (object
                       [ "type"   .= definition @a
@@ -230,7 +232,7 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
                       , path   = "/recordm/recordm/instances/integration" }
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response
-    id             <- except . parseEither parseJSON =<< ((rbody ^? key "id") /// throwE "Couldn't get created record id on add instance!")
+    id             <- CobT . except . parseEither parseJSON =<< ((rbody ^? key "id") /// throwError "Couldn't get created record id on add instance!")
     return (Ref id)
 
 -- TODO: Move update instance and update field to RecordMQuery instead of Ref?
@@ -248,12 +250,16 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
 -- If the need ever arises, an atomic implementation could possibly set the
 -- correct version:x on the query and check for number of successful updates,
 -- though this doesn't solve the list batch update
-rmUpdateInstance :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [(Ref a, a)]
-rmUpdateInstance rmQuery updateRecord = do
+rmUpdateInstances :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [(Ref a, a)]
+rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
+
+-- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
+rmUpdateInstancesM :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
+rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
-    let updatedRecords = map (second updateRecord) records
+    updatedRecords <- traverse (\(ref, rec) -> (ref,) <$> updateRecord rec) records
     forM_ updatedRecords $ \(Ref id, updatedRecord) -> do
-        session <- lift ask
+        session <- CobT $ lift ask
         let request = setRequestBodyJSON
                       (object
                           [ "type"      .= definition @a
@@ -266,8 +272,9 @@ rmUpdateInstance rmQuery updateRecord = do
         unwrapValid response :: CobT m Value
     return updatedRecords
 
-rmUpdateInstance_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [a]
-rmUpdateInstance_ q f = map snd <$> rmUpdateInstance q f
+-- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
+rmUpdateInstances_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [a]
+rmUpdateInstances_ q f = map snd <$> rmUpdateInstances q f
 
 -- | Get or add an instance given a query and a new 'Record'
 rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q) => q -> a -> CobT m (Ref a, a)
@@ -279,7 +286,7 @@ rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 -- This means ...
 rmGetOrAddInstanceM :: (MonadIO m, Record a, RecordMQuery q) => q -> CobT m a -> CobT m (Ref a, a)
 rmGetOrAddInstanceM rmQuery newRecordMIO = do
-    session <- lift ask
+    session <- ask
     records <- rmDefinitionSearch rmQuery
     case records of
       [] -> do
@@ -329,17 +336,17 @@ renderRMQuery q' =
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
 getResponseHitsHits :: Monad m => Value -> CobT m [Value]
-getResponseHitsHits responseBody = maybe
-        (throwE "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
+getResponseHitsHits responseBody = CobT $ maybe
+        (throwError "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
         (except . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
         (responseBody ^? key "hits" . key "hits") -- Find hits.hits in response body
 
 
 -- | @Internal@ Validate if the status of the response is successful, or throw an exception
 unwrapValid :: Monad m => Show a => Response (Either JSONException a) -> CobT m a
-unwrapValid r = do
+unwrapValid r = CobT $ do
     unless (statusIsSuccessful (getResponseStatus r)) $
-        throwE $ "Request failed with status: "
+        throwError $ "Request failed with status: "
             <> show (getResponseStatus r)
             <> "\nResponse:\n" <> show r
-    either (throwE . show) return (getResponseBody r)
+    either (throwError . show) return (getResponseBody r)

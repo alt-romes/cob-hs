@@ -2,10 +2,13 @@
 
 -- | Automatically derive 'Record' given its fields and definition name
 -- A definition called \"Dogs\" with fields ["Owner Name", "Dog Name"], and type that will instance 'Record',
+--
 -- @
 -- data Dog = Dog Text Text
 -- @
+--
 -- should automatically generate
+--
 -- @
 -- instance ToJSON Dog where
 --      toJSON (Dog ownerName dogName) = object
@@ -19,10 +22,13 @@
 -- instance Record Dog where
 --      definition = \"Dogs\"
 -- @
+--
 -- when the following is in the module
+--
 -- @
--- $(mkRecord ''Dog "Dogs" ["Owner Name", "Dog Name"])
+-- mkRecord ''Dog \"Dogs\" ["Owner Name", "Dog Name"]
 -- @
+--
 module Cob.RecordM.TH (mkRecord) where
 
 

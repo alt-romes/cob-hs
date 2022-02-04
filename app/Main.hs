@@ -44,7 +44,7 @@ logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Co
 logic (movimentoId, total) splits = do
     guard (total == sum (map snd splits))
 
-    [updatedMov] <- rmUpdateInstance_ movimentoId (classificação ?~ Ref 76564)
+    [updatedMov] <- rmUpdateInstances_ movimentoId (classificação ?~ Ref 76564)
 
     let commonMov = updatedMov & descrição ?~ "Desdobramento automático: " <> show movimentoId
                                & ultsaldo  .~ "Não"

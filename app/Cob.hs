@@ -1,12 +1,15 @@
-{-# LANGUAGE AllowAmbiguousTypes, ScopedTypeVariables, OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, AllowAmbiguousTypes, ScopedTypeVariables, OverloadedStrings #-}
 module Cob where
 
 import Data.String (fromString)
 import Data.ByteString (ByteString)
 
-import Control.Monad.Trans (lift)
+import Control.Applicative  (Alternative)
+import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Reader (MonadReader)
+import Control.Monad.Trans  (MonadIO, MonadTrans, lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
-import Control.Monad.Trans.Except (ExceptT, runExceptT, except, throwE)
+import Control.Monad.Trans.Except (ExceptT, runExceptT)
 
 import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
@@ -24,23 +27,6 @@ type Cob a = CobT IO a
 runCob :: CobSession -> Cob a -> IO (Either CobError a)
 runCob = runCobT
 
--- | Lift an 'IO' computation to a 'Cob' computation.
---
--- This can be used to do 'IO' from 'Cob'.
---
--- ==== __Example__
---
--- @
--- logic :: Cob ()
--- logic = do
---     liftCob (print "started!")
---     ...
---     ...
---     liftCob (print "finished!")
--- @
-liftCob :: IO a -> Cob a
-liftCob = liftCobT
-
 -- | A 'Cob' computation will either succeed or return a 'CobError'.
 type CobError = String
 
@@ -49,21 +35,52 @@ type CobError = String
 -- A constructed monad made out of an existing monad @m@ such that its
 -- computations can be embedded in 'CobT', from which it's also possible to
 -- interact with @RecordM@.
-type CobT m a = ExceptT CobError (ReaderT CobSession m) a
+newtype CobT m a = CobT { unCob :: ExceptT CobError (ReaderT CobSession m) a }
+                deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError
+                         , MonadReader CobSession, Alternative)
+
+-- | Lift a computation from the argument monad to a constructed 'CobT' monad.
+--
+-- This can be used to do computations in @m@ from 'CobT'.
+--
+-- For example: lift an 'IO' computation to a 'Cob' computation.
+--
+-- This can be used to do 'IO' from 'Cob'.
+--
+-- ==== __Example__
+--
+-- @
+-- logic :: Cob ()
+-- logic = do
+--     lift (print "started!")
+--     ...
+--     ...
+--     lift (print "finished!")
+-- @
+instance MonadTrans CobT where
+    lift = CobT . lift . lift
+
+-- | Allow Cob computations to fail
+--
+-- For example, when pattern matching against an expected single value in a
+-- list, upon failure, cleanly propagate the error
+-- 
+-- In the following snippet, if more than one instance was found for the given
+-- query, a CobError error will be thrown and propagated
+-- @
+-- [user1] <- rmDefinitionSearch_ "id:456767*" :: [User]
+-- @
+instance Monad m => MonadFail (CobT m) where
+    fail = throwError
+
 
 -- | The inverse of 'CobT'.
 --
 -- Run a 'CobT' computation and return either a 'CobError' or a value
 -- in the argument monad @m@.
 runCobT :: Monad m => CobSession -> CobT m a -> m (Either CobError a)
-runCobT session cob = runReaderT (runExceptT cob) session
+runCobT session cob = runReaderT (runExceptT $ unCob cob) session
 
-
--- | Lift a computation from the argument monad to a constructed 'CobT' monad.
---
--- This can be used to do computations in @m@ from 'CobT'.
-liftCobT :: Monad m => m a -> CobT m a
-liftCobT = lift . lift
 
 
 --- Sessions
@@ -97,6 +114,8 @@ makeSession host tok = do
     where
     past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
+
+
 
 
 -- | @Internal@ The default HTTP request used internally (targeting RecordM) in
