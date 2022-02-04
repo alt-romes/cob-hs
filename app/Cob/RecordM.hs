@@ -5,7 +5,10 @@ import Debug.Trace                ( trace    )
 import Control.Lens               ( (^?)     )
 import qualified Data.Vector as V ( fromList )
 
-import Control.Monad              ( unless, forM_               )
+import Control.Concurrent.Async   ( forConcurrently             )
+
+import Control.Monad              ( unless, forM                )
+import Control.Monad.IO.Class     ( liftIO                      )
 import Control.Monad.Reader       ( ask                         )
 import Control.Monad.Except       ( throwError                  )
 import Control.Monad.Trans        ( MonadIO, lift               )
@@ -250,6 +253,14 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
 -- If the need ever arises, an atomic implementation could possibly set the
 -- correct version:x on the query and check for number of successful updates,
 -- though this doesn't solve the list batch update
+--
+-- The updates are done concurrently.
+-- For now, 'forConcurrently' from async is used, that means limited resources
+-- for giant lists could be a problem -- see 'Control.Concurrent.Async'
+--
+-- Another note: The query will limit the amount of instances fetched. That
+-- means more instances could match the query but aren't currently fetched and
+-- won't be updated.
 rmUpdateInstances :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [(Ref a, a)]
 rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
 
@@ -258,8 +269,9 @@ rmUpdateInstancesM :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -
 rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
     updatedRecords <- traverse (\(ref, rec) -> (ref,) <$> updateRecord rec) records
-    forM_ updatedRecords $ \(Ref id, updatedRecord) -> do
-        session <- CobT $ lift ask
+    session <- CobT $ lift ask
+    -- Concurrently update upstream
+    responses <- liftIO $ forConcurrently records $ \(Ref id, updatedRecord) -> do
         let request = setRequestBodyJSON
                       (object
                           [ "type"      .= definition @a
@@ -268,8 +280,8 @@ rmUpdateInstancesM rmQuery updateRecord = do
                       (cobDefaultRequest session)
                           { method = "PUT"
                           , path   = "/recordm/recordm/instances/integration" }
-        response <- httpJSONEither request
-        unwrapValid response :: CobT m Value
+        httpJSONEither request
+    traverse unwrapValid responses :: CobT m [Value]
     return updatedRecords
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
