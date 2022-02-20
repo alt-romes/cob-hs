@@ -5,7 +5,7 @@ import Debug.Trace                ( trace    )
 import Control.Lens               ( (^?)     )
 import qualified Data.Vector as V ( fromList )
 
-import Control.Monad              ( unless, forM                )
+import Control.Monad              ( unless, forM, join, mapM    )
 import Control.Monad.Reader       ( ask                         )
 import Control.Monad.Except       ( throwError                  )
 import Control.Monad.Trans        ( MonadIO, lift               )
@@ -134,10 +134,11 @@ instance RecordMQuery Text where
 instance RecordMQuery a => RecordMQuery ((,) a Int) where
     toRMQuery (t, i) = (toRMQuery t) { _size = i }
 
--- | Query for the exact 'Record' using a 'Ref'
-instance RecordMQuery (Ref a) where
+-- | Query for the exact 'Record' using a 'Ref'.
+--
+-- Note: The definition manipulated is not inferred by the query -- i.e. you could search a Definition X with a @Ref Y@
+instance Record a => RecordMQuery (Ref a) where
     toRMQuery (Ref x) = defaultRMQuery { _q = "id:" <> fromString (show x) }
-
 
 -- | The default 'RecordMQuery'
 -- @
@@ -278,7 +279,15 @@ rmUpdateInstancesM rmQuery updateRecord = do
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
 rmUpdateInstances_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [a]
-rmUpdateInstances_ q f = map snd <$> rmUpdateInstances q f
+rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
+
+-- | The same as 'rmCrossUpdateInstance' but the update record function does not return the value within a monad @m@
+rmCrossUpdateInstances :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
+rmCrossUpdateInstances q f g = rmCrossUpdateInstancesM q f (return <$> g)
+
+-- | Run a query over a definition, transform all matching records into new queries, and run them over another definition, updating each matching instance with the update function @b -> 'CobT' m b@
+rmCrossUpdateInstancesM :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
+rmCrossUpdateInstancesM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
 -- | Get or add an instance given a query and a new 'Record'
 rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q) => q -> a -> CobT m (Ref a, a)
