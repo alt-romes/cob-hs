@@ -1,9 +1,14 @@
-{-# LANGUAGE FlexibleInstances, AllowAmbiguousTypes, TypeApplications, TupleSections, ScopedTypeVariables, OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Cob.RecordM where
 
-import Debug.Trace                ( trace    )
-import Control.Lens               ( (^?)     )
-import qualified Data.Vector as V ( fromList )
+import Debug.Trace                ( trace      )
+import Control.Lens               ( (^?)       )
+import qualified Data.Vector as V ( fromList   )
 
 import Control.Monad              ( unless, forM, join, mapM    )
 import Control.Monad.Reader       ( ask                         )
@@ -17,7 +22,7 @@ import Data.Either        ( either                           )
 import Data.Maybe         ( catMaybes, mapMaybe, listToMaybe )
 
 import Data.Aeson.Types
-import Data.Aeson.Lens    ( key )
+import Data.Aeson.Lens    ( key, _Integer )
 
 import Data.Text          ( Text       )
 import Data.ByteString    ( ByteString )
@@ -212,6 +217,38 @@ rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
 rmDefinitionSearch_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m [a]
 rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
 
+-- | A 'Count' is parametrized with a phantom type @a@ that represents the type
+-- of records to count in a definition. Because 'Count' instances 'Num', 'Eq'
+-- and 'Ord', it can be used normally as a number and compared against other
+-- numbers
+newtype Count a = Count { getCount :: Integer -- ^ 'getCount' unwraps the records count value from a 'Count'
+                        }
+
+instance Num (Count a) where
+    (Count x) + (Count y) = Count (x + y)
+    (Count x) - (Count y) = Count (x - y)
+    (Count x) * (Count y) = Count (x * y)
+    abs (Count x) = Count (abs x)
+    signum (Count x) = Count (signum x)
+    fromInteger = Count
+instance Eq (Count a) where
+    (Count x) == (Count y) = x == y
+instance Ord (Count a) where
+    (Count x) <= (Count y) = x <= y
+
+-- | Count the number of records matching a query in a definition
+rmDefinitionCount :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m (Count a)
+rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
+    session <- ask
+    let request = (cobDefaultRequest session)
+                      { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
+                      , queryString = renderRMQuery rmQuery}
+    response       <- httpJSONEither request
+    rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
+    count <- rbody ^? key "hits" . key "total" . key "value" . _Integer /// throwError "Couldn't find hits.total.value when doing a definition count"
+    return (Count count)
+
+
 -- | Add to @RecordM@ a new instance given a 'Record', and return the 'Ref' of the newly created instance.
 --
 -- ==== __Example__
@@ -332,7 +369,11 @@ rmGetOrAddInstanceM rmQuery newRecordMIO = do
 
 (///) :: Monad m => Maybe a -> m a -> m a
 mb /// err = maybe err return mb
+infix 7 ///
 
+(////) :: Monad m => CobT m (Maybe a) -> CobT m a -> CobT m a
+mb //// err = mb >>= maybe err return
+infix 7 ////
 
 --- Util
 
