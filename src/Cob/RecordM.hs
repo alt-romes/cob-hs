@@ -281,13 +281,15 @@ rmUpdateInstancesM rmQuery updateRecord = do
 rmUpdateInstances_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [a]
 rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
 
--- | The same as 'rmCrossUpdateInstance' but the update record function does not return the value within a monad @m@
-rmCrossUpdateInstances :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
-rmCrossUpdateInstances q f g = rmCrossUpdateInstancesM q f (return <$> g)
+-- | The same as 'rmUpdateInstancesWithMakeQueryM' but the update record function does not return the value within a monad @m@
+rmUpdateInstancesWithMakeQuery :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (return <$> g)
 
--- | Run a query over a definition, transform all matching records into new queries, and run them over another definition, updating each matching instance with the update function @b -> 'CobT' m b@
-rmCrossUpdateInstancesM :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
-rmCrossUpdateInstancesM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
+-- | Run a @'RecordMQuery' q@ and transform all resulting records (@'Record' a@)
+-- into new queries (@'RecordMQuery' r@). Finally, update all resulting records
+-- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
+rmUpdateInstancesWithMakeQueryM :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
 -- | Get or add an instance given a query and a new 'Record'
 rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q) => q -> a -> CobT m (Ref a, a)
