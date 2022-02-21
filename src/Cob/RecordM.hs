@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeApplications #-}
@@ -112,37 +113,37 @@ instance FromJSON (Ref a) where
 
 
 -- | The standard @RecordM@ query
-data StandardRecordMQuery = StandardRecordMQuery { _q         :: Text
-                                                 , _from      :: Int
-                                                 , _size      :: Int
-                                                 , _sort      :: Maybe ByteString
-                                                 , _ascending :: Maybe Bool }
+data StandardRecordMQuery a = StandardRecordMQuery { _q         :: Text
+                                                   , _from      :: Int
+                                                   , _size      :: Int
+                                                   , _sort      :: Maybe ByteString
+                                                   , _ascending :: Maybe Bool }
 
 -- | Any datatype implementing this typeclass can be used to search @RecordM@.
-class RecordMQuery a where
+class Record a => RecordMQuery q a where
     -- | Convert the implementing type to a 'StandardRecordMQuery'
-    toRMQuery :: a -> StandardRecordMQuery
+    toRMQuery :: q -> StandardRecordMQuery a
 
 -- | Identity
-instance RecordMQuery StandardRecordMQuery where
+instance Record a => RecordMQuery (StandardRecordMQuery a) a where
     toRMQuery = id
 
 -- | Use the default query with argument 'String as the query text
-instance RecordMQuery String where
+instance Record a => RecordMQuery String a where
     toRMQuery t = defaultRMQuery { _q = fromString t }
 
 -- | Use the default query with argument 'Text' as the query text
-instance RecordMQuery Text where
+instance Record a => RecordMQuery Text a where
     toRMQuery t = defaultRMQuery { _q = t }
 
 -- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Int' value to set the size
-instance RecordMQuery a => RecordMQuery ((,) a Int) where
-    toRMQuery (t, i) = (toRMQuery t) { _size = i }
+instance RecordMQuery q a => RecordMQuery ((,) q Int) a where
+    toRMQuery (t, i) = (toRMQuery @q @a t) { _size = i }
 
 -- | Query for the exact 'Record' using a 'Ref'.
 --
 -- Note: The definition manipulated is not inferred by the query -- i.e. you could search a Definition X with a @Ref Y@
-instance Record a => RecordMQuery (Ref a) where
+instance Record a => RecordMQuery (Ref a) a where
     toRMQuery (Ref x) = defaultRMQuery { _q = "id:" <> fromString (show x) }
 
 -- | The default 'RecordMQuery'
@@ -165,7 +166,7 @@ instance Record a => RecordMQuery (Ref a) where
 --                                     , _sort = Just \"id\"
 --                                     , _ascending = Just True })
 -- @
-defaultRMQuery :: StandardRecordMQuery
+defaultRMQuery :: StandardRecordMQuery a
 defaultRMQuery = StandardRecordMQuery { _q         = "*"
                                       , _from      = 0
                                       , _size      = 5
@@ -195,12 +196,12 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
-rmDefinitionSearch :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m [(Ref a, a)]
+rmDefinitionSearch :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [(Ref a, a)]
 rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
     session <- ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-                      , queryString = renderRMQuery rmQuery}
+                      , queryString = renderRMQuery @q @a rmQuery }
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
     hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
@@ -214,7 +215,7 @@ rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
 -- Instead, this function returns only a list of the records ('Record') found.
 --
 -- See also 'rmDefinitionSearch'
-rmDefinitionSearch_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m [a]
+rmDefinitionSearch_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [a]
 rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
 
 -- | A 'Count' is parametrized with a phantom type @a@ that represents the type
@@ -237,12 +238,12 @@ instance Ord (Count a) where
     (Count x) <= (Count y) = x <= y
 
 -- | Count the number of records matching a query in a definition
-rmDefinitionCount :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> CobT m (Count a)
+rmDefinitionCount :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m (Count a)
 rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
     session <- ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-                      , queryString = renderRMQuery rmQuery}
+                      , queryString = renderRMQuery @q @a rmQuery}
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
     count <- rbody ^? key "hits" . key "total" . key "value" . _Integer /// throwError "Couldn't find hits.total.value when doing a definition count"
@@ -292,11 +293,11 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
 -- Another note: The query will limit the amount of instances fetched. That
 -- means more instances could match the query but aren't currently fetched and
 -- won't be updated.
-rmUpdateInstances :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [(Ref a, a)]
+rmUpdateInstances :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [(Ref a, a)]
 rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
 
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
-rmUpdateInstancesM :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
+rmUpdateInstancesM :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
 rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
     session <- CobT $ lift ask
@@ -315,28 +316,28 @@ rmUpdateInstancesM rmQuery updateRecord = do
         return (Ref id, updatedRecord)
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
-rmUpdateInstances_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q) => q -> (a -> a) -> CobT m [a]
+rmUpdateInstances_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [a]
 rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
 
 -- | The same as 'rmUpdateInstancesWithMakeQueryM' but the update record function does not return the value within a monad @m@
-rmUpdateInstancesWithMakeQuery :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQuery :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
 rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (return <$> g)
 
 -- | Run a @'RecordMQuery' q@ and transform all resulting records (@'Record' a@)
 -- into new queries (@'RecordMQuery' r@). Finally, update all resulting records
 -- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
-rmUpdateInstancesWithMakeQueryM :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q, RecordMQuery r) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQueryM :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
 -- | Get or add an instance given a query and a new 'Record'
-rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q) => q -> a -> CobT m (Ref a, a)
+rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q a) => q -> a -> CobT m (Ref a, a)
 rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 
 -- | Get or add an instance given a query and a new 'Record' inside a 'CobT' monadic context
 --
 -- The computations to get the new 'Record' will only be executed when no instance matching the query could be found.
 -- This means ...
-rmGetOrAddInstanceM :: (MonadIO m, Record a, RecordMQuery q) => q -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceM :: (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m a -> CobT m (Ref a, a)
 rmGetOrAddInstanceM rmQuery newRecordMIO = do
     session <- ask
     records <- rmDefinitionSearch rmQuery
@@ -379,9 +380,9 @@ infix 7 ////
 
 -- | @Internal@ Render a 'RecordMQuery'.
 -- @a@ will be converted with 'toRMQuery' 
-renderRMQuery :: RecordMQuery a => a -> ByteString
+renderRMQuery :: forall q a. (Record a, RecordMQuery q a) => q -> ByteString
 renderRMQuery q' =
-    let q = toRMQuery q' in
+    let q = toRMQuery @q @a q' in
         renderQuery True $ simpleQueryToQuery $ catMaybes
             [ Just ("q"   , encodeUtf8 (_q q))
             , Just ("from", fromString $ show $ _from q)
