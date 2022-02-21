@@ -117,7 +117,8 @@ data StandardRecordMQuery a = StandardRecordMQuery { _q         :: Text
                                                    , _from      :: Int
                                                    , _size      :: Int
                                                    , _sort      :: Maybe ByteString
-                                                   , _ascending :: Maybe Bool }
+                                                   , _ascending :: Maybe Bool
+                                                   } deriving (Show)
 
 -- | Any datatype implementing this typeclass can be used to search @RecordM@.
 class Record a => RecordMQuery q a where
@@ -144,7 +145,7 @@ instance RecordMQuery q a => RecordMQuery ((,) q Int) a where
 --
 -- Note: The definition manipulated is not inferred by the query -- i.e. you could search a Definition X with a @Ref Y@
 instance Record a => RecordMQuery (Ref a) a where
-    toRMQuery (Ref x) = defaultRMQuery { _q = "id:" <> fromString (show x) }
+    toRMQuery (Ref x) = (defaultRMQuery @a) { _q = "id:" <> fromString (show x) }
 
 -- | The default 'RecordMQuery'
 -- @
@@ -246,7 +247,7 @@ rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
                       , queryString = renderRMQuery @q @a rmQuery}
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
-    count <- rbody ^? key "hits" . key "total" . key "value" . _Integer /// throwError "Couldn't find hits.total.value when doing a definition count"
+    count <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?: throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
 
 
@@ -271,7 +272,7 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
                       , path   = "/recordm/recordm/instances/integration" }
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response
-    id             <- CobT . except . parseEither parseJSON =<< ((rbody ^? key "id") /// throwError "Couldn't get created record id on add instance!")
+    id             <- CobT . except . parseEither parseJSON =<< ((rbody ^? key "id") ?: throwError "Couldn't get created record id on add instance!")
     return (Ref id)
 
 -- TODO: Move update instance and update field to RecordMQuery instead of Ref?
@@ -298,22 +299,23 @@ rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
 
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
 rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
-rmUpdateInstancesM rmQuery updateRecord = do
-    records <- rmDefinitionSearch rmQuery
-    session <- CobT $ lift ask
-    forM records $ \(Ref id, rec) -> do
-        updatedRecord <- updateRecord rec
-        let request = setRequestBodyJSON
-                      (object
-                          [ "type"      .= definition @a
-                          , "condition" .= ("id:" <> show id)
-                          , "values"    .= updatedRecord ])
-                      (cobDefaultRequest session)
-                          { method = "PUT"
-                          , path   = "/recordm/recordm/instances/integration" }
-        response <- httpJSONEither request
-        unwrapValid response :: CobT m Value
-        return (Ref id, updatedRecord)
+rmUpdateInstancesM rmQuery updateRecord = trace ("update instances in definition " <> definition @a) $ do
+    records <- trace "Definition might be being searched preemptively for update?" $ rmDefinitionSearch rmQuery
+    session <- ask
+    trace ("updating n records: " <> show (length records) <> " matchin query q: " <> show (toRMQuery @q @a rmQuery)) $
+        forM records $ \(Ref id, rec) -> do
+            updatedRecord <- updateRecord rec
+            let request = setRequestBodyJSON
+                          (object
+                              [ "type"      .= definition @a
+                              , "condition" .= ("id:" <> show id)
+                              , "values"    .= updatedRecord ])
+                          (cobDefaultRequest session)
+                              { method = "PUT"
+                              , path   = "/recordm/recordm/instances/integration" }
+            response <- httpJSONEither request
+            unwrapValid response :: CobT m Value
+            return (Ref id, updatedRecord)
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
 rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [a]
@@ -367,14 +369,43 @@ rmGetOrAddInstanceM rmQuery newRecordMIO = do
 --     print x
 --     return $ value <$> (parseMaybe parseJSON =<< x )
 
+-- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
+-- to retrieve the element if it exists or return a default value (passed in
+-- the second parameter) if it doesn't.
+class Existable e where
+    -- | Return the value from the 'Existable' if it exists, otherwise return the
+    -- default value passed as the second argument
+    (?:) :: Monad m => e a -> m a -> m a
+    infix 7 ?:
 
-(///) :: Monad m => Maybe a -> m a -> m a
-mb /// err = maybe err return mb
-infix 7 ///
+    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists, otherwise return the
+    -- default value passed as the second argument
+    (?::) :: Monad m => Existable e => m (e a) -> m a -> m a
+    mex ?:: def = mex >>= flip (?:) def
+    infix 7 ?::
 
-(////) :: Monad m => CobT m (Maybe a) -> CobT m a -> CobT m a
-mb //// err = mb >>= maybe err return
-infix 7 ////
+-- | A 'Maybe' is 'Existable' because it's either 'Just' a value or 'Nothing'.
+instance Existable Maybe where
+    -- | Return the value from the 'Maybe' if it exists, otherwise return the
+    -- default value passed as the second argument
+    mb ?: def = maybe def return mb
+
+-- | A list is 'Existable' because it might have no elements or at least one
+-- element. When using '?:', if the list is non-empty, the first element will
+-- be returned. This is useful when doing a 'rmDefinitionSearch' and are
+-- expecting exactly one result, and want to throw an error in the event that
+-- none are returned.
+--
+-- Example:
+-- 
+-- @
+-- user <- rmDefinitionSearch_ @UsersRecord name ?:: throwError "Couldn't find user!"
+-- @
+instance Existable [] where
+    -- | Return the first element of the list if it exists, otherwise return the
+    -- default value passed as the second argument
+    ls ?: def = (maybe def return . listToMaybe) ls
+
 
 --- Util
 
