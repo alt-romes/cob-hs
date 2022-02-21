@@ -196,7 +196,7 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
-rmDefinitionSearch :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [(Ref a, a)]
+rmDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [(Ref a, a)]
 rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
     session <- ask
     let request = (cobDefaultRequest session)
@@ -215,7 +215,7 @@ rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
 -- Instead, this function returns only a list of the records ('Record') found.
 --
 -- See also 'rmDefinitionSearch'
-rmDefinitionSearch_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [a]
+rmDefinitionSearch_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [a]
 rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
 
 -- | A 'Count' is parametrized with a phantom type @a@ that represents the type
@@ -238,7 +238,7 @@ instance Ord (Count a) where
     (Count x) <= (Count y) = x <= y
 
 -- | Count the number of records matching a query in a definition
-rmDefinitionCount :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m (Count a)
+rmDefinitionCount :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m (Count a)
 rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
     session <- ask
     let request = (cobDefaultRequest session)
@@ -259,7 +259,7 @@ rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
 -- addDog name ownerName = do
 --      rmAddInstance (DogsRecord name ownerName 0)
 -- @
-rmAddInstance :: forall m a. (MonadIO m, Record a) => a -> CobT m (Ref a)
+rmAddInstance :: forall a m. (MonadIO m, Record a) => a -> CobT m (Ref a)
 rmAddInstance record = trace ("add instance to definition " <> definition @a) $ do
     session <- CobT $ lift ask
     let request = setRequestBodyJSON
@@ -293,11 +293,11 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
 -- Another note: The query will limit the amount of instances fetched. That
 -- means more instances could match the query but aren't currently fetched and
 -- won't be updated.
-rmUpdateInstances :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [(Ref a, a)]
+rmUpdateInstances :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [(Ref a, a)]
 rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
 
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
-rmUpdateInstancesM :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
+rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
 rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
     session <- CobT $ lift ask
@@ -316,28 +316,28 @@ rmUpdateInstancesM rmQuery updateRecord = do
         return (Ref id, updatedRecord)
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
-rmUpdateInstances_ :: forall m a q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [a]
+rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [a]
 rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
 
 -- | The same as 'rmUpdateInstancesWithMakeQueryM' but the update record function does not return the value within a monad @m@
-rmUpdateInstancesWithMakeQuery :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQuery :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
 rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (return <$> g)
 
 -- | Run a @'RecordMQuery' q@ and transform all resulting records (@'Record' a@)
 -- into new queries (@'RecordMQuery' r@). Finally, update all resulting records
 -- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
-rmUpdateInstancesWithMakeQueryM :: forall m a b q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
 -- | Get or add an instance given a query and a new 'Record'
-rmGetOrAddInstance :: (MonadIO m, Record a, RecordMQuery q a) => q -> a -> CobT m (Ref a, a)
+rmGetOrAddInstance :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> a -> CobT m (Ref a, a)
 rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 
 -- | Get or add an instance given a query and a new 'Record' inside a 'CobT' monadic context
 --
 -- The computations to get the new 'Record' will only be executed when no instance matching the query could be found.
 -- This means ...
-rmGetOrAddInstanceM :: (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m a -> CobT m (Ref a, a)
 rmGetOrAddInstanceM rmQuery newRecordMIO = do
     session <- ask
     records <- rmDefinitionSearch rmQuery
