@@ -118,6 +118,7 @@ data StandardRecordMQuery a = StandardRecordMQuery { _q         :: Text
                                                    , _size      :: Int
                                                    , _sort      :: Maybe ByteString
                                                    , _ascending :: Maybe Bool
+                                                   , _waitForSearchAvailability :: Maybe Bool
                                                    } deriving (Show)
 
 -- | Any datatype implementing this typeclass can be used to search @RecordM@.
@@ -140,6 +141,10 @@ instance Record a => RecordMQuery Text a where
 -- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Int' value to set the size
 instance RecordMQuery q a => RecordMQuery ((,) q Int) a where
     toRMQuery (t, i) = (toRMQuery @q @a t) { _size = i }
+
+-- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Bool' to set waitForSearchAvailability when doing a POST
+instance RecordMQuery q a => RecordMQuery ((,) q Bool) a where
+    toRMQuery (t, b) = (toRMQuery @q @a t) { _waitForSearchAvailability = Just b }
 
 -- | Query for the exact 'Record' using a 'Ref'.
 --
@@ -172,7 +177,8 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
                                       , _from      = 0
                                       , _size      = 5
                                       , _sort      = Nothing
-                                      , _ascending = Nothing }
+                                      , _ascending = Nothing
+                                      , _waitForSearchAvailability = Nothing }
 
 
 
@@ -261,12 +267,34 @@ rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
 --      rmAddInstance (DogsRecord name ownerName 0)
 -- @
 rmAddInstance :: forall a m. (MonadIO m, Record a) => a -> CobT m (Ref a)
-rmAddInstance record = trace ("add instance to definition " <> definition @a) $ do
+rmAddInstance = rmAddInstanceWith defaultAddInstanceConf
+
+-- | Configuration to have finer control over adding an instance to RecordM.
+-- See 'rmAddInstanceWith'.
+--
+-- Related to the documentation on POST /recordm/instances/integration.
+newtype AddInstanceConf = AddInstanceConf { waitForSearchAvailability :: Bool
+                                          }
+
+-- | The 'AddInstanceConf' used by default
+--
+-- @
+-- waitForSearchAvailability = False
+-- @
+defaultAddInstanceConf :: AddInstanceConf
+defaultAddInstanceConf = AddInstanceConf False
+
+-- | Add an instance to RecordM with a config 'AddInstanceConf' to have control
+-- over finer details of instance creation.
+rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> CobT m (Ref a)
+rmAddInstanceWith conf record = trace ("add instance to definition " <> definition @a) $ do
     session <- CobT $ lift ask
     let request = setRequestBodyJSON
-                  (object
-                      [ "type"   .= definition @a
-                      , "values" .= record ])
+                  (object $ catMaybes
+                      [ Just ("type"   .= definition @a)
+                      , Just ("values" .= record)
+                      , if waitForSearchAvailability conf then Just ("waitForSearchAvailability" .= True) else Nothing
+                      ])
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
@@ -274,8 +302,6 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
     rbody :: Value <- unwrapValid response
     id             <- CobT . except . parseEither parseJSON =<< ((rbody ^? key "id") ?: throwError "Couldn't get created record id on add instance!")
     return (Ref id)
-
--- TODO: Move update instance and update field to RecordMQuery instead of Ref?
 
 -- | Update an instance with an id and return the updated record.
 -- An error will be thrown if no record is successfully updated.
@@ -305,9 +331,9 @@ rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
 rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
 rmUpdateInstancesM rmQuery updateRecord = trace ("update instances in definition " <> definition @a) $ do
-    records <- trace "Definition might be being searched preemptively for update?" $ rmDefinitionSearch rmQuery
+    records <- rmDefinitionSearch rmQuery
     session <- ask
-    trace ("updating n records: " <> show (length records) <> " matchin query q: " <> show (toRMQuery @q @a rmQuery)) $
+    trace ("Updating " <> show (length records) <> "records matching the query " <> show (toRMQuery @q @a rmQuery)) $
         forM records $ \(Ref id, rec) -> do
             updatedRecord <- updateRecord rec
             let request = setRequestBodyJSON
@@ -345,13 +371,19 @@ rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 -- The computations to get the new 'Record' will only be executed when no instance matching the query could be found.
 -- This means ...
 rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m a -> CobT m (Ref a, a)
-rmGetOrAddInstanceM rmQuery newRecordMIO = do
+rmGetOrAddInstanceM = rmGetOrAddInstanceWithM defaultAddInstanceConf
+
+-- | Get or add an instance given a query and a new 'Record' inside a 'CobT' monadic context with a specific 'AddInstanceConf'
+--
+-- See also 'rmGetOrAddInstanceM' and the difference between 'rmAddInstance' and 'rmAddInstanceWith'
+rmGetOrAddInstanceWithM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceWithM conf rmQuery newRecordMIO = do
     session <- ask
     records <- rmDefinitionSearch rmQuery
     case records of
       [] -> do
           newRecord <- newRecordMIO -- Execute IO computation to retrieve value
-          (, newRecord) <$> rmAddInstance newRecord
+          (, newRecord) <$> rmAddInstanceWith conf newRecord
       record:_ -> return record
 
 
