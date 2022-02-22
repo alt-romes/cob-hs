@@ -362,18 +362,22 @@ rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (retu
 rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
--- | Get or add an instance given a query and a new 'Record'
+-- | Get or add an instance given a 'RecordMQuery' and a new 'Record'
 rmGetOrAddInstance :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> a -> CobT m (Ref a, a)
 rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
 
--- | Get or add an instance given a query and a new 'Record' inside a 'CobT' monadic context
+-- | Get or add an instance given an 'AddInstanceConf', a 'RecordMQuery' and a 'Record'
+rmGetOrAddInstanceWith :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> a -> CobT m (Ref a, a)
+rmGetOrAddInstanceWith conf q = rmGetOrAddInstanceWithM conf q . return
+
+-- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context
 --
 -- The computations to get the new 'Record' will only be executed when no instance matching the query could be found.
 -- This means ...
 rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m a -> CobT m (Ref a, a)
 rmGetOrAddInstanceM = rmGetOrAddInstanceWithM defaultAddInstanceConf
 
--- | Get or add an instance given a query and a new 'Record' inside a 'CobT' monadic context with a specific 'AddInstanceConf'
+-- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context with a specific 'AddInstanceConf'
 --
 -- See also 'rmGetOrAddInstanceM' and the difference between 'rmAddInstance' and 'rmAddInstanceWith'
 rmGetOrAddInstanceWithM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> CobT m a -> CobT m (Ref a, a)
