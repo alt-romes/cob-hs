@@ -277,6 +277,11 @@ rmAddInstance record = trace ("add instance to definition " <> definition @a) $ 
 
 -- TODO: Move update instance and update field to RecordMQuery instead of Ref?
 
+-- | Update an instance with an id and return the updated record.
+-- An error will be thrown if no record is successfully updated.
+rmUpdateInstance :: forall a m. (MonadIO m, Record a) => Ref a -> (a -> a) -> CobT m a
+rmUpdateInstance ref f = rmUpdateInstances_ ref f ?:: throwError ("Updating instance " <> show ref <> " was not successful!")
+
 -- | Update in @RecordM@ all instances matching a query given a function that
 -- transforms records, and return the list of updated records Warning: This
 -- update is not atomic (yet? :TODO:). This means that in between applying the
