@@ -7,7 +7,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.RecordM where
 
-import Debug.Trace                ( trace      )
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
@@ -199,7 +198,7 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
 rmDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [(Ref a, a)]
-rmDefinitionSearch rmQuery = trace ("search definition " <> definition @a) $ do
+rmDefinitionSearch rmQuery = do
     session <- ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
@@ -241,7 +240,7 @@ instance Ord (Count a) where
 
 -- | Count the number of records matching a query in a definition
 rmDefinitionCount :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m (Count a)
-rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
+rmDefinitionCount rmQuery = do
     session <- ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
@@ -297,7 +296,7 @@ defaultAddInstanceConf = AddInstanceConf False
 -- rmUpdateInstance ref (property .~ newValue)
 -- @
 rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> CobT m (Ref a)
-rmAddInstanceWith conf record = trace ("add instance to definition " <> definition @a) $ do
+rmAddInstanceWith conf record = do
     session <- CobT $ lift ask
     let request = setRequestBodyJSON
                   (object $ catMaybes
@@ -340,23 +339,22 @@ rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
 
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
 rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
-rmUpdateInstancesM rmQuery updateRecord = trace ("update instances in definition " <> definition @a) $ do
+rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
     session <- ask
-    trace ("Updating " <> show (length records) <> "records matching the query " <> show (toRMQuery @q @a rmQuery)) $
-        forM records $ \(Ref id, rec) -> do
-            updatedRecord <- updateRecord rec
-            let request = setRequestBodyJSON
-                          (object
-                              [ "type"      .= definition @a
-                              , "condition" .= ("id:" <> show id)
-                              , "values"    .= updatedRecord ])
-                          (cobDefaultRequest session)
-                              { method = "PUT"
-                              , path   = "/recordm/recordm/instances/integration" }
-            response <- httpJSONEither request
-            unwrapValid response :: CobT m Value
-            return (Ref id, updatedRecord)
+    forM records $ \(Ref id, rec) -> do
+        updatedRecord <- updateRecord rec
+        let request = setRequestBodyJSON
+                      (object
+                          [ "type"      .= definition @a
+                          , "condition" .= ("id:" <> show id)
+                          , "values"    .= updatedRecord ])
+                      (cobDefaultRequest session)
+                          { method = "PUT"
+                          , path   = "/recordm/recordm/instances/integration" }
+        response <- httpJSONEither request
+        unwrapValid response :: CobT m Value
+        return (Ref id, updatedRecord)
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
 rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [a]
