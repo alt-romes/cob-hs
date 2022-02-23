@@ -118,7 +118,6 @@ data StandardRecordMQuery a = StandardRecordMQuery { _q         :: Text
                                                    , _size      :: Int
                                                    , _sort      :: Maybe ByteString
                                                    , _ascending :: Maybe Bool
-                                                   , _waitForSearchAvailability :: Maybe Bool
                                                    } deriving (Show)
 
 -- | Any datatype implementing this typeclass can be used to search @RecordM@.
@@ -141,10 +140,6 @@ instance Record a => RecordMQuery Text a where
 -- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Int' value to set the size
 instance RecordMQuery q a => RecordMQuery ((,) q Int) a where
     toRMQuery (t, i) = (toRMQuery @q @a t) { _size = i }
-
--- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Bool' to set waitForSearchAvailability when doing a POST
-instance RecordMQuery q a => RecordMQuery ((,) q Bool) a where
-    toRMQuery (t, b) = (toRMQuery @q @a t) { _waitForSearchAvailability = Just b }
 
 -- | Query for the exact 'Record' using a 'Ref'.
 --
@@ -178,7 +173,7 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
                                       , _size      = 5
                                       , _sort      = Nothing
                                       , _ascending = Nothing
-                                      , _waitForSearchAvailability = Nothing }
+                                      }
 
 
 
@@ -259,6 +254,10 @@ rmDefinitionCount rmQuery = trace ("definition count " <> definition @a) $ do
 
 -- | Add to @RecordM@ a new instance given a 'Record', and return the 'Ref' of the newly created instance.
 --
+-- Note: By default RecordM answers before the added record being searchable.
+-- If you want to add an instance but only continue when it's searchable, see
+-- 'rmAddInstanceWith'
+--
 -- ==== __Example__
 --
 -- @
@@ -286,6 +285,17 @@ defaultAddInstanceConf = AddInstanceConf False
 
 -- | Add an instance to RecordM with a config 'AddInstanceConf' to have control
 -- over finer details of instance creation.
+--
+-- Note: If you want to use the added instance right after adding it, the
+-- waitForSearchAvailability config property should be True.
+--
+-- Example
+-- @
+-- ref <- rmAddInstanceWith (AddInstanceConf True) (ServersRecord ...)
+-- -- Only because waitForSearchAvailability is true ^, will the update be able to
+-- -- find the added instance and update it
+-- rmUpdateInstance ref (property .~ newValue)
+-- @
 rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> CobT m (Ref a)
 rmAddInstanceWith conf record = trace ("add instance to definition " <> definition @a) $ do
     session <- CobT $ lift ask
