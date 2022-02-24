@@ -40,7 +40,7 @@ type CobError = String
 -- A constructed monad made out of an existing monad @m@ such that its
 -- computations can be embedded in 'CobT', from which it's also possible to
 -- interact with @RecordM@.
-newtype CobT m a = CobT { unCob :: ExceptT CobError (ReaderT CobSession m) a }
+newtype CobT m a = Cob { unCob :: ExceptT CobError (ReaderT CobSession m) a }
                 deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError, MonadReader CobSession)
 
 -- | Lift a computation from the argument monad to a constructed 'CobT' monad.
@@ -62,7 +62,7 @@ newtype CobT m a = CobT { unCob :: ExceptT CobError (ReaderT CobSession m) a }
 --     lift (print "finished!")
 -- @
 instance MonadTrans CobT where
-    lift = CobT . lift . lift
+    lift = Cob . lift . lift
 
 -- | Allow Cob computations to fail
 --

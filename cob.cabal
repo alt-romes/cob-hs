@@ -54,7 +54,8 @@ library
 
                       -- Util
                       vector ^>=0.12.3.1,
-                      time ^>=1.9.3
+                      time ^>=1.9.3,
+                      dlist ^>=1.0
 
 
     hs-source-dirs:   src
@@ -63,7 +64,7 @@ library
 executable main
     main-is:          Main.hs
 
-    ghc-options:      -threaded -fllvm -ddump-splices
+    ghc-options:      -threaded -fllvm -ddump-splices -rtsopts 
 
     build-depends:    base ^>=4.15.0.0,
 
