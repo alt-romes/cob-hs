@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
@@ -7,6 +8,7 @@ import Control.Lens.TH
 import Data.Aeson
 import System.Environment
 
+import Control.Monad.Except
 import Data.Bifunctor
 import Control.Monad
 import Data.List
@@ -14,8 +16,7 @@ import Data.List
 import Cob
 import Cob.RecordM
 import Cob.RecordM.TH
-
-import Data.Function
+import Cob.RecordM.Testing
 
 data Classificação = Classificação
 
@@ -37,12 +38,12 @@ data MovimentoR = MovimentoR { _classificação :: Maybe (Ref Classificação)
 makeLenses ''MovimentoR
 mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observação", "Data mov", "Movimento", "Conta", "Data", "Último Saldo"]
 
-newtype Owner = Owner String
-mkRecord ''Owner "Owners" ["Owner"]
+parseArgs :: [String] -> [(Ref a, Double)]
+parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
 
 logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Cob ()
 logic (movimentoId, total) splits = do
-    guard (total == sum (map snd splits))
+    unless (total == sum (map snd splits)) (throwError "Total sum doesn't equal separate amounts")
 
     [updatedMov] <- rmUpdateInstances_ movimentoId (classificação ?~ Ref 76564)
 
@@ -57,13 +58,31 @@ logic (movimentoId, total) splits = do
         rmAddInstance (commonMov & mov .~ -amount)
 
 
+
+
+-- Demo
+
+newtype Owner = Owner String
+mkRecord ''Owner "Owners" ["Owner"]
+
+data Dog = Dog (Ref Owner) String
+         deriving (Show)
+mkRecord ''Dog "Dogs" ["Owner", "Dog"]
+
+test1 :: MonadIO m => RecordMTest m [(Ref Dog, Dog)]
+test1 = do
+    owner1 <- rmAddInstanceT (Owner "Owner1")
+    dog1 <- rmAddInstanceT (Dog owner1 "dog1")
+    dog2 <- rmAddInstanceT (Dog owner1 "dog2")
+    rmDefinitionSearchT @Dog ("owner:" <> show owner1)
+
 main :: IO ()
 main = do
-    session <- makeSession "mimes8.cultofbits.com" ""
-    ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 1 <$> getArgs
-    either <- runCob session (logic prim pargs)
-    print either
+    session <- makeSession "mimes8.cultofbits.com" "RgIHuh1MOb2Wnbbee6MDmJvaL6/x+O02XDgttc0kbAEsuhtEvQtz+xpDJ9SH4JW58cXV8N2M9w9XL/GZ8w9jc16aC74Bq8buNuIWzPVpTlFYlq3hdJmja+cqtjA+Zj6XAkJaJSEzijasep2uPWq14w=="
+    -- ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 1 <$> getArgs
+    -- either <- runCob session (logic prim pargs)
+    -- print either
+    res <- runCob session $ runRecordMTests test1
+    print res
     return ()
 
-parseArgs :: [String] -> [(Ref a, Double)]
-parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))

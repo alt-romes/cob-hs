@@ -1,4 +1,10 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, AllowAmbiguousTypes, ScopedTypeVariables, OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Cob where
 
 import Data.String (fromString)
@@ -6,9 +12,9 @@ import Data.ByteString (ByteString)
 
 import Control.Applicative  (Alternative)
 import Control.Monad.Except (MonadError, throwError)
-import Control.Monad.Reader (MonadReader)
+import Control.Monad.Reader (MonadReader, ask, local)
 import Control.Monad.Trans  (MonadIO, MonadTrans, lift)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Monad.Trans.Except (ExceptT, runExceptT)
 
 import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
@@ -36,8 +42,7 @@ type CobError = String
 -- computations can be embedded in 'CobT', from which it's also possible to
 -- interact with @RecordM@.
 newtype CobT m a = CobT { unCob :: ExceptT CobError (ReaderT CobSession m) a }
-                deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError
-                         , MonadReader CobSession, Alternative)
+                deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError, MonadReader CobSession)
 
 -- | Lift a computation from the argument monad to a constructed 'CobT' monad.
 --

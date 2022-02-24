@@ -24,7 +24,8 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:  Cob,
                       Cob.RecordM,
-                      Cob.RecordM.TH
+                      Cob.RecordM.TH,
+                      Cob.RecordM.Testing
 
     ghc-options:      -fllvm
     build-depends:    base ^>=4.15.0.0,
@@ -61,9 +62,6 @@ library
 
 executable main
     main-is:          Main.hs
-    other-modules:    Cob,
-                      Cob.RecordM,
-                      Cob.RecordM.TH
 
     ghc-options:      -threaded -fllvm -ddump-splices
 
@@ -93,8 +91,11 @@ executable main
 
                       -- Util
                       vector ^>=0.12.3.1,
-                      time ^>=1.9.3
+                      time ^>=1.9.3,
+
+                      cob
 
 
-    hs-source-dirs:   src
+
+    hs-source-dirs:   app
     default-language: Haskell2010
