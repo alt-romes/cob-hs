@@ -1,4 +1,3 @@
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -11,17 +10,17 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Monad              ( unless, forM, join, mapM        )
-import Control.Monad.Reader       ( ask, MonadReader                )
-import Control.Monad.Except       ( throwError, MonadError          )
-import Control.Monad.Writer       ( tell, Writer, runWriter, writer )
-import Control.Monad.Trans        ( MonadIO, lift                   )
-import Control.Monad.Trans.Reader ( ReaderT, runReaderT             )
-import Control.Monad.Trans.Except ( ExceptT, runExceptT, except     )
+import Control.Monad              ( unless, forM, join, mapM    )
+import Control.Monad.Reader       ( ask                         )
+import Control.Monad.Except       ( throwError                  )
+import Control.Monad.Writer       ( tell                        )
+import Control.Monad.Trans        ( MonadIO, lift               )
+import Control.Monad.Trans.Reader ( ReaderT, runReaderT         )
+import Control.Monad.Trans.Except ( ExceptT, runExceptT, except )
 
-import Data.DList         ( singleton, DList, empty          )
+import Data.DList         ( singleton, DList                 )
 
-import Data.Bifunctor     ( second, first                    )
+import Data.Bifunctor     ( second                           )
 import Data.Either        ( either                           )
 import Data.Maybe         ( catMaybes, mapMaybe, listToMaybe )
 
@@ -178,32 +177,7 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
                                       , _ascending = Nothing
                                       }
 
-type RecordM a = RecordMT IO a
 
-newtype RecordMT m a = RecordMT { unRecordM :: Writer (DList Int) (CobT m a) }
-                        -- deriving (Applicative, Monad, MonadIO, MonadError CobError, MonadReader CobSession)
-
-instance Functor f => Functor (RecordMT f) where
-    fmap f = RecordMT . (fmap . fmap) f . unRecordM
-
-instance Applicative f => Applicative (RecordMT f) where
-    pure = RecordMT . pure . pure
-    (RecordMT wf) <*> (RecordMT wx) = RecordMT (wf >>= \f -> wx >>= \x -> return (f <*> x))
-
-instance Monad m => Monad (RecordMT m) where
-    -- (RecordMT wx) >>= f = RecordMT (wx >>= \cx -> writer (swap ((empty, cx) >>= (swap . runWriter . unRecordM . f))))
-
-    (>>=) :: forall a b m. RecordMT m a -> (a -> RecordMT m b) -> RecordMT m b
-    (RecordMT wx) >>= f = RecordMT $ do
-        cx :: CobT m a <- wx :: Writer (DList Int) (CobT m a)
-        let yy :: (CobT m b, DList Int) = let (g :: a -> CobT m b, h :: a -> DList Int) = crazy (runWriter . unRecordM . (f :: a -> RecordMT m b)) :: (a -> CobT m b, a -> DList Int) in
-                (cx >>= g, cx >>= (return . h))
-        writer yy
-swap (a, b) = (b, a)
-
-crazy :: (a -> (b, c)) -> (a -> b, a -> c)
-crazy f = (fst . f, snd . f)
-        
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', and return a list of references ('Ref') of a record and the corresponding records ('Record').
 --
@@ -226,7 +200,7 @@ crazy f = (fst . f, snd . f)
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
-rmDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordMT m [(Ref a, a)]
+rmDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [(Ref a, a)]
 rmDefinitionSearch rmQuery = do
     session <- ask
     let request = (cobDefaultRequest session)
@@ -237,7 +211,7 @@ rmDefinitionSearch rmQuery = do
     hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
     let hitsSources = mapMaybe (^? key "_source") hits                            -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
-    records <- (Cob . except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    records <- (CobT . except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                                                      -- Return list of (id, record)
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
