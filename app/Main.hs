@@ -78,11 +78,17 @@ test1 = do
 
 main :: IO ()
 main = do
-    session <- makeSession "mimes8.cultofbits.com" "RgIHuh1MOb2Wnbbee6MDmJvaL6/x+O02XDgttc0kbAEsuhtEvQtz+xpDJ9SH4JW58cXV8N2M9w9XL/GZ8w9jc16aC74Bq8buNuIWzPVpTlFYlq3hdJmja+cqtjA+Zj6XAkJaJSEzijasep2uPWq14w=="
-    -- ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 1 <$> getArgs
-    -- either <- runCob session (logic prim pargs)
-    -- print either
+    session <- makeSession "mimes8.cultofbits.com" ""
     res <- runCob session $ runRecordMTests test1
     print res
     return ()
 
+
+
+
+
+
+
+    -- ([prim], pargs) <- bimap parseArgs parseArgs . splitAt 1 <$> getArgs
+    -- either <- runCob session (logic prim pargs)
+    -- print either

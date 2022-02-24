@@ -1,8 +1,10 @@
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Cob where
@@ -16,6 +18,7 @@ import Control.Monad.Reader (MonadReader, ask, local)
 import Control.Monad.Trans  (MonadIO, MonadTrans, lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Monad.Trans.Except (ExceptT, runExceptT)
+import Control.Monad.Trans.Identity (IdentityT, runIdentityT)
 
 import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
@@ -41,8 +44,22 @@ type CobError = String
 -- A constructed monad made out of an existing monad @m@ such that its
 -- computations can be embedded in 'CobT', from which it's also possible to
 -- interact with @RecordM@.
-newtype CobT m a = CobT { unCob :: ExceptT CobError (ReaderT CobSession m) a }
-                deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError, MonadReader CobSession)
+newtype CobTX x m a = CobT { unCob :: (XCob x) (ExceptT CobError (ReaderT CobSession m)) a }
+
+deriving instance Functor f => Functor (CobTX x f)
+deriving instance Monad m => Applicative (CobTX x m)
+deriving instance Monad m => Monad (CobTX x m)
+deriving instance MonadIO m => MonadIO (CobTX x m)
+deriving instance Monad m => MonadError CobError (CobTX x m)
+deriving instance Monad m => MonadReader CobSession (CobTX x m)
+
+type family XCob x :: (* -> *) -> * -> *
+
+data NoX
+type instance XCob NoX = IdentityT
+
+type CobT = CobTX NoX
+
 
 -- | Lift a computation from the argument monad to a constructed 'CobT' monad.
 --
@@ -63,7 +80,7 @@ newtype CobT m a = CobT { unCob :: ExceptT CobError (ReaderT CobSession m) a }
 --     lift (print "finished!")
 -- @
 instance MonadTrans CobT where
-    lift = CobT . lift . lift
+    lift = CobT . lift . lift . lift
 
 -- | Allow Cob computations to fail
 --
@@ -84,7 +101,7 @@ instance Monad m => MonadFail (CobT m) where
 -- Run a 'CobT' computation and return either a 'CobError' or a value
 -- in the argument monad @m@.
 runCobT :: Monad m => CobSession -> CobT m a -> m (Either CobError a)
-runCobT session cob = runReaderT (runExceptT $ unCob cob) session
+runCobT session cob = runReaderT (runExceptT $ runIdentityT $ unCob cob) session
 
 
 
