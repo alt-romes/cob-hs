@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Cob.RecordM.Testing where
 
 
@@ -14,57 +15,34 @@ import Control.Monad.Trans (lift, MonadTrans)
 import Cob
 import Cob.RecordM
 
-data RecordMOp = NoOp | Search | Count | Add Int {- UNSAFE 'Ref' -} | Update | Delete
+data RecordMOp = NoOp | Search | Count | Add Int {- type unsafe 'Ref' -} | Update | Delete
 
-data RecordMTest m a = RecordMTest { operation :: RecordMOp
-                                   , unCobTest :: StateT [Int {- UNSAFE 'Ref' -}] (CobT m) a }
+newtype RecordMTest m a = RecordMTest { unCobTest :: StateT [Int {- type unsafe 'Ref' -}] (CobT m) a }
+                            deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError, MonadReader CobSession)
+
  
-
-instance Functor f => Functor (RecordMTest f) where
-    fmap f (RecordMTest op x) = RecordMTest op (fmap f x)
-
-instance Monad m => Applicative (RecordMTest m) where
-    pure  = RecordMTest NoOp . pure
-    (RecordMTest (Add ref) f) <*> (RecordMTest op x) = RecordMTest op (modify (ref:) >> f <*> x)
-    (RecordMTest _ f) <*> (RecordMTest op x) = RecordMTest op (f <*> x)
-
-instance Monad m => Monad (RecordMTest m) where
-    (RecordMTest (Add ref) x) >>= f = do
-        session <- RecordMTest NoOp $ lift ask
-        errorOrX <- lift $ runCobT session $ runStateT x []
-        case errorOrX of
-          Left err -> RecordMTest NoOp $ lift $ throwError err
-          Right (x', s) -> RecordMTest NoOp (modify (ref:)) >> f x'
-
-    (RecordMTest _ x) >>= f = do
-        session <- RecordMTest NoOp $ lift ask
-        errorOrX <- lift $ runCobT session $ runStateT x []
-        case errorOrX of
-          Left err -> RecordMTest NoOp $ lift $ throwError err
-          Right (x', s) -> f x'
-
 instance MonadTrans RecordMTest where
-    lift = RecordMTest NoOp . lift . lift
+    lift = RecordMTest . lift . lift
 
 runRecordMTests :: Monad m => RecordMTest m a -> CobT m (a, [Int])
 runRecordMTests = flip runStateT [] . unCobTest
 
 rmDefinitionSearchT :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordMTest m [(Ref a, a)]
-rmDefinitionSearchT = RecordMTest Search . lift . rmDefinitionSearch
+rmDefinitionSearchT = RecordMTest . lift . rmDefinitionSearch
 
 rmDefinitionCountT :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordMTest m (Count a)
-rmDefinitionCountT = RecordMTest Cob.RecordM.Testing.Count . lift . rmDefinitionCount
+rmDefinitionCountT = RecordMTest . lift . rmDefinitionCount
 
 rmAddInstanceT :: forall a m. (MonadIO m, Record a) => a -> RecordMTest m (Ref a)
-rmAddInstanceT a =
-    RecordMTest NoOp (lift (rmAddInstance a)) >>= \ref ->
-        RecordMTest (Add (ref_id ref)) (return ref)
-    -- RecordMTest (Add 5) (lift (rmAddInstance a))
+rmAddInstanceT a = do
+    ref <- RecordMTest $ lift $ rmAddInstance a
+    RecordMTest $ modify (ref_id ref:)
+    return ref
 
 rmUpdateInstanceT :: forall a m. (MonadIO m, Record a) => Ref a -> (a -> a) -> RecordMTest m a
-rmUpdateInstanceT ref = RecordMTest Update . lift . rmUpdateInstance ref
+rmUpdateInstanceT ref = RecordMTest . lift . rmUpdateInstance ref
 
 rmUpdateInstancesT :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> RecordMTest m [(Ref a, a)]
-rmUpdateInstancesT q = RecordMTest Update . lift . rmUpdateInstances q
+rmUpdateInstancesT q = RecordMTest . lift . rmUpdateInstances q
 
 -- TODO: Get or add instance should have add type
