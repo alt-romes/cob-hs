@@ -24,8 +24,6 @@ import Data.Bifunctor     ( second                           )
 import Data.Either        ( either                           )
 import Data.Maybe         ( catMaybes, mapMaybe, listToMaybe )
 
-import Data.DList (DList)
-
 import Data.Aeson.Types
 import Data.Aeson.Lens    ( key, _Integer )
 
