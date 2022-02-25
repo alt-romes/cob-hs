@@ -1,5 +1,6 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -16,6 +17,9 @@ import Control.Monad.Trans  (MonadIO, MonadTrans, lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Monad.Trans.Except (ExceptT, runExceptT)
 
+import Data.DList (DList, empty)
+import Data.Bifunctor (first, second, bimap)
+
 import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
@@ -29,8 +33,8 @@ import Network.HTTP.Simple (setRequestManager)
 type Cob a = CobT IO a
 
 -- | Run a 'Cob' computation and get either a 'CobError' or a value in an 'IO' context.
-runCob :: CobSession -> Cob a -> IO (Either CobError a)
-runCob = runCobT
+-- runCob :: CobSession -> Cob a -> IO (Either CobError a)
+-- runCob = runCobT
 
 -- | A 'Cob' computation will either succeed or return a 'CobError'.
 type CobError = String
@@ -40,8 +44,35 @@ type CobError = String
 -- A constructed monad made out of an existing monad @m@ such that its
 -- computations can be embedded in 'CobT', from which it's also possible to
 -- interact with @RecordM@.
-newtype CobT m a = Cob { unCob :: ExceptT CobError (ReaderT CobSession m) a }
-                deriving (Functor, Applicative, Monad, MonadIO, MonadError CobError, MonadReader CobSession)
+newtype CobT m a = Cob { unCob :: CobSession -> m (Either CobError a, DList Int) }
+
+instance Functor m => Functor (CobT m) where
+    fmap f = Cob . (fmap . fmap) (first (fmap f)) . unCob
+    {-# INLINE fmap #-}
+    -- [x] fmap id = id
+
+instance Applicative m => Applicative (CobT m) where
+    pure = Cob . const . pure . (, empty) . Right
+    {-# INLINE pure #-}
+    (Cob f') <*> (Cob g) = Cob $ \r ->
+        (\case (Left e, l) -> const (Left e, l); (Right f, l) -> bimap (fmap f) (l <>)) <$> f' r <*> g r
+    {-# INLINE (<*>) #-}
+    -- [x] pure id <*> v = v
+    -- [x] pure (.) <*> u <*> v <*> w = u <*> (v <*> w)
+    -- [x] pure f <*> pure x = pure (f x)
+    -- [x] u <*> pure y = pure ($ y) <*> u
+
+instance Monad m => Monad (CobT m) where
+    (Cob x') >>= f' = Cob $ \r ->
+        x' r >>= \case
+          (Left err, l) -> return (Left err, l)
+          (Right x, l)  -> second (l <>) <$> unCob (f' x) r
+    {-# INLINE (>>=) #-}
+    -- [x] return a >>= k = k a
+    -- [x] m >>= return = m
+    -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
+
+
 
 -- | Lift a computation from the argument monad to a constructed 'CobT' monad.
 --
@@ -61,8 +92,8 @@ newtype CobT m a = Cob { unCob :: ExceptT CobError (ReaderT CobSession m) a }
 --     ...
 --     lift (print "finished!")
 -- @
-instance MonadTrans CobT where
-    lift = Cob . lift . lift
+-- instance MonadTrans CobT where
+--     lift = Cob . lift . lift
 
 -- | Allow Cob computations to fail
 --
@@ -82,8 +113,8 @@ instance Monad m => MonadFail (CobT m) where
 --
 -- Run a 'CobT' computation and return either a 'CobError' or a value
 -- in the argument monad @m@.
-runCobT :: Monad m => CobSession -> CobT m a -> m (Either CobError a)
-runCobT session cob = runReaderT (runExceptT $ unCob cob) session
+-- runCobT :: Monad m => CobSession -> CobT m a -> m (Either CobError a)
+-- runCobT session cob = runReaderT (runExceptT $ unCob cob) session
 
 
 

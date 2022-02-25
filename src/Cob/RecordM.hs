@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -10,19 +11,20 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Monad              ( unless, forM, join, mapM    )
-import Control.Monad.Reader       ( ask                         )
-import Control.Monad.Except       ( throwError                  )
-import Control.Monad.Writer       ( tell                        )
-import Control.Monad.Trans        ( MonadIO, lift               )
-import Control.Monad.Trans.Reader ( ReaderT, runReaderT         )
-import Control.Monad.Trans.Except ( ExceptT, runExceptT, except )
-
-import Data.DList         ( singleton, DList                 )
+import Control.Monad              ( unless, forM, join, mapM           )
+import Control.Monad.Reader       ( ask, MonadReader                   )
+import Control.Monad.Except       ( throwError, MonadError, liftEither )
+import Control.Monad.State        ( MonadState, get, modify            )
+import Control.Monad.Trans        ( MonadIO, lift, MonadTrans          )
+import Control.Monad.Trans.Reader ( ReaderT, runReaderT                )
+import Control.Monad.Trans.Except ( ExceptT, runExceptT, except        )
+import Control.Monad.Trans.State  ( StateT, runStateT )
 
 import Data.Bifunctor     ( second                           )
 import Data.Either        ( either                           )
 import Data.Maybe         ( catMaybes, mapMaybe, listToMaybe )
+
+import Data.DList (DList)
 
 import Data.Aeson.Types
 import Data.Aeson.Lens    ( key, _Integer )
@@ -39,8 +41,31 @@ import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessfu
 
 import Cob
 
+--- RecordM
+
+-- newtype RecordMT m a = RecordM { unRecordM :: StateT [Int] (ExceptT (CobError, [Int]) (ReaderT CobSession m)) a }
+--                 deriving (Functor, Applicative, Monad, MonadIO, MonadError (CobError, [Int]), MonadReader CobSession, MonadState [Int])
+
+newtype RecordMT m a = RecordM { unRecordM :: CobSession -> m (Either CobError a, DList Int) }
+
+-- instance MonadTrans RecordMT where
+--     lift = RecordM  . lift . lift . lift
+
+-- instance Monad m => MonadFail (RecordMT m) where
+--     fail e = get >>= \s -> throwError (e, s)
+
+-- Is Either (e, S) (a, S) isomorphic to (Either e a, S)
+ee :: Either (e, s) (a, s) -> (Either e a, s)
+ee (Left (e, s)) = (Left e, s)
+ee (Right (a, s)) = (Right a, s)
+
+coee :: (Either e a, s) -> Either (e, s) (a, s)
+coee (Left e, s) = Left (e, s)
+coee (Right a, s) = Right (a, s)
+
 
 --- Definitions and Records
+
 -- | 'Definition' is a type synonym modelling a RecordM Definition
 type Definition = String
 
@@ -177,8 +202,6 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
                                       , _ascending = Nothing
                                       }
 
-
-
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', and return a list of references ('Ref') of a record and the corresponding records ('Record').
 --
 -- The 'Record' type to search for is inferred from the usage of the return element.
@@ -211,7 +234,7 @@ rmDefinitionSearch rmQuery = do
     hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
     let hitsSources = mapMaybe (^? key "_source") hits                            -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
-    records <- (CobT . except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    records <- (Cob . except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                                                      -- Return list of (id, record)
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
@@ -298,9 +321,9 @@ defaultAddInstanceConf = AddInstanceConf False
 -- -- find the added instance and update it
 -- rmUpdateInstance ref (property .~ newValue)
 -- @
-rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> CobT m (Ref a)
+rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> RecordMT m (Ref a)
 rmAddInstanceWith conf record = do
-    session <- Cob $ lift ask
+    session <- (RecordM . lift . lift) ask
     let request = setRequestBodyJSON
                   (object $ catMaybes
                       [ Just ("type"   .= definition @a)
@@ -312,8 +335,8 @@ rmAddInstanceWith conf record = do
                       , path   = "/recordm/recordm/instances/integration" }
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response
-    id             <- Cob . except . parseEither parseJSON =<< ((rbody ^? key "id") ?: throwError "Couldn't get created record id on add instance!")
-    tell (singleton id)
+    id             <- RecordM . lift . liftEither . either fail id . parseEither parseJSON =<< ((rbody ^? key "id") ?: fail "Couldn't get created record id on add instance!")
+    modify (id:)
     return (Ref id)
 
 -- | Update an instance with an id and return the updated record.
