@@ -18,7 +18,9 @@ import Data.ByteString (ByteString)
 
 import Data.Maybe (listToMaybe)
 
-import Control.Monad ((>=>))
+import Control.Applicative (Alternative, empty, (<|>))
+import Control.Monad       (MonadPlus, (>=>))
+
 import Control.Monad.Except   (MonadError, throwError, catchError)
 import Control.Monad.Reader   (MonadReader, ask, local)
 import Control.Monad.Writer   (MonadWriter, tell, listen, pass)
@@ -90,6 +92,15 @@ instance (Monoid (CobWriter c), Monad m) => Monad (CobT c m) where
     -- [x] return a >>= k = k a
     -- [x] m >>= return = m
     -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
+
+instance (Monoid (CobWriter c), Applicative m) => Alternative (CobT c m) where
+    empty = Cob (const (pure (Left "Cob (alternative) empty computation. No error message.", mempty)))
+    {-# INLINE empty #-} 
+    (Cob x') <|> (Cob y) = Cob $ \r ->
+        (\case (Left e, l) -> id; (Right x, l) -> const (Right x, l)) <$> x' r <*> y r
+    {-# INLINE (<|>) #-} 
+
+instance (Monoid (CobWriter c), Monad m) => MonadPlus (CobT c m) where
 
 instance (Monoid (CobWriter c), Monad m) => MonadReader CobSession (CobT c m) where
     ask = Cob (pure . (, mempty) . Right)

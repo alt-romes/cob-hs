@@ -27,7 +27,7 @@ library
                       Cob.RecordM.TH,
                       Cob.RecordM.Testing
 
-    ghc-options:      -fllvm
+    ghc-options:      -fllvm -O2
     build-depends:    base ^>=4.15.0.0,
 
                       -- text ^>=1.2.5.0,
@@ -65,7 +65,7 @@ library
 executable main
     main-is:          Main.hs
 
-    ghc-options:      -threaded -fllvm -rtsopts -ddump-simpl-stats -fglasgow-exts
+    ghc-options:      -threaded -fllvm -rtsopts
 
     build-depends:    base ^>=4.15.0.0,
 

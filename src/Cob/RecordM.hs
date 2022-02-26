@@ -9,6 +9,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.RecordM where
 
+-- TODO: Make Async versions of functions that receive a callback
+
+-- TODO: Make Cob instance Alternative
+
 -- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
 -- an instance of Record to find them or make body of search conditional on
 -- whether it's a ref or not..
@@ -16,12 +20,13 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Monad              ( unless, forM, join, mapM )
-import Control.Monad.Reader       ( ask                      )
-import Control.Monad.Except       ( throwError, liftEither   )
-import Control.Monad.IO.Class     ( MonadIO, liftIO          )
-import Control.Monad.Writer       ( tell                     )
-import Control.Monad.Trans        ( lift                     )
+import Control.Applicative        ( (<|>)                           )
+import Control.Monad              ( unless, forM, join, mapM, mzero )
+import Control.Monad.Reader       ( ask                             )
+import Control.Monad.Except       ( throwError, liftEither          )
+import Control.Monad.IO.Class     ( MonadIO, liftIO                 )
+import Control.Monad.Writer       ( tell                            )
+import Control.Monad.Trans        ( lift                            )
 
 import Data.Bifunctor     ( second              )
 import Data.Either        ( either              )
@@ -241,6 +246,14 @@ rmDefinitionSearch rmQuery = do
     return (zip ids records)                                                      -- Return list of (id, record)
 {-# INLINABLE rmDefinitionSearch #-}
 
+-- | Get an instance by id and fail if the instance isn't found
+--
+-- TODO: Use /recordm/instances/{id} instead of definitions/search?
+rmGetInstance :: forall a m. (MonadIO m, Record a) => Ref a -> RecordM m a
+rmGetInstance ref = rmDefinitionSearch_ ref ?:: throwError ("Couldn't find instance with id " <> show ref)
+{-# INLINE rmGetInstance #-}
+
+
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
 -- 'rmDefinitionSearch', but ignore the records references ('Ref').
 -- Instead, this function returns only a list of the records ('Record') found.
@@ -433,14 +446,8 @@ rmGetOrAddInstanceM = rmGetOrAddInstanceWithM defaultAddInstanceConf
 --
 -- See also 'rmGetOrAddInstanceM' and the difference between 'rmAddInstance' and 'rmAddInstanceWith'
 rmGetOrAddInstanceWithM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> RecordM m a -> RecordM m (Ref a, a)
-rmGetOrAddInstanceWithM conf rmQuery newRecordMIO = do
-    session <- ask
-    records <- rmDefinitionSearch rmQuery
-    case records of
-      [] -> do
-          newRecord <- newRecordMIO -- Execute IO computation to retrieve value
-          (, newRecord) <$> rmAddInstanceWith conf newRecord
-      record:_ -> return record
+rmGetOrAddInstanceWithM conf rmQuery newRecordMIO =
+    rmDefinitionSearch rmQuery ?:: mzero <|> (newRecordMIO >>= \newRecord -> (, newRecord) <$> rmAddInstanceWith conf newRecord)
 {-# INLINABLE rmGetOrAddInstanceWithM #-}
 
 rmDeleteInstance :: forall a m. MonadIO m => Ref a -> RecordM m ()
