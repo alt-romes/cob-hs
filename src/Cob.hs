@@ -1,3 +1,6 @@
+{-# LANGUAGE UndecidableInstances #-} 
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TupleSections #-}
@@ -11,12 +14,15 @@ module Cob where
 import Data.String (fromString)
 import Data.ByteString (ByteString)
 
+import Data.Maybe (listToMaybe)
+
+import Control.Monad ((>=>))
 import Control.Monad.Except   (MonadError, throwError, catchError)
 import Control.Monad.Reader   (MonadReader, ask, local)
+import Control.Monad.Writer   (MonadWriter, tell, listen, pass)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans    (MonadTrans, lift)
 
-import Data.DList (DList, empty)
 import Data.Bifunctor (first, second, bimap)
 
 import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
@@ -29,11 +35,11 @@ import Network.HTTP.Simple (setRequestManager)
 -- A context in which computations that interact with @RecordM@ can be executed.
 -- 
 -- See 'CobT' for more.
-type Cob a = CobT () IO a
+type Cob a = CobT 'NoModule IO a
 
 -- | Run a 'Cob' computation and get either a 'CobError' or a value in an 'IO' context.
 runCob :: CobSession -> Cob a -> IO (Either CobError a)
-runCob = runCobT
+runCob session = fmap fst . runCobT session
 {-# INLINE runCob #-}
 
 -- | A 'Cob' computation will either succeed or return a 'CobError'.
@@ -45,16 +51,25 @@ type CobError = String
 -- computations can be embedded in 'CobT', from which it's also possible to
 -- interact with @RecordM@.
 --
--- The @w@ parameter stands for writer -- a Cob computation supports writing to 
-newtype CobT w m a = Cob { unCob :: CobSession -> m (Either CobError a, DList w) }
+-- The @cm@ parameter is the 'CobModule' -- the base Cob monad is extended by each module
+--
+newtype CobT (c :: CobModule) m a = Cob { unCob :: CobSession -> m (Either CobError a, CobWriter c) }
 
-instance Functor m => Functor (CobT w m) where
+-- | The kind of module running in this Cob computation
+data CobModule = NoModule | RecordM
+
+-- | Define which kind of Monoid writer Cob uses, depending on the module
+type family CobWriter (c :: CobModule)
+-- | @CobT NoModule@ uses @()@ for the writer monoid
+type instance CobWriter 'NoModule = ()
+
+instance Functor m => Functor (CobT c m) where
     fmap f = Cob . (fmap . fmap) (first (fmap f)) . unCob
     {-# INLINE fmap #-}
     -- [x] fmap id = id
 
-instance Applicative m => Applicative (CobT w m) where
-    pure = Cob . const . pure . (, empty) . Right
+instance (Monoid (CobWriter c), Applicative m) => Applicative (CobT c m) where
+    pure = Cob . const . pure . (, mempty) . Right
     {-# INLINE pure #-}
     (Cob f') <*> (Cob g) = Cob $ \r ->
         (\case (Left e, l) -> const (Left e, l); (Right f, l) -> bimap (fmap f) (l <>)) <$> f' r <*> g r
@@ -64,7 +79,7 @@ instance Applicative m => Applicative (CobT w m) where
     -- [x] pure f <*> pure x = pure (f x)
     -- [x] u <*> pure y = pure ($ y) <*> u
 
-instance Monad m => Monad (CobT w m) where
+instance (Monoid (CobWriter c), Monad m) => Monad (CobT c m) where
     (Cob x') >>= f' = Cob $ \r ->
         x' r >>= \case
           (Left err, l) -> return (Left err, l)
@@ -74,14 +89,14 @@ instance Monad m => Monad (CobT w m) where
     -- [x] m >>= return = m
     -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
 
-instance Monad m => MonadReader CobSession (CobT w m) where
-    ask = Cob (pure . (, empty) . Right)
+instance (Monoid (CobWriter c), Monad m) => MonadReader CobSession (CobT c m) where
+    ask = Cob (pure . (, mempty) . Right)
     {-# INLINE ask #-}
     local f m = Cob (unCob m . f)
     {-# INLINE local #-}
 
-instance Monad m => MonadError CobError (CobT w m) where
-    throwError = Cob . const . pure . (, empty) . Left
+instance (Monoid (CobWriter c), Monad m) => MonadError CobError (CobT c m) where
+    throwError = Cob . const . pure . (, mempty) . Left
     {-# INLINE throwError #-}
     (Cob x') `catchError` handler = Cob $ \r ->
         x' r >>= \case
@@ -99,13 +114,24 @@ instance Monad m => MonadError CobError (CobT w m) where
 -- @
 -- [user1] <- rmDefinitionSearch_ "id:456767*" :: [User]
 -- @
-instance Monad m => MonadFail (CobT w m) where
+instance (Monoid (CobWriter c), Monad m) => MonadFail (CobT c m) where
     fail = throwError
     {-# INLINE fail #-}
     -- [x] fail s >>= f = fail s
 
-instance MonadIO m => MonadIO (CobT w m) where
-    liftIO = Cob . const . fmap ((, empty) . Right) . liftIO
+instance (w ~ CobWriter c, Monoid w, Monad m) => MonadWriter w (CobT c m) where
+    tell = Cob . const . pure . (Right (),)
+    {-# INLINE tell #-}
+    listen a' = Cob (unCob a' >=> \(a, w) -> return (fmap (,w) a, w))
+    {-# INLINE listen #-}
+    pass (Cob a') = Cob $ \r -> do
+        a' r >>= \case
+          (Left err, w) -> return (Left err, w)
+          (Right (a, f), w) -> return (Right a, f w)
+    {-# INLINE pass #-}
+
+instance (Monoid (CobWriter c), MonadIO m) => MonadIO (CobT c m) where
+    liftIO = Cob . const . fmap ((, mempty) . Right) . liftIO
     {-# INLINE liftIO #-}
     -- [x] liftIO . return = return
     -- [x] liftIO (m >>= f) = liftIO m >>= (liftIO . f)
@@ -128,8 +154,8 @@ instance MonadIO m => MonadIO (CobT w m) where
 --     ...
 --     lift (print "finished!")
 -- @
-instance MonadTrans (CobT w) where
-    lift = Cob . const . fmap ((, empty) . Right)
+instance Monoid (CobWriter c) => MonadTrans (CobT c) where
+    lift = Cob . const . fmap ((, mempty) . Right)
     {-# INLINE lift #-}
     -- [x] lift . return = return
     -- [x] lift (m >>= f) = lift m >>= (lift . f)
@@ -138,9 +164,9 @@ instance MonadTrans (CobT w) where
 -- | The inverse of 'CobT'.
 --
 -- Run a 'CobT' computation and return either a 'CobError' or a value
--- in the argument monad @m@.
-runCobT :: Monad m => CobSession -> CobT w m a -> m (Either CobError a)
-runCobT session cob = fst <$> unCob cob session
+-- in the argument monad @m@, alongside the writer log
+runCobT :: CobSession -> CobT c m a -> m (Either CobError a, CobWriter c)
+runCobT = flip unCob
 {-# INLINE runCobT #-}
 
 
@@ -177,6 +203,47 @@ makeSession host tok = do
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
 
 
+--- Existable
+
+-- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
+-- to retrieve the element if it exists or return a default value (passed in
+-- the second parameter) if it doesn't.
+class Existable e where
+    -- | Return the value from the 'Existable' if it exists, otherwise return the
+    -- default value passed as the second argument
+    (?:) :: Monad m => e a -> m a -> m a
+    infix 7 ?:
+
+    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists, otherwise return the
+    -- default value passed as the second argument
+    (?::) :: Monad m => Existable e => m (e a) -> m a -> m a
+    mex ?:: def = mex >>= flip (?:) def
+    infix 7 ?::
+    {-# INLINE (?::) #-}
+
+-- | A 'Maybe' is 'Existable' because it's either 'Just' a value or 'Nothing'.
+instance Existable Maybe where
+    -- | Return the value from the 'Maybe' if it exists, otherwise return the
+    -- default value passed as the second argument
+    mb ?: def = maybe def return mb
+    {-# INLINE (?:) #-}
+
+-- | A list is 'Existable' because it might have no elements or at least one
+-- element. When using '?:', if the list is non-empty, the first element will
+-- be returned. This is useful when doing a 'rmDefinitionSearch' and are
+-- expecting exactly one result, and want to throw an error in the event that
+-- none are returned.
+--
+-- Example:
+-- 
+-- @
+-- user <- rmDefinitionSearch_ @UsersRecord name ?:: throwError "Couldn't find user!"
+-- @
+instance Existable [] where
+    -- | Return the first element of the list if it exists, otherwise return the
+    -- default value passed as the second argument
+    ls ?: def = (maybe def return . listToMaybe) ls
+    {-# INLINE (?:) #-}
 
 
 -- | @Internal@ The default HTTP request used internally (targeting RecordM) in

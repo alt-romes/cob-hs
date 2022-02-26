@@ -1,4 +1,5 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -11,18 +12,17 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Monad              ( unless, forM, join, mapM           )
-import Control.Monad.Reader       ( ask, MonadReader                   )
-import Control.Monad.Except       ( throwError, MonadError, liftEither )
-import Control.Monad.State        ( MonadState, get, modify            )
-import Control.Monad.Trans        ( MonadIO, lift, MonadTrans          )
-import Control.Monad.Trans.Reader ( ReaderT, runReaderT                )
-import Control.Monad.Trans.Except ( ExceptT, runExceptT, except        )
-import Control.Monad.Trans.State  ( StateT, runStateT )
+import Control.Monad              ( unless, forM, join, mapM )
+import Control.Monad.Reader       ( ask                      )
+import Control.Monad.Except       ( throwError, liftEither   )
+import Control.Monad.Writer       ( tell                     )
+import Control.Monad.Trans        ( MonadIO, lift            )
 
-import Data.Bifunctor     ( second                           )
-import Data.Either        ( either                           )
-import Data.Maybe         ( catMaybes, mapMaybe, listToMaybe )
+import Data.Bifunctor     ( second              )
+import Data.Either        ( either              )
+import Data.Maybe         ( catMaybes, mapMaybe )
+
+import Data.DList (DList, singleton)
 
 import Data.Aeson.Types
 import Data.Aeson.Lens    ( key, _Integer )
@@ -41,26 +41,18 @@ import Cob
 
 --- RecordM
 
--- newtype RecordMT m a = RecordM { unRecordM :: StateT [Int] (ExceptT (CobError, [Int]) (ReaderT CobSession m)) a }
---                 deriving (Functor, Applicative, Monad, MonadIO, MonadError (CobError, [Int]), MonadReader CobSession, MonadState [Int])
+type RecordM m a = CobT 'RecordM m a
 
-newtype RecordMT m a = RecordM { unRecordM :: CobSession -> m (Either CobError a, DList Int) }
+-- | RecordM writes the added instances thorought the Cob computation.
+-- This allows it to undo (delete) all added instances in a computation (particularly in a testing environment)
+--
+-- This list of added instances is **unused** when the computation is run with 'runRecordM'.
+-- However, when the computation is run with 'runRecordMTests', all added instances will be deleted
+type instance CobWriter 'RecordM = DList Int
 
--- instance MonadTrans RecordMT where
---     lift = RecordM  . lift . lift . lift
-
--- instance Monad m => MonadFail (RecordMT m) where
---     fail e = get >>= \s -> throwError (e, s)
-
--- Is Either (e, S) (a, S) isomorphic to (Either e a, S)
-ee :: Either (e, s) (a, s) -> (Either e a, s)
-ee (Left (e, s)) = (Left e, s)
-ee (Right (a, s)) = (Right a, s)
-
-coee :: (Either e a, s) -> Either (e, s) (a, s)
-coee (Left e, s) = Left (e, s)
-coee (Right a, s) = Right (a, s)
-
+runRecordM :: Functor m => CobSession -> RecordM m a -> m (Either CobError a)
+runRecordM session recm = fst <$> runCobT session recm
+{-# INLINE runRecordM #-}
 
 --- Definitions and Records
 
@@ -221,7 +213,7 @@ defaultRMQuery = StandardRecordMQuery { _q         = "*"
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
-rmDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [(Ref a, a)]
+rmDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordM m [(Ref a, a)]
 rmDefinitionSearch rmQuery = do
     session <- ask
     let request = (cobDefaultRequest session)
@@ -232,7 +224,7 @@ rmDefinitionSearch rmQuery = do
     hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
     let hitsSources = mapMaybe (^? key "_source") hits                            -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
-    records <- (Cob . except . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                                                      -- Return list of (id, record)
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
@@ -240,8 +232,9 @@ rmDefinitionSearch rmQuery = do
 -- Instead, this function returns only a list of the records ('Record') found.
 --
 -- See also 'rmDefinitionSearch'
-rmDefinitionSearch_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m [a]
+rmDefinitionSearch_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordM m [a]
 rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
+{-# INLINE rmDefinitionSearch_ #-}
 
 -- | A 'Count' is parametrized with a phantom type @a@ that represents the type
 -- of records to count in a definition. Because 'Count' instances 'Num', 'Eq'
@@ -263,7 +256,7 @@ instance Ord (Count a) where
     (Count x) <= (Count y) = x <= y
 
 -- | Count the number of records matching a query in a definition
-rmDefinitionCount :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m (Count a)
+rmDefinitionCount :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordM m (Count a)
 rmDefinitionCount rmQuery = do
     session <- ask
     let request = (cobDefaultRequest session)
@@ -288,8 +281,9 @@ rmDefinitionCount rmQuery = do
 -- addDog name ownerName = do
 --      rmAddInstance (DogsRecord name ownerName 0)
 -- @
-rmAddInstance :: forall a m. (MonadIO m, Record a) => a -> CobT m (Ref a)
+rmAddInstance :: forall a m. (MonadIO m, Record a) => a -> RecordM m (Ref a)
 rmAddInstance = rmAddInstanceWith defaultAddInstanceConf
+{-# INLINE rmAddInstance #-}
 
 -- | Configuration to have finer control over adding an instance to RecordM.
 -- See 'rmAddInstanceWith'.
@@ -319,9 +313,9 @@ defaultAddInstanceConf = AddInstanceConf False
 -- -- find the added instance and update it
 -- rmUpdateInstance ref (property .~ newValue)
 -- @
-rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> RecordMT m (Ref a)
+rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> RecordM m (Ref a)
 rmAddInstanceWith conf record = do
-    session <- (RecordM . lift . lift) ask
+    session <- ask
     let request = setRequestBodyJSON
                   (object $ catMaybes
                       [ Just ("type"   .= definition @a)
@@ -333,14 +327,15 @@ rmAddInstanceWith conf record = do
                       , path   = "/recordm/recordm/instances/integration" }
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response
-    id             <- RecordM . lift . liftEither . either fail id . parseEither parseJSON =<< ((rbody ^? key "id") ?: fail "Couldn't get created record id on add instance!")
-    modify (id:)
+    id             <- either throwError return . parseEither parseJSON =<< ((rbody ^? key "id") ?: throwError "Couldn't get created record id on add instance!")
+    tell (singleton id)
     return (Ref id)
 
 -- | Update an instance with an id and return the updated record.
 -- An error will be thrown if no record is successfully updated.
-rmUpdateInstance :: forall a m. (MonadIO m, Record a) => Ref a -> (a -> a) -> CobT m a
+rmUpdateInstance :: forall a m. (MonadIO m, Record a) => Ref a -> (a -> a) -> RecordM m a
 rmUpdateInstance ref f = rmUpdateInstances_ ref f ?:: throwError ("Updating instance " <> show ref <> " was not successful!")
+{-# INLINE rmUpdateInstance #-}
 
 -- | Update in @RecordM@ all instances matching a query given a function that
 -- transforms records, and return the list of updated records Warning: This
@@ -359,11 +354,12 @@ rmUpdateInstance ref f = rmUpdateInstances_ ref f ?:: throwError ("Updating inst
 -- Another note: The query will limit the amount of instances fetched. That
 -- means more instances could match the query but aren't currently fetched and
 -- won't be updated.
-rmUpdateInstances :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [(Ref a, a)]
+rmUpdateInstances :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> RecordM m [(Ref a, a)]
 rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
+{-# INLINE rmUpdateInstances #-}
 
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
-rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> CobT m a) -> CobT m [(Ref a, a)]
+rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> RecordM m a) -> RecordM m [(Ref a, a)]
 rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
     session <- ask
@@ -378,42 +374,47 @@ rmUpdateInstancesM rmQuery updateRecord = do
                           { method = "PUT"
                           , path   = "/recordm/recordm/instances/integration" }
         response <- httpJSONEither request
-        unwrapValid response :: CobT m Value
+        unwrapValid response :: RecordM m Value
         return (Ref id, updatedRecord)
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
-rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> CobT m [a]
+rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> RecordM m [a]
 rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
+{-# INLINE rmUpdateInstances_ #-}
 
 -- | The same as 'rmUpdateInstancesWithMakeQueryM' but the update record function does not return the value within a monad @m@
-rmUpdateInstancesWithMakeQuery :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQuery :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> b) -> RecordM m [(Ref b, b)]
 rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (return <$> g)
+{-# INLINE rmUpdateInstancesWithMakeQuery #-}
 
 -- | Run a @'RecordMQuery' q@ and transform all resulting records (@'Record' a@)
 -- into new queries (@'RecordMQuery' r@). Finally, update all resulting records
 -- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
-rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> CobT m b) -> CobT m [(Ref b, b)]
+rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> RecordM m b) -> RecordM m [(Ref b, b)]
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
 -- | Get or add an instance given a 'RecordMQuery' and a new 'Record'
-rmGetOrAddInstance :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> a -> CobT m (Ref a, a)
+rmGetOrAddInstance :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> a -> RecordM m (Ref a, a)
 rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
+{-# INLINE rmGetOrAddInstance #-}
 
 -- | Get or add an instance given an 'AddInstanceConf', a 'RecordMQuery' and a 'Record'
-rmGetOrAddInstanceWith :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> a -> CobT m (Ref a, a)
+rmGetOrAddInstanceWith :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> a -> RecordM m (Ref a, a)
 rmGetOrAddInstanceWith conf q = rmGetOrAddInstanceWithM conf q . return
+{-# INLINE rmGetOrAddInstanceWith #-}
 
 -- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context
 --
 -- The computations to get the new 'Record' will only be executed when no instance matching the query could be found.
 -- This means ...
-rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordM m a -> RecordM m (Ref a, a)
 rmGetOrAddInstanceM = rmGetOrAddInstanceWithM defaultAddInstanceConf
+{-# INLINE rmGetOrAddInstanceWithM #-}
 
 -- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context with a specific 'AddInstanceConf'
 --
 -- See also 'rmGetOrAddInstanceM' and the difference between 'rmAddInstance' and 'rmAddInstanceWith'
-rmGetOrAddInstanceWithM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> CobT m a -> CobT m (Ref a, a)
+rmGetOrAddInstanceWithM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> RecordM m a -> RecordM m (Ref a, a)
 rmGetOrAddInstanceWithM conf rmQuery newRecordMIO = do
     session <- ask
     records <- rmDefinitionSearch rmQuery
@@ -443,43 +444,6 @@ rmGetOrAddInstanceWithM conf rmQuery newRecordMIO = do
 --     print x
 --     return $ value <$> (parseMaybe parseJSON =<< x )
 
--- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
--- to retrieve the element if it exists or return a default value (passed in
--- the second parameter) if it doesn't.
-class Existable e where
-    -- | Return the value from the 'Existable' if it exists, otherwise return the
-    -- default value passed as the second argument
-    (?:) :: Monad m => e a -> m a -> m a
-    infix 7 ?:
-
-    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists, otherwise return the
-    -- default value passed as the second argument
-    (?::) :: Monad m => Existable e => m (e a) -> m a -> m a
-    mex ?:: def = mex >>= flip (?:) def
-    infix 7 ?::
-
--- | A 'Maybe' is 'Existable' because it's either 'Just' a value or 'Nothing'.
-instance Existable Maybe where
-    -- | Return the value from the 'Maybe' if it exists, otherwise return the
-    -- default value passed as the second argument
-    mb ?: def = maybe def return mb
-
--- | A list is 'Existable' because it might have no elements or at least one
--- element. When using '?:', if the list is non-empty, the first element will
--- be returned. This is useful when doing a 'rmDefinitionSearch' and are
--- expecting exactly one result, and want to throw an error in the event that
--- none are returned.
---
--- Example:
--- 
--- @
--- user <- rmDefinitionSearch_ @UsersRecord name ?:: throwError "Couldn't find user!"
--- @
-instance Existable [] where
-    -- | Return the first element of the list if it exists, otherwise return the
-    -- default value passed as the second argument
-    ls ?: def = (maybe def return . listToMaybe) ls
-
 
 --- Util
 
@@ -497,16 +461,16 @@ renderRMQuery q' =
 
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
-getResponseHitsHits :: Monad m => Value -> CobT m [Value]
-getResponseHitsHits responseBody = Cob $ maybe
+getResponseHitsHits :: Monad m => Value -> RecordM m [Value]
+getResponseHitsHits responseBody = maybe
         (throwError "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
-        (except . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
+        (either throwError return . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
         (responseBody ^? key "hits" . key "hits") -- Find hits.hits in response body
 
 
 -- | @Internal@ Validate if the status of the response is successful, or throw an exception
-unwrapValid :: Monad m => Show a => Response (Either JSONException a) -> CobT m a
-unwrapValid r = Cob $ do
+unwrapValid :: Monad m => Show a => Response (Either JSONException a) -> RecordM m a
+unwrapValid r = do
     unless (statusIsSuccessful (getResponseStatus r)) $
         throwError $ "Request failed with status: "
             <> show (getResponseStatus r)

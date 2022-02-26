@@ -41,7 +41,7 @@ mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observaç
 parseArgs :: [String] -> [(Ref a, Double)]
 parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
 
-logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Cob ()
+logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> RecordM IO ()
 logic (movimentoId, total) splits = do
     unless (total == sum (map snd splits)) (throwError "Total sum doesn't equal separate amounts")
 
@@ -59,7 +59,6 @@ logic (movimentoId, total) splits = do
 
 
 
-
 -- Demo
 
 newtype Owner = Owner String
@@ -69,14 +68,14 @@ data Dog = Dog (Ref Owner) String
          deriving (Show)
 mkRecord ''Dog "Dogs" ["Owner", "Dog"]
 
-test1 :: MonadIO m => RecordMTest m [(Ref Dog, Dog)]
+test1 :: MonadIO m => RecordM m [(Ref Dog, Dog)]
 test1 = do
-    owner1 <- rmAddInstanceT (Owner "Owner1")
-    dog1 <- rmAddInstanceT (Dog owner1 "dog1")
-    dog2 <- rmAddInstanceT (Dog owner1 "dog2")
-    rmDefinitionSearchT @Dog ("owner:" <> show owner1)
+    owner1 <- rmAddInstance (Owner "Owner1")
+    dog1 <- rmAddInstance (Dog owner1 "dog1")
+    dog2 <- rmAddInstance (Dog owner1 "dog2")
+    rmDefinitionSearch @Dog ("owner:" <> show owner1)
 
-run1 :: MonadIO m => CobT m [(Ref Dog, Dog)]
+run1 :: MonadIO m => RecordM m [(Ref Dog, Dog)]
 run1 = do
     owner1 <- rmAddInstance (Owner "Owner1")
     dog1 <- rmAddInstance (Dog owner1 "dog1")
@@ -176,7 +175,7 @@ main :: IO ()
 main = do
     cobToken <- init <$> readFile "cob-token.secret"
     session <- makeSession "mimes8.cultofbits.com" cobToken
-    res <- runCob session run1
+    res <- runRecordMTests session run1
     print res
     return ()
 

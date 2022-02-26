@@ -17,13 +17,13 @@ import Control.Monad.Trans.Writer (WriterT, runWriterT)
 
 import Data.Bifunctor (first)
 
+import Data.DList (toList)
+
 import Cob
 import Cob.RecordM
 
--- runCobTestsT :: Monad m => CobSession -> CobT m a -> m (Either CobError a)
--- runCobTestsT session cob = runReaderT (runExceptT (fst <$> runWriterT (unCob cob))) session
-
--- runCobTests :: CobSession -> Cob a -> IO (Either CobError a)
--- runCobTests session cob = do
---     let (x, w) = runWriterT (unCob cob)
---     runReaderT (runExceptT x) session
+runRecordMTests :: Monad m => CobSession -> RecordM m a -> m [Int]
+runRecordMTests session recm = do
+    (res, addedRefs) <- runCobT session recm
+    -- liftIO $ forConcurrently_ addedRefs (runCob session) rmDeleteInstance
+    return (toList addedRefs)
