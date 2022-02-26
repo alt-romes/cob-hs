@@ -145,24 +145,29 @@ class Record a => RecordMQuery q a where
 -- | Identity
 instance Record a => RecordMQuery (StandardRecordMQuery a) a where
     toRMQuery = id
+    {-# INLINE toRMQuery #-}
 
 -- | Use the default query with argument 'String as the query text
 instance Record a => RecordMQuery String a where
     toRMQuery t = defaultRMQuery { _q = fromString t }
+    {-# INLINE toRMQuery #-}
 
 -- | Use the default query with argument 'Text' as the query text
 instance Record a => RecordMQuery Text a where
     toRMQuery t = defaultRMQuery { _q = t }
+    {-# INLINE toRMQuery #-}
 
 -- | Use the first tuple element to get a 'StandardRecordMQuery', and then use the 'Int' value to set the size
 instance RecordMQuery q a => RecordMQuery ((,) q Int) a where
     toRMQuery (t, i) = (toRMQuery @q @a t) { _size = i }
+    {-# INLINE toRMQuery #-}
 
 -- | Query for the exact 'Record' using a 'Ref'.
 --
 -- Note: The definition manipulated is not inferred by the query -- i.e. you could search a Definition X with a @Ref Y@
 instance Record a => RecordMQuery (Ref a) a where
     toRMQuery (Ref x) = (defaultRMQuery @a) { _q = "id:" <> fromString (show x) }
+    {-# INLINE toRMQuery #-}
 
 -- | The default 'RecordMQuery'
 -- @
