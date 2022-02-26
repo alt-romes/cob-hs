@@ -55,7 +55,8 @@ library
                       -- Util
                       vector ^>=0.12.3.1,
                       time ^>=1.9.3,
-                      dlist ^>=1.0
+                      dlist ^>=1.0,
+                      async ^>=2.2.4
 
 
     hs-source-dirs:   src
@@ -64,7 +65,7 @@ library
 executable main
     main-is:          Main.hs
 
-    ghc-options:      -threaded -fllvm -ddump-splices -rtsopts 
+    ghc-options:      -threaded -fllvm -rtsopts -ddump-simpl-stats -fglasgow-exts
 
     build-depends:    base ^>=4.15.0.0,
 

@@ -11,6 +11,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob where
 
+-- TODO: Cob instance alternative
+
 import Data.String (fromString)
 import Data.ByteString (ByteString)
 

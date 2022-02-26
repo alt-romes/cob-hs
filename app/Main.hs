@@ -177,11 +177,6 @@ main = do
     session <- makeSession "mimes8.cultofbits.com" cobToken
     res <- runRecordMTests session run1
     print res
-    return ()
-
-
-
-
 
 
 

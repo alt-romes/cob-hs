@@ -5,25 +5,16 @@
 module Cob.RecordM.Testing where
 
 
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Except (MonadError, throwError)
-import Control.Monad.Reader (MonadReader, ask)
-import Control.Monad.State (StateT, modify, runStateT, put)
-import Control.Monad.Trans (lift, MonadTrans)
-
-import Control.Monad.Trans.Reader (ReaderT, runReaderT)
-import Control.Monad.Trans.Except (ExceptT, runExceptT)
-import Control.Monad.Trans.Writer (WriterT, runWriterT)
-
-import Data.Bifunctor (first)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 
 import Data.DList (toList)
+import Data.Bifunctor (second)
 
 import Cob
 import Cob.RecordM
 
-runRecordMTests :: Monad m => CobSession -> RecordM m a -> m [Int]
+runRecordMTests :: MonadIO m => CobSession -> RecordM m a -> m (Either CobError a)
 runRecordMTests session recm = do
-    (res, addedRefs) <- runCobT session recm
-    -- liftIO $ forConcurrently_ addedRefs (runCob session) rmDeleteInstance
-    return (toList addedRefs)
+    (res, addedRefs) <- second toList <$> runCobT session recm
+    runCobT session (traverse (rmDeleteInstance . Ref) addedRefs)
+    return res

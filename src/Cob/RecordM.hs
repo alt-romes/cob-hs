@@ -9,14 +9,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.RecordM where
 
+-- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
+-- an instance of Record to find them or make body of search conditional on
+-- whether it's a ref or not..
+
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
 import Control.Monad              ( unless, forM, join, mapM )
 import Control.Monad.Reader       ( ask                      )
 import Control.Monad.Except       ( throwError, liftEither   )
+import Control.Monad.IO.Class     ( MonadIO, liftIO          )
 import Control.Monad.Writer       ( tell                     )
-import Control.Monad.Trans        ( MonadIO, lift            )
+import Control.Monad.Trans        ( lift                     )
 
 import Data.Bifunctor     ( second              )
 import Data.Either        ( either              )
@@ -34,14 +39,14 @@ import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
 
 import Network.HTTP.Conduit ( Request(..), Response                                                                                    )
-import Network.HTTP.Simple  ( httpJSONEither, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody )
+import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody )
 import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful                                                      )
 
 import Cob
 
 --- RecordM
 
-type RecordM m a = CobT 'RecordM m a
+type RecordM = CobT 'RecordM
 
 -- | RecordM writes the added instances thorought the Cob computation.
 -- This allows it to undo (delete) all added instances in a computation (particularly in a testing environment)
@@ -120,13 +125,16 @@ class (ToJSON a, FromJSON a) => Record a where
 -- @
 newtype Ref a = Ref { ref_id :: Int }
 instance Show (Ref a) where
-    show (Ref x) = show x
+    show = show . ref_id
+    {-# INLINE show #-}
 instance ToJSON (Ref a) where
-    toJSON (Ref i) = toJSON i
+    toJSON = toJSON . ref_id
+    {-# INLINE toJSON #-}
 instance FromJSON (Ref a) where
     parseJSON = withObject "record ref" $ \v -> do
         id <- v .: "id"
         return (Ref id)
+    {-# INLINE parseJSON #-}
 
 
 -- | The standard @RecordM@ query
@@ -231,6 +239,7 @@ rmDefinitionSearch rmQuery = do
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
     records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                                                      -- Return list of (id, record)
+{-# INLINABLE rmDefinitionSearch #-}
 
 -- | Search a @RecordM@ 'Definition' given a 'RecordMQuery', exactly the same as
 -- 'rmDefinitionSearch', but ignore the records references ('Ref').
@@ -271,6 +280,7 @@ rmDefinitionCount rmQuery = do
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
     count <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?: throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
+{-# INLINABLE rmDefinitionCount #-}
 
 
 -- | Add to @RecordM@ a new instance given a 'Record', and return the 'Ref' of the newly created instance.
@@ -335,6 +345,7 @@ rmAddInstanceWith conf record = do
     id             <- either throwError return . parseEither parseJSON =<< ((rbody ^? key "id") ?: throwError "Couldn't get created record id on add instance!")
     tell (singleton id)
     return (Ref id)
+{-# INLINABLE rmAddInstanceWith #-}
 
 -- | Update an instance with an id and return the updated record.
 -- An error will be thrown if no record is successfully updated.
@@ -381,6 +392,7 @@ rmUpdateInstancesM rmQuery updateRecord = do
         response <- httpJSONEither request
         unwrapValid response :: RecordM m Value
         return (Ref id, updatedRecord)
+{-# INLINABLE rmUpdateInstancesM #-}
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
 rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> RecordM m [a]
@@ -397,6 +409,7 @@ rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (retu
 -- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
 rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> RecordM m b) -> RecordM m [(Ref b, b)]
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
+{-# INLINABLE rmUpdateInstancesWithMakeQueryM #-}
 
 -- | Get or add an instance given a 'RecordMQuery' and a new 'Record'
 rmGetOrAddInstance :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> a -> RecordM m (Ref a, a)
@@ -414,7 +427,7 @@ rmGetOrAddInstanceWith conf q = rmGetOrAddInstanceWithM conf q . return
 -- This means ...
 rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordM m a -> RecordM m (Ref a, a)
 rmGetOrAddInstanceM = rmGetOrAddInstanceWithM defaultAddInstanceConf
-{-# INLINE rmGetOrAddInstanceWithM #-}
+{-# INLINE rmGetOrAddInstanceM #-}
 
 -- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context with a specific 'AddInstanceConf'
 --
@@ -428,7 +441,20 @@ rmGetOrAddInstanceWithM conf rmQuery newRecordMIO = do
           newRecord <- newRecordMIO -- Execute IO computation to retrieve value
           (, newRecord) <$> rmAddInstanceWith conf newRecord
       record:_ -> return record
+{-# INLINABLE rmGetOrAddInstanceWithM #-}
 
+rmDeleteInstance :: forall a m. MonadIO m => Ref a -> RecordM m ()
+rmDeleteInstance ref = do
+    session <- ask
+    let request = (cobDefaultRequest session)
+                      { method = "DELETE"
+                      , path = "/recordm/recordm/instances/" <> fromString (show ref) }   -- TODO: Query string: ignoreRefs?
+    r <- httpNoBody request
+    unless (statusIsSuccessful (getResponseStatus r)) $                           -- Make sure request was successful 
+        throwError $ "Request failed with status: "
+            <> show (getResponseStatus r)
+            <> "\nResponse:\n" <> show r
+{-# INLINABLE rmDeleteInstance #-}
 
 -- newtype Val = Val {
 --     value :: Int
@@ -463,6 +489,7 @@ renderRMQuery q' =
             , Just ("size", fromString $ show $ _size q)
             ,   (,) "sort"  <$> _sort q
             ,   (,) "ascending" . fromString . show <$> _ascending q ]
+{-# INLINE renderRMQuery #-}
 
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
@@ -471,6 +498,7 @@ getResponseHitsHits responseBody = maybe
         (throwError "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
         (either throwError return . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
         (responseBody ^? key "hits" . key "hits") -- Find hits.hits in response body
+{-# INLINE getResponseHitsHits #-}
 
 
 -- | @Internal@ Validate if the status of the response is successful, or throw an exception
