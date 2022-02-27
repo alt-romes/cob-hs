@@ -96,6 +96,28 @@ instance (Monoid (CobWriter c), Monad m) => Monad (CobT c m) where
 instance (Monoid (CobWriter c), Applicative m) => Alternative (CobT c m) where
     empty = Cob (const (pure (Left "Cob (alternative) empty computation. No error message.", mempty)))
     {-# INLINE empty #-} 
+
+    -- | The Cob alternative instance.
+    --
+    -- The computation to the right of '<|>' will only be executed if the computation to the left fails.
+    --
+    -- This is good to represent idioms like @getOrAddInstance@.
+    --
+    -- For example, the following code can be read \"search a RecordM definition
+    -- with @query@ and extract the first element if it exists. If it doesn't,
+    -- add the @newInstance@ to RecordM\", which is short for \"find a record by
+    -- this query or add this new one\".
+    -- @
+    -- (rmDefinitionSearch query ?!) <|> rmAddInstance newInstance
+    -- @
+    -- Note: The snippet above requires the @PostfixOperators@ extension to be
+    -- enabled
+    --
+    -- This other example reads \"get an instance by id 123 or add a new dog called
+    -- bobby\"
+    -- @
+    -- rmGetInstance (Ref 123) <|> rmAddInstance (Dog "bobby")
+    -- @
     (Cob x') <|> (Cob y) = Cob $ \r ->
         (\case (Left e, l) -> id; (Right x, l) -> const (Right x, l)) <$> x' r <*> y r
     {-# INLINE (<|>) #-} 
@@ -224,22 +246,36 @@ makeSession host tok = do
 class Existable e where
     -- | Return the value from the 'Existable' if it exists, otherwise return the
     -- default value passed as the second argument
-    (?:) :: Monad m => e a -> m a -> m a
-    infix 7 ?:
+    (??) :: Monad m => e a -> m a -> m a
+    infix 7 ??
 
     -- | Return the value from an 'Existable' in @'Monad' m@ if it exists, otherwise return the
     -- default value passed as the second argument
-    (?::) :: Monad m => Existable e => m (e a) -> m a -> m a
-    mex ?:: def = mex >>= flip (?:) def
-    infix 7 ?::
-    {-# INLINE (?::) #-}
+    (???) :: Monad m => m (e a) -> m a -> m a
+    mex ??? def = mex >>= flip (??) def
+    infix 7 ???
+    {-# INLINE (???) #-}
+
+    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists,
+    -- otherwise return 'Alternative' 'empty'
+    --
+    -- This is best used with the extension @PostfixOperators@ which allows this
+    -- kind of idioms to be written:
+    --
+    -- @
+    -- (rmDefinitionSearch query ?!) <|> rmAddInstance newInstance
+    -- @
+    (?!) :: (Monad m, Alternative m) => m (e a) -> m a
+    (?!) = (??? empty)
+    {-# INLINE (?!) #-}
+    
 
 -- | A 'Maybe' is 'Existable' because it's either 'Just' a value or 'Nothing'.
 instance Existable Maybe where
     -- | Return the value from the 'Maybe' if it exists, otherwise return the
     -- default value passed as the second argument
-    mb ?: def = maybe def return mb
-    {-# INLINE (?:) #-}
+    mb ?? def = maybe def return mb
+    {-# INLINE (??) #-}
 
 -- | A list is 'Existable' because it might have no elements or at least one
 -- element. When using '?:', if the list is non-empty, the first element will
@@ -255,8 +291,8 @@ instance Existable Maybe where
 instance Existable [] where
     -- | Return the first element of the list if it exists, otherwise return the
     -- default value passed as the second argument
-    ls ?: def = (maybe def return . listToMaybe) ls
-    {-# INLINE (?:) #-}
+    ls ?? def = (maybe def return . listToMaybe) ls
+    {-# INLINE (??) #-}
 
 
 -- | @Internal@ The default HTTP request used internally (targeting RecordM) in

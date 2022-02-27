@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.RecordM where
@@ -43,9 +42,9 @@ import Data.String        ( fromString )
 import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
 
-import Network.HTTP.Conduit ( Request(..), Response                                                                                    )
+import Network.HTTP.Conduit ( Request(..), Response                               )
+import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful )
 import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody )
-import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful                                                      )
 
 import Cob
 
@@ -250,7 +249,7 @@ rmDefinitionSearch rmQuery = do
 --
 -- TODO: Use /recordm/instances/{id} instead of definitions/search?
 rmGetInstance :: forall a m. (MonadIO m, Record a) => Ref a -> RecordM m a
-rmGetInstance ref = rmDefinitionSearch_ ref ?:: throwError ("Couldn't find instance with id " <> show ref)
+rmGetInstance ref = rmDefinitionSearch_ ref ??? throwError ("Couldn't find instance with id " <> show ref)
 {-# INLINE rmGetInstance #-}
 
 
@@ -291,7 +290,7 @@ rmDefinitionCount rmQuery = do
                       , queryString = renderRMQuery @q @a rmQuery}
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
-    count <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?: throwError "Couldn't find hits.total.value when doing a definition count"
+    count <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?? throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
 {-# INLINABLE rmDefinitionCount #-}
 
@@ -355,7 +354,7 @@ rmAddInstanceWith conf record = do
                       , path   = "/recordm/recordm/instances/integration" }
     response       <- httpJSONEither request
     rbody :: Value <- unwrapValid response
-    id             <- either throwError return . parseEither parseJSON =<< ((rbody ^? key "id") ?: throwError "Couldn't get created record id on add instance!")
+    id             <- either throwError return . parseEither parseJSON =<< ((rbody ^? key "id") ?? throwError "Couldn't get created record id on add instance!")
     tell (singleton id)
     return (Ref id)
 {-# INLINABLE rmAddInstanceWith #-}
@@ -363,7 +362,7 @@ rmAddInstanceWith conf record = do
 -- | Update an instance with an id and return the updated record.
 -- An error will be thrown if no record is successfully updated.
 rmUpdateInstance :: forall a m. (MonadIO m, Record a) => Ref a -> (a -> a) -> RecordM m a
-rmUpdateInstance ref f = rmUpdateInstances_ ref f ?:: throwError ("Updating instance " <> show ref <> " was not successful!")
+rmUpdateInstance ref f = rmUpdateInstances_ ref f ??? throwError ("Updating instance " <> show ref <> " was not successful!")
 {-# INLINE rmUpdateInstance #-}
 
 -- | Update in @RecordM@ all instances matching a query given a function that
@@ -424,31 +423,6 @@ rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Recor
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 {-# INLINABLE rmUpdateInstancesWithMakeQueryM #-}
 
--- | Get or add an instance given a 'RecordMQuery' and a new 'Record'
-rmGetOrAddInstance :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> a -> RecordM m (Ref a, a)
-rmGetOrAddInstance q = rmGetOrAddInstanceM q . return
-{-# INLINE rmGetOrAddInstance #-}
-
--- | Get or add an instance given an 'AddInstanceConf', a 'RecordMQuery' and a 'Record'
-rmGetOrAddInstanceWith :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> a -> RecordM m (Ref a, a)
-rmGetOrAddInstanceWith conf q = rmGetOrAddInstanceWithM conf q . return
-{-# INLINE rmGetOrAddInstanceWith #-}
-
--- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context
---
--- The computations to get the new 'Record' will only be executed when no instance matching the query could be found.
--- This means ...
-rmGetOrAddInstanceM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> RecordM m a -> RecordM m (Ref a, a)
-rmGetOrAddInstanceM = rmGetOrAddInstanceWithM defaultAddInstanceConf
-{-# INLINE rmGetOrAddInstanceM #-}
-
--- | Get or add an instance given a 'RecordMQuery' and a new 'Record' inside a 'CobT' monadic context with a specific 'AddInstanceConf'
---
--- See also 'rmGetOrAddInstanceM' and the difference between 'rmAddInstance' and 'rmAddInstanceWith'
-rmGetOrAddInstanceWithM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => AddInstanceConf -> q -> RecordM m a -> RecordM m (Ref a, a)
-rmGetOrAddInstanceWithM conf rmQuery newRecordMIO =
-    rmDefinitionSearch rmQuery ?:: mzero <|> (newRecordMIO >>= \newRecord -> (, newRecord) <$> rmAddInstanceWith conf newRecord)
-{-# INLINABLE rmGetOrAddInstanceWithM #-}
 
 rmDeleteInstance :: forall a m. MonadIO m => Ref a -> RecordM m ()
 rmDeleteInstance ref = do
