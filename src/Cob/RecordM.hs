@@ -19,6 +19,8 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
+import Debug.Trace (trace)
+
 import Control.Applicative        ( (<|>)                           )
 import Control.Monad              ( unless, forM, join, mapM, mzero )
 import Control.Monad.Reader       ( ask                             )
@@ -424,7 +426,7 @@ rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch
 {-# INLINABLE rmUpdateInstancesWithMakeQueryM #-}
 
 
-rmDeleteInstance :: forall a m. MonadIO m => Ref a -> RecordM m ()
+rmDeleteInstance :: forall m. MonadIO m => Ref () -> RecordM m ()
 rmDeleteInstance ref = do
     session <- ask
     let request = (cobDefaultRequest session)
