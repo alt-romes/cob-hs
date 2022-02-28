@@ -19,8 +19,6 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Debug.Trace (trace)
-
 import Control.Applicative        ( (<|>)                           )
 import Control.Monad              ( unless, forM, join, mapM, mzero )
 import Control.Monad.Reader       ( ask                             )
@@ -426,12 +424,16 @@ rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch
 {-# INLINABLE rmUpdateInstancesWithMakeQueryM #-}
 
 
-rmDeleteInstance :: forall m. MonadIO m => Ref () -> RecordM m ()
+-- | Delete an instance by id, ignoring if it has any references
+--
+-- See /recordm/instances/{id}
+rmDeleteInstance :: forall a m. MonadIO m => Ref a -> RecordM m ()
 rmDeleteInstance ref = do
     session <- ask
     let request = (cobDefaultRequest session)
                       { method = "DELETE"
-                      , path = "/recordm/recordm/instances/" <> fromString (show ref) }   -- TODO: Query string: ignoreRefs?
+                      , path = "/recordm/recordm/instances/" <> fromString (show ref)
+                      , queryString = renderQuery True $ simpleQueryToQuery [("ignoreRefs", "true")] }
     r <- httpNoBody request
     unless (statusIsSuccessful (getResponseStatus r)) $                           -- Make sure request was successful 
         throwError $ "Request failed with status: "

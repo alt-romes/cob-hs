@@ -20,8 +20,6 @@ import Cob.RecordM
 runRecordMTests :: MonadIO m => CobSession -> RecordM m a -> m (Either CobError a)
 runRecordMTests session recm = do
     (res, addedRefs) <- second toList <$> runCobT session recm
-    liftIO $ print "Scheduled for deletion:"
-    liftIO $ print addedRefs
     (del, _) <- runCobT session (mapM_ (rmDeleteInstance . Ref) addedRefs)
     case del of
       Left err -> return $ Left err
