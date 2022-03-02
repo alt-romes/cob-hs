@@ -299,7 +299,7 @@ rmDefinitionCount rmQuery = do
 --
 -- Note: By default RecordM answers before the added record being searchable.
 -- If you want to add an instance but only continue when it's searchable, see
--- 'rmAddInstanceWith'
+-- 'rmAddInstanceSync'
 --
 -- ==== __Example__
 --
@@ -309,45 +309,36 @@ rmDefinitionCount rmQuery = do
 --      rmAddInstance (DogsRecord name ownerName 0)
 -- @
 rmAddInstance :: forall a m. (MonadIO m, Record a) => a -> RecordM m (Ref a)
-rmAddInstance = rmAddInstanceWith defaultAddInstanceConf
+rmAddInstance = rmAddInstanceWith False
 {-# INLINE rmAddInstance #-}
 
--- | Configuration to have finer control over adding an instance to RecordM.
--- See 'rmAddInstanceWith'.
+-- Same as 'rmAddInstance' but only continue when added record is searchable.
 --
--- Related to the documentation on POST /recordm/instances/integration.
-newtype AddInstanceConf = AddInstanceConf { waitForSearchAvailability :: Bool
-                                          }
+-- The difference is the query parameter waitForSearchAvailability=true
+-- Related to documentation on POST /recordm/instances/integration.
+rmAddInstanceSync :: forall a m. (MonadIO m, Record a) => a -> RecordM m (Ref a)
+rmAddInstanceSync = rmAddInstanceWith True
+{-# INLINE rmAddInstanceSync #-}
 
--- | The 'AddInstanceConf' used by default
+-- | Add an instance to RecordM and set waitForSearchAvailability to the bool passed in the first paramater.
 --
--- @
--- waitForSearchAvailability = False
--- @
-defaultAddInstanceConf :: AddInstanceConf
-defaultAddInstanceConf = AddInstanceConf False
-
--- | Add an instance to RecordM with a config 'AddInstanceConf' to have control
--- over finer details of instance creation.
---
--- Note: If you want to use the added instance right after adding it, the
--- waitForSearchAvailability config property should be True.
+-- This is the internal method used by 'rmAddInstance' and 'rmAddInstanceSync
 --
 -- Example
 -- @
--- ref <- rmAddInstanceWith (AddInstanceConf True) (ServersRecord ...)
+-- ref <- rmAddInstanceWith True (ServersRecord ...)
 -- -- Only because waitForSearchAvailability is true ^, will the update be able to
 -- -- find the added instance and update it
 -- rmUpdateInstance ref (property .~ newValue)
 -- @
-rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => AddInstanceConf -> a -> RecordM m (Ref a)
-rmAddInstanceWith conf record = do
+rmAddInstanceWith :: forall a m. (MonadIO m, Record a) => Bool -> a -> RecordM m (Ref a)
+rmAddInstanceWith waitForSearchAvailability record = do
     session <- ask
     let request = setRequestBodyJSON
                   (object $ catMaybes
                       [ Just ("type"   .= definition @a)
                       , Just ("values" .= record)
-                      , if waitForSearchAvailability conf then Just ("waitForSearchAvailability" .= True) else Nothing
+                      , if waitForSearchAvailability then Just ("waitForSearchAvailability" .= True) else Nothing
                       ])
                   (cobDefaultRequest session)
                       { method = "POST"
