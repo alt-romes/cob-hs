@@ -72,11 +72,13 @@ instance Functor m => Functor (CobT c m) where
     {-# INLINE fmap #-}
     -- [x] fmap id = id
 
-instance (Monoid (CobWriter c), Applicative m) => Applicative (CobT c m) where
+instance (Monoid (CobWriter c), Monad m) => Applicative (CobT c m) where
     pure = Cob . const . pure . (, mempty) . Right
     {-# INLINE pure #-}
     (Cob f') <*> (Cob g) = Cob $ \r ->
-        (\case (Left e, l) -> const (Left e, l); (Right f, l) -> bimap (fmap f) (l <>)) <$> f' r <*> g r
+        f' r >>= \case
+            (Left e, l) -> pure (Left e, l)
+            (Right f, l) -> bimap (fmap f) (l <>) <$> g r
     {-# INLINE (<*>) #-}
     -- [x] pure id <*> v = v
     -- [x] pure (.) <*> u <*> v <*> w = u <*> (v <*> w)
@@ -93,8 +95,8 @@ instance (Monoid (CobWriter c), Monad m) => Monad (CobT c m) where
     -- [x] m >>= return = m
     -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
 
-instance (Monoid (CobWriter c), Applicative m) => Alternative (CobT c m) where
-    empty = Cob (const (pure (Left "Cob (alternative) empty computation. No error message.", mempty)))
+instance (Monoid (CobWriter c), Monad m) => Alternative (CobT c m) where
+    empty = Cob $ const $ pure (Left "Cob (alternative) empty computation. No error message.", mempty)
     {-# INLINE empty #-} 
 
     -- | The Cob alternative instance.
@@ -119,7 +121,9 @@ instance (Monoid (CobWriter c), Applicative m) => Alternative (CobT c m) where
     -- rmGetInstance (Ref 123) <|> rmAddInstance (Dog "bobby")
     -- @
     (Cob x') <|> (Cob y) = Cob $ \r ->
-        (\case (Left e, l) -> second (l <>); (Right x, l) -> const (Right x, l)) <$> x' r <*> y r
+        x' r >>= \case
+            (Left e, l) -> second (l <>) <$> y r
+            (Right x, l) -> pure (Right x, l) 
     {-# INLINE (<|>) #-} 
 
 instance (Monoid (CobWriter c), Monad m) => MonadPlus (CobT c m) where
