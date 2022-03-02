@@ -8,9 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.RecordM where
 
--- TODO: Make Async versions of functions that receive a callback
-
--- TODO: Make Cob instance Alternative
+-- TODO: Make Async versions of functions that receive a callback or return an async token
 
 -- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
 -- an instance of Record to find them or make body of search conditional on

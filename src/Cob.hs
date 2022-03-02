@@ -119,7 +119,7 @@ instance (Monoid (CobWriter c), Applicative m) => Alternative (CobT c m) where
     -- rmGetInstance (Ref 123) <|> rmAddInstance (Dog "bobby")
     -- @
     (Cob x') <|> (Cob y) = Cob $ \r ->
-        (\case (Left e, l) -> id; (Right x, l) -> const (Right x, l)) <$> x' r <*> y r
+        (\case (Left e, l) -> second (l <>); (Right x, l) -> const (Right x, l)) <$> x' r <*> y r
     {-# INLINE (<|>) #-} 
 
 instance (Monoid (CobWriter c), Monad m) => MonadPlus (CobT c m) where
