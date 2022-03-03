@@ -120,6 +120,10 @@ instance (Monoid (CobWriter c), Monad m) => Alternative (CobT c m) where
     -- @
     -- rmGetInstance (Ref 123) <|> rmAddInstance (Dog "bobby")
     -- @
+    --
+    -- Note: IO exceptions are not catched, that means that if an IO exception
+    -- is thrown, the computation won't fail cleanly and therefore the added
+    -- instances won't be deleted if running with 'runRecordMTests'
     (Cob x') <|> (Cob y) = Cob $ \r ->
         x' r >>= \case
             (Left e, l) -> second (l <>) <$> y r
