@@ -36,13 +36,16 @@ import Data.Aeson.Lens    ( key, _Integer )
 
 import Data.Text          ( Text       )
 import Data.ByteString    ( ByteString )
+import Data.ByteString.Lazy ( toStrict )
+import Data.ByteString.Char8 as BSC8 ( unpack )
 import Data.String        ( fromString )
 import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
+import Data.Aeson.Encode.Pretty ( encodePretty )
 
-import Network.HTTP.Conduit ( Request(..), Response                               )
-import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful )
-import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, getResponseStatus, setRequestManager, setRequestBodyJSON, getResponseBody )
+import Network.HTTP.Conduit ( Request(..), Response(..) )
+import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful, Status(..) )
+import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, setRequestManager, setRequestBodyJSON, getResponseBody )
 
 import Cob
 
@@ -424,10 +427,7 @@ rmDeleteInstance ref = do
                       , path = "/recordm/recordm/instances/" <> fromString (show ref)
                       , queryString = renderQuery True $ simpleQueryToQuery [("ignoreRefs", "true")] }
     r <- httpNoBody request
-    unless (statusIsSuccessful (getResponseStatus r)) $                           -- Make sure request was successful 
-        throwError $ "Request failed with status: "
-            <> show (getResponseStatus r)
-            <> "\nResponse:\n" <> show r
+    unwrapValid (Right <$> r)
 {-# INLINABLE rmDeleteInstance #-}
 
 -- newtype Val = Val {
@@ -476,10 +476,13 @@ getResponseHitsHits responseBody = maybe
 
 
 -- | @Internal@ Validate if the status of the response is successful, or throw an exception
-unwrapValid :: Monad m => Show a => Response (Either JSONException a) -> RecordM m a
+unwrapValid :: (Monad m, ToJSON a) => Response (Either JSONException a) -> RecordM m a
 unwrapValid r = do
-    unless (statusIsSuccessful (getResponseStatus r)) $
-        throwError $ "Request failed with status: "
-            <> show (getResponseStatus r)
-            <> "\nResponse:\n" <> show r
-    either (throwError . show) return (getResponseBody r)
+    let status = responseStatus r
+        body   = getResponseBody r
+    unless (statusIsSuccessful status) $
+        throwError
+        $  ("Request failed with status " <> show (statusCode status) <> " -- " <> BSC8.unpack (statusMessage status))
+        <> ("\nResponse body: " <> either show (BSC8.unpack . toStrict . encodePretty) body)
+        -- <> ("\nFull reponse: " <> show r)
+    either (throwError . show) return body
