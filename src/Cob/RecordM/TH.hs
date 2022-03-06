@@ -52,9 +52,11 @@ data SupportedRecordType = StringT
                          | ByteStringT
                          | RefT
                          | IntT
+                         | FloatT
                          | DoubleT
                          | MaybeT SupportedRecordType
                          | OtherT Name
+                         -- Unsupported types use the default ToJSON implementation
 
 mkToJSON :: [SupportedRecordType] -> [Field] -> Q Exp
 mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem tys fields)) |]
@@ -64,6 +66,7 @@ mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem ty
             where
                 mods RefT        = [e| ((show . ref_id) <$>) |]
                 mods IntT        = [e| (show <$>)            |]
+                mods FloatT      = [e| (show <$>)            |]
                 mods DoubleT     = [e| (show <$>)            |]
                 mods (MaybeT mt) = [e| $(mods mt)            |]
                 mods _           = [e| id                    |]
@@ -105,6 +108,7 @@ mkRecordPat tyConName tyConArgList fields = do
             ByteStringT -> defaultRet
             RefT        -> defaultRet -- ConP 'Ref . (:[]) <$> mkVarP (fieldNormalizeRef field)
             IntT        -> defaultRet
+            FloatT      -> defaultRet
             DoubleT     -> defaultRet
             MaybeT _    -> defaultRet
             OtherT _    -> defaultRet
@@ -122,6 +126,7 @@ parseTyConArgList = mapM parseTyConArg
               | conTy == ''Text       -> return TextT
               | conTy == ''ByteString -> return ByteStringT
               | conTy == ''Int        -> return IntT
+              | conTy == ''Float      -> return FloatT
               | conTy == ''Double     -> return DoubleT
               | otherwise             -> do
                   tyInfo <- reify conTy
