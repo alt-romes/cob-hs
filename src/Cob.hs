@@ -11,15 +11,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob where
 
--- TODO: Cob instance alternative
-
 import Data.String (fromString)
 import Data.ByteString (ByteString)
+import Data.ByteString.Char8 as BSC8 ( unpack )
+import Data.ByteString.Lazy ( toStrict )
 
 import Data.Maybe (listToMaybe)
 
+import Data.Aeson (ToJSON)
+import Data.Aeson.Encode.Pretty ( encodePretty )
+
 import Control.Applicative (Alternative, empty, (<|>))
-import Control.Monad       (MonadPlus, (>=>))
+import Control.Monad       (MonadPlus, (>=>), unless)
 
 import Control.Monad.Except   (MonadError, throwError, catchError)
 import Control.Monad.Reader   (MonadReader, ask, local)
@@ -32,8 +35,9 @@ import Data.Bifunctor (first, second, bimap)
 import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
-import Network.HTTP.Conduit as Net (Manager, Cookie(..), Request(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
-import Network.HTTP.Simple (setRequestManager)
+import Network.HTTP.Conduit as Net (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
+import Network.HTTP.Simple (setRequestManager, JSONException)
+import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 
 -- | The Cob Monad.
 -- A context in which computations that interact with @RecordM@ can be executed.
@@ -60,7 +64,7 @@ type CobError = String
 newtype CobT (c :: CobModule) m a = Cob { unCob :: CobSession -> m (Either CobError a, CobWriter c) }
 
 -- | The kind of module running in this Cob computation
-data CobModule = NoModule | RecordM
+data CobModule = NoModule | RecordM | UserM
 
 -- | Define which kind of Monoid writer Cob uses, depending on the module
 type family CobWriter (c :: CobModule)
@@ -315,3 +319,14 @@ cobDefaultRequest session =
                        , cookieJar = Just $ createCookieJar [cobtoken session] }
 
 
+-- | @Internal@ Validate if the status of the response is successful, or throw an exception
+unwrapValid :: forall a m c. (Monoid (CobWriter c), Monad m, ToJSON a) => Response (Either JSONException a) -> CobT c m a
+unwrapValid r = do
+    let status = responseStatus r
+        body   = responseBody r
+    unless (statusIsSuccessful status) $
+        throwError
+        $  ("Request failed with status " <> show (statusCode status) <> " -- " <> BSC8.unpack (statusMessage status))
+        <> ("\nResponse body: " <> either show (BSC8.unpack . toStrict . encodePretty) body)
+        -- <> ("\nFull reponse: " <> show r)
+    either (throwError . show) return body

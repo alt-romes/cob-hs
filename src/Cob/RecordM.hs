@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -17,13 +18,13 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Applicative        ( (<|>)                           )
-import Control.Monad              ( unless, forM, join, mapM, mzero )
-import Control.Monad.Reader       ( ask                             )
-import Control.Monad.Except       ( throwError, liftEither          )
-import Control.Monad.IO.Class     ( MonadIO, liftIO                 )
-import Control.Monad.Writer       ( tell                            )
-import Control.Monad.Trans        ( lift                            )
+import Control.Applicative        ( (<|>)                   )
+import Control.Monad              ( forM, join, mapM, mzero )
+import Control.Monad.Reader       ( ask                     )
+import Control.Monad.Except       ( throwError, liftEither  )
+import Control.Monad.IO.Class     ( MonadIO, liftIO         )
+import Control.Monad.Writer       ( tell                    )
+import Control.Monad.Trans        ( lift                    )
 
 import Data.Bifunctor     ( second              )
 import Data.Either        ( either              )
@@ -36,16 +37,14 @@ import Data.Aeson.Lens    ( key, _Integer )
 
 import Data.Text          ( Text       )
 import Data.ByteString    ( ByteString )
-import Data.ByteString.Lazy ( toStrict )
 import Data.ByteString.Char8 as BSC8 ( unpack )
 import Data.String        ( fromString )
 import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
-import Data.Aeson.Encode.Pretty ( encodePretty )
 
 import Network.HTTP.Conduit ( Request(..), Response(..) )
 import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful, Status(..) )
-import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, setRequestManager, setRequestBodyJSON, getResponseBody )
+import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, setRequestManager, setRequestBodyJSON )
 
 import Cob
 
@@ -60,6 +59,7 @@ type RecordM = CobT 'RecordM
 -- However, when the computation is run with 'runRecordMTests', all added instances will be deleted
 type instance CobWriter 'RecordM = DList Int
 
+-- | Run a RecordM computation
 runRecordM :: Functor m => CobSession -> RecordM m a -> m (Either CobError a)
 runRecordM session recm = fst <$> runCobT session recm
 {-# INLINE runRecordM #-}
@@ -473,17 +473,4 @@ getResponseHitsHits responseBody = maybe
         (either throwError return . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
         (responseBody ^? key "hits" . key "hits") -- Find hits.hits in response body
 {-# INLINE getResponseHitsHits #-}
-
-
--- | @Internal@ Validate if the status of the response is successful, or throw an exception
-unwrapValid :: (Monad m, ToJSON a) => Response (Either JSONException a) -> RecordM m a
-unwrapValid r = do
-    let status = responseStatus r
-        body   = getResponseBody r
-    unless (statusIsSuccessful status) $
-        throwError
-        $  ("Request failed with status " <> show (statusCode status) <> " -- " <> BSC8.unpack (statusMessage status))
-        <> ("\nResponse body: " <> either show (BSC8.unpack . toStrict . encodePretty) body)
-        -- <> ("\nFull reponse: " <> show r)
-    either (throwError . show) return body
 
