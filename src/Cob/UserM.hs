@@ -11,7 +11,7 @@ import Control.Monad.IO.Class ( MonadIO )
 
 import Data.String ( fromString )
 import Data.Maybe  ( fromMaybe )
-import Data.DList  ( DList, singleton )
+import Data.DList  ( singleton )
 
 import Data.Aeson ( Value(..), ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
 
@@ -25,7 +25,7 @@ import Cob
 --
 -- This list of added instances is **unused** when the computation is run with 'runCob'.
 -- However, when the computation is run with 'runUserMTests', all added instances will be deleted
-type instance CobWriter 'UserM = DList UMRef
+type instance CobWriter 'UserM = UMRef
 
 -- | A UserM user id
 newtype UMRef = UMRef Int
@@ -61,14 +61,8 @@ instance ToJSON UMUser where
 
 data UMGroup = UMGroup
 
--- | Run a UserM computation
-runUserM :: Functor m => CobSession -> Cob m a -> m (Either CobError a)
-runUserM session = fmap fst . runCobT session
-{-# INLINE runUserM #-}
-
-
 -- | Create an UserM user
-umCreateUser :: (CobWritersAreMonoids, MonadIO m) => UMUser -> Cob m UMRef
+umCreateUser :: MonadIO m => UMUser -> Cob m UMRef
 umCreateUser user = do
     session <- ask
     let request = setRequestBodyJSON user
@@ -79,16 +73,17 @@ umCreateUser user = do
     tell (mempty, singleton ref)
     return ref
 
-umAssignGroups :: (CobWritersAreMonoids, MonadIO m) => UMUser -> [UMGroup] -> Cob m a
+umAssignGroups :: MonadIO m => UMUser -> [UMGroup] -> Cob m a
 umAssignGroups = undefined
 
-umGenToken :: (CobWritersAreMonoids, MonadIO m) => UMUser -> Cob m a
+umGenToken :: MonadIO m => UMUser -> Cob m a
 umGenToken = undefined
 
-umDeleteUser :: (CobWritersAreMonoids, MonadIO m) => UMRef -> Cob m ()
+umDeleteUser :: MonadIO m => UMRef -> Cob m ()
 umDeleteUser ref = do
     session <- ask
     let request = (cobDefaultRequest session)
                       { method = "DELETE"
                       , path = "/userm/userm/user/" <> fromString (show ref) }
     httpValidNoBody request
+
