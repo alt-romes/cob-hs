@@ -5,11 +5,10 @@
 {-# LANGUAGE Rank2Types #-}
 module Cob.Testing where
 
-
 import Control.Monad.IO.Class (MonadIO, liftIO)
 
 import Data.DList (toList)
-import Data.Bifunctor (bimap, first, second)
+import Data.Bifunctor (bimap, second)
 
 import Cob
 import Cob.RecordM

@@ -25,17 +25,17 @@ import Cob
 --
 -- This list of added instances is **unused** when the computation is run with 'runCob'.
 -- However, when the computation is run with 'runUserMTests', all added instances will be deleted
-type instance CobWriter 'UserM = UMRef
+type instance CobWriter 'UserM = UMRef UMUser
 
 -- | A UserM user id
-newtype UMRef = UMRef Int
-instance Show UMRef where
+newtype UMRef a = UMRef Int
+instance Show (UMRef a)  where
     show (UMRef i) = show i
     {-# INLINE show #-}
-instance ToJSON UMRef where
+instance ToJSON (UMRef a) where
     toJSON (UMRef i) = toJSON i
     {-# INLINE toJSON #-}
-instance FromJSON UMRef where
+instance FromJSON (UMRef a) where
     parseJSON = withObject "UserM User Id" $ \v -> do
         id <- v .: "id"
         return (UMRef id)
@@ -59,27 +59,38 @@ instance ToJSON UMUser where
         , "contact"    .= fromMaybe "" contact
         , "usernameAD" .= fromMaybe "" usernameAD ]
 
+-- | An UserM Group
 data UMGroup = UMGroup
+    { gname :: String
+    , gdescription :: Maybe String
+    }
 
 -- | Create an UserM user
-umCreateUser :: MonadIO m => UMUser -> Cob m UMRef
+umCreateUser :: MonadIO m => UMUser -> Cob m (UMRef UMUser)
 umCreateUser user = do
     session <- ask
     let request = setRequestBodyJSON user
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path = "/userm/userm/user" }
-    ref <- httpValidJSON @UMRef request
+    ref <- httpValidJSON @(UMRef UMUser) request
     tell (mempty, singleton ref)
     return ref
 
-umAssignGroups :: MonadIO m => UMUser -> [UMGroup] -> Cob m a
-umAssignGroups = undefined
+-- | Add users to a group given their ids
+umAddUsersToGroup :: MonadIO m => [UMRef UMUser] -> UMRef UMGroup -> Cob m ()
+umAddUsersToGroup users group = do
+    session <- ask
+    let request = setRequestBodyJSON users
+                  (cobDefaultRequest session)
+                      { method = "PUT"
+                      , path = "/userm/userm/group/" <> (fromString . show $ group) <> "/users" }
+    httpValidNoBody request
 
 umGenToken :: MonadIO m => UMUser -> Cob m a
 umGenToken = undefined
 
-umDeleteUser :: MonadIO m => UMRef -> Cob m ()
+umDeleteUser :: MonadIO m => UMRef UMUser -> Cob m ()
 umDeleteUser ref = do
     session <- ask
     let request = (cobDefaultRequest session)
