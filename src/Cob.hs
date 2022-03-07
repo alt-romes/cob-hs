@@ -330,22 +330,20 @@ httpValidJSON request = do
     response <- httpJSONEither request
 
     let status = responseStatus response
-    body  <- case responseBody @(Either JSONException Value) response of
-               Left (JSONParseException {}) -> return Null -- The response body was (); don't fail
-               Left e -> throwError $ show e               -- The response body couldn't be parsed as 'Value'
-               Right a -> return a                         -- The response body was parsed as 'Value'
+    mbody <- case responseBody @(Either JSONException Value) response of
+               Left (JSONParseException {}) -> return Nothing -- The response body was (); don't fail
+               Left e -> throwError $ show e                  -- The response body couldn't be parsed as 'Value'
+               Right a -> return (Just a)                     -- The response body was parsed as 'Value'
 
     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
         throwError
         $  ("Request failed with status "
             <> show (statusCode status) <> " -- "
             <> BSC8.unpack (statusMessage status))
-
         <> ("\nResponse body: "
-            <> (BSC8.unpack . toStrict . encodePretty) body)
+            <> maybe "()" (BSC8.unpack . toStrict . encodePretty) mbody)
 
-        -- <> ("\nFull reponse: " <> show r)
-
+    body <- maybe (throwError "Couldn't parse response body because it doesn't exist") return mbody
     either throwError return (parseEither parseJSON body) -- Parse the JSON 'Value' as @a@
 
 -- | @Internal@
