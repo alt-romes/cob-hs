@@ -10,23 +10,27 @@ import Control.Monad.IO.Class ( MonadIO )
 
 import Data.Maybe ( fromMaybe )
 
-import Data.Aeson ( ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
-import Data.Aeson.Types ( Value(..) )
+import Data.Aeson ( Value(..), ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
 
 import Network.HTTP.Simple  ( httpJSONEither, setRequestBodyJSON )
 import Network.HTTP.Conduit ( Request(..), Response(..) )
 
 import Cob
 
+-- TODO: How to delete UserM ids to use in tests scenarios ?
+
 type UserM = CobT 'UserM
 
 -- | A UserM user id
 newtype UMRef = UMRef Int
+instance Show UMRef where
+    show (UMRef i) = show i
+    {-# INLINE show #-}
 instance ToJSON UMRef where
     toJSON (UMRef i) = toJSON i
     {-# INLINE toJSON #-}
 instance FromJSON UMRef where
-    parseJSON = withObject "user ref" $ \v -> do
+    parseJSON = withObject "UserM User Id" $ \v -> do
         id <- v .: "id"
         return (UMRef id)
     {-# INLINE parseJSON #-}
@@ -43,7 +47,8 @@ data UMUser = UMUser
 instance ToJSON UMUser where
     toJSON (UMUser username pass name email contact usernameAD) = object
         [ "username"   .= username
-        , "password"   .= maybe Null toJSON pass
+        , "password"   .= pass
+        , "name"       .= name
         , "email"      .= email
         , "contact"    .= fromMaybe "" pass
         , "usernameAD" .= fromMaybe "" pass ]
@@ -68,7 +73,6 @@ umCreateUser user = do
                       , path = "/userm/userm/user" }
     response <- httpJSONEither request
     unwrapValid @UMRef response
-
 
 umAssignGroups :: (Monoid (CobWriter c), MonadIO m) => UMUser -> [UMGroup] -> CobT c m a
 umAssignGroups = undefined

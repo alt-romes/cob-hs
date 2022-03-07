@@ -11,32 +11,33 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob where
 
-import Data.String (fromString)
-import Data.ByteString (ByteString)
-import Data.ByteString.Char8 as BSC8 ( unpack )
-import Data.ByteString.Lazy ( toStrict )
+import Data.String                   ( fromString )
+import Data.ByteString               ( ByteString )
+import Data.ByteString.Char8 as BSC8 ( unpack     )
+import Data.ByteString.Lazy          ( toStrict   )
 
-import Data.Maybe (listToMaybe)
+import Data.Maybe ( listToMaybe )
 
-import Data.Aeson (ToJSON)
+import Data.Aeson               ( Value(..), FromJSON, parseJSON )
 import Data.Aeson.Encode.Pretty ( encodePretty )
+import Data.Aeson.Types         ( parseEither  )
 
-import Control.Applicative (Alternative, empty, (<|>))
-import Control.Monad       (MonadPlus, (>=>), unless)
+import Control.Applicative ( Alternative, empty, (<|>) )
+import Control.Monad       ( MonadPlus, (>=>), unless )
 
-import Control.Monad.Except   (MonadError, throwError, catchError)
-import Control.Monad.Reader   (MonadReader, ask, local)
-import Control.Monad.Writer   (MonadWriter, tell, listen, pass)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Trans    (MonadTrans, lift)
+import Control.Monad.Except   ( MonadError, throwError, catchError )
+import Control.Monad.Reader   ( MonadReader, ask, local            )
+import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
+import Control.Monad.IO.Class ( MonadIO, liftIO                    )
+import Control.Monad.Trans    ( MonadTrans, lift                   )
 
 import Data.Bifunctor (first, second, bimap)
 
-import Data.Time.Clock (secondsToDiffTime, UTCTime(..))
+import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
 import Network.HTTP.Conduit as Net (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
-import Network.HTTP.Simple (setRequestManager, JSONException)
+import Network.HTTP.Simple (setRequestManager, JSONException, httpJSONEither)
 import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 
 -- | The Cob Monad.
@@ -319,14 +320,38 @@ cobDefaultRequest session =
                        , cookieJar = Just $ createCookieJar [cobtoken session] }
 
 
--- | @Internal@ Validate if the status of the response is successful, or throw an exception
-unwrapValid :: forall a m c. (Monoid (CobWriter c), Monad m, ToJSON a) => Response (Either JSONException a) -> CobT c m a
-unwrapValid r = do
-    let status = responseStatus r
-        body   = responseBody r
+-- | @Internal@
+--
+-- Unwrap an HTTP response parsing the body as JSON
+-- If the response status code isn't successful an error is thrown.
+-- In the event of a JSON parse errors an error is thrown.
+unwrapValid :: forall a m c. (Monoid (CobWriter c), Monad m, FromJSON a) => Response (Either JSONException Value) -> CobT c m a
+unwrapValid response = do
+
+    let status = responseStatus response
+    body      <- either (throwError . show) return (responseBody response)
+
     unless (statusIsSuccessful status) $
         throwError
-        $  ("Request failed with status " <> show (statusCode status) <> " -- " <> BSC8.unpack (statusMessage status))
-        <> ("\nResponse body: " <> either show (BSC8.unpack . toStrict . encodePretty) body)
+        $  ("Request failed with status "
+            <> show (statusCode status) <> " -- "
+            <> BSC8.unpack (statusMessage status))
+
+        <> ("\nResponse body: "
+            <> (BSC8.unpack . toStrict . encodePretty) body)
+
         -- <> ("\nFull reponse: " <> show r)
-    either (throwError . show) return body
+
+    either throwError return (parseEither parseJSON body)
+
+-- | @Internal@
+--
+-- Unwrap an HTTP response without body
+-- If the response status code isn't successful an error is thrown.
+unwrapValidNoBody :: forall a m c. (Monoid (CobWriter c), Monad m) => Response () -> CobT c m ()
+unwrapValidNoBody response = do
+    let status = responseStatus response
+    unless (statusIsSuccessful status) $
+        throwError ("Request failed with status "
+                    <> show (statusCode status) <> " -- "
+                    <> BSC8.unpack (statusMessage status))

@@ -30,10 +30,10 @@ import Data.Bifunctor     ( second              )
 import Data.Either        ( either              )
 import Data.Maybe         ( catMaybes, mapMaybe )
 
-import Data.DList (DList, singleton)
+import Data.DList ( DList, singleton )
 
-import Data.Aeson.Types
-import Data.Aeson.Lens    ( key, _Integer )
+import Data.Aeson.Types ( ToJSON, FromJSON, toJSON, parseJSON, Value(..), withObject, (.:), (.=), object, parseEither, parseMaybe )
+import Data.Aeson.Lens  ( key, _Integer )
 
 import Data.Text          ( Text       )
 import Data.ByteString    ( ByteString )
@@ -136,7 +136,7 @@ instance ToJSON (Ref a) where
     toJSON = toJSON . ref_id
     {-# INLINE toJSON #-}
 instance FromJSON (Ref a) where
-    parseJSON = withObject "record ref" $ \v -> do
+    parseJSON = withObject "RecordM Record Id" $ \v -> do
         id <- v .: "id"
         return (Ref id)
     {-# INLINE parseJSON #-}
@@ -237,13 +237,12 @@ rmDefinitionSearch rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery @q @a rmQuery }
-    response       <- httpJSONEither request
-    rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
-    hits           <- getResponseHitsHits rbody                                   -- Get hits.hits from response body
-    let hitsSources = mapMaybe (^? key "_source") hits                            -- Get _source from each hit
-    let ids = mapMaybe (parseMaybe parseJSON) hitsSources                         -- Get id from each _source
+    rbody <- unwrapValid =<< httpJSONEither request
+    hits  <- getResponseHitsHits rbody                    -- Get hits.hits from response body
+    let hitsSources = mapMaybe (^? key "_source") hits    -- Get _source from each hit
+    let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
     records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
-    return (zip ids records)                                                      -- Return list of (id, record)
+    return (zip ids records)                              -- Return list of (id, record)
 {-# INLINABLE rmDefinitionSearch #-}
 
 -- | Get an instance by id and fail if the instance isn't found
@@ -289,9 +288,8 @@ rmDefinitionCount rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery @q @a rmQuery}
-    response       <- httpJSONEither request
-    rbody :: Value <- unwrapValid response                                        -- Make sure status code is successful 
-    count <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?? throwError "Couldn't find hits.total.value when doing a definition count"
+    rbody    <- unwrapValid @Value =<< httpJSONEither request
+    count    <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?? throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
 {-# INLINABLE rmDefinitionCount #-}
 
@@ -344,11 +342,9 @@ rmAddInstanceWith waitForSearchAvailability record = do
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
-    response       <- httpJSONEither request
-    rbody :: Value <- unwrapValid response
-    id             <- either throwError return . parseEither parseJSON =<< ((rbody ^? key "id") ?? throwError "Couldn't get created record id on add instance!")
-    tell (singleton id)
-    return (Ref id)
+    ref <- unwrapValid =<< httpJSONEither request
+    tell (singleton (ref_id ref))
+    return ref
 {-# INLINABLE rmAddInstanceWith #-}
 
 -- | Update an instance with an id and return the updated record.
@@ -393,8 +389,7 @@ rmUpdateInstancesM rmQuery updateRecord = do
                       (cobDefaultRequest session)
                           { method = "PUT"
                           , path   = "/recordm/recordm/instances/integration" }
-        response <- httpJSONEither request
-        unwrapValid response :: RecordM m Value
+        unwrapValid @Value =<< httpJSONEither request
         return (Ref id, updatedRecord)
 {-# INLINABLE rmUpdateInstancesM #-}
 
@@ -426,8 +421,7 @@ rmDeleteInstance ref = do
                       { method = "DELETE"
                       , path = "/recordm/recordm/instances/" <> fromString (show ref)
                       , queryString = renderQuery True $ simpleQueryToQuery [("ignoreRefs", "true")] }
-    r <- httpNoBody request
-    unwrapValid (Right <$> r)
+    unwrapValidNoBody =<< httpNoBody request
 {-# INLINABLE rmDeleteInstance #-}
 
 -- newtype Val = Val {
