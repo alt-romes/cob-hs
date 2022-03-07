@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-} 
 {-# LANGUAGE UndecidableInstances #-} 
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
@@ -37,7 +38,7 @@ import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
 import Network.HTTP.Conduit as Net (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
-import Network.HTTP.Simple (setRequestManager, JSONException, httpJSONEither)
+import Network.HTTP.Simple (setRequestManager, JSONException(..), httpJSONEither, httpNoBody)
 import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 
 -- | The Cob Monad.
@@ -251,8 +252,6 @@ makeSession host tok = do
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
 
 
---- Existable
-
 -- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
 -- to retrieve the element if it exists or return a default value (passed in
 -- the second parameter) if it doesn't.
@@ -322,16 +321,21 @@ cobDefaultRequest session =
 
 -- | @Internal@
 --
--- Unwrap an HTTP response parsing the body as JSON
+-- Perform an HTTP request parsing the response body as JSON
 -- If the response status code isn't successful an error is thrown.
--- In the event of a JSON parse errors an error is thrown.
-unwrapValid :: forall a m c. (Monoid (CobWriter c), Monad m, FromJSON a) => Response (Either JSONException Value) -> CobT c m a
-unwrapValid response = do
+-- In the event of a JSON parse error, the error is thrown.
+httpValidJSON :: forall a m c. (Monoid (CobWriter c), MonadIO m, FromJSON a) => Request -> CobT c m a
+httpValidJSON request = do
+
+    response <- httpJSONEither request
 
     let status = responseStatus response
-    body      <- either (throwError . show) return (responseBody response)
+    body  <- case responseBody @(Either JSONException Value) response of
+               Left (JSONParseException {}) -> return Null -- The response body was (); don't fail
+               Left e -> throwError $ show e               -- The response body couldn't be parsed as 'Value'
+               Right a -> return a                         -- The response body was parsed as 'Value'
 
-    unless (statusIsSuccessful status) $
+    unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
         throwError
         $  ("Request failed with status "
             <> show (statusCode status) <> " -- "
@@ -342,14 +346,15 @@ unwrapValid response = do
 
         -- <> ("\nFull reponse: " <> show r)
 
-    either throwError return (parseEither parseJSON body)
+    either throwError return (parseEither parseJSON body) -- Parse the JSON 'Value' as @a@
 
 -- | @Internal@
 --
--- Unwrap an HTTP response without body
+-- Perform an HTTP request and ignore the response body
 -- If the response status code isn't successful an error is thrown.
-unwrapValidNoBody :: forall a m c. (Monoid (CobWriter c), Monad m) => Response () -> CobT c m ()
-unwrapValidNoBody response = do
+httpValidNoBody :: forall m c. (Monoid (CobWriter c), MonadIO m) => Request -> CobT c m ()
+httpValidNoBody request = do
+    response <- httpNoBody request
     let status = responseStatus response
     unless (statusIsSuccessful status) $
         throwError ("Request failed with status "

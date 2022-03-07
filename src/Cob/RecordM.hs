@@ -44,7 +44,7 @@ import Network.URI.Encode ( encode     )
 
 import Network.HTTP.Conduit ( Request(..), Response(..) )
 import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful, Status(..) )
-import Network.HTTP.Simple  ( httpJSONEither, httpNoBody, JSONException, setRequestManager, setRequestBodyJSON )
+import Network.HTTP.Simple  ( setRequestManager, setRequestBodyJSON )
 
 import Cob
 
@@ -237,7 +237,7 @@ rmDefinitionSearch rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery @q @a rmQuery }
-    rbody <- unwrapValid =<< httpJSONEither request
+    rbody <- httpValidJSON request
     hits  <- getResponseHitsHits rbody                    -- Get hits.hits from response body
     let hitsSources = mapMaybe (^? key "_source") hits    -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
@@ -288,7 +288,7 @@ rmDefinitionCount rmQuery = do
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery @q @a rmQuery}
-    rbody    <- unwrapValid @Value =<< httpJSONEither request
+    rbody    <- httpValidJSON @Value request
     count    <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?? throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
 {-# INLINABLE rmDefinitionCount #-}
@@ -342,7 +342,7 @@ rmAddInstanceWith waitForSearchAvailability record = do
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path   = "/recordm/recordm/instances/integration" }
-    ref <- unwrapValid =<< httpJSONEither request
+    ref <- httpValidJSON request
     tell (singleton (ref_id ref))
     return ref
 {-# INLINABLE rmAddInstanceWith #-}
@@ -389,7 +389,7 @@ rmUpdateInstancesM rmQuery updateRecord = do
                       (cobDefaultRequest session)
                           { method = "PUT"
                           , path   = "/recordm/recordm/instances/integration" }
-        unwrapValid @Value =<< httpJSONEither request
+        httpValidJSON @Value request
         return (Ref id, updatedRecord)
 {-# INLINABLE rmUpdateInstancesM #-}
 
@@ -421,30 +421,9 @@ rmDeleteInstance ref = do
                       { method = "DELETE"
                       , path = "/recordm/recordm/instances/" <> fromString (show ref)
                       , queryString = renderQuery True $ simpleQueryToQuery [("ignoreRefs", "true")] }
-    unwrapValidNoBody =<< httpNoBody request
+    httpValidNoBody request
 {-# INLINABLE rmDeleteInstance #-}
 
--- newtype Val = Val {
---     value :: Int
--- } deriving (Generic)
--- instance FromJSON Val
-
--- definitionSearch :: Session -> DefinitionName -> Value -> IO (Maybe Int)
--- definitionSearch session defname query = do
---     print query
---     let request = setRequestBodyJSON query
---                   (cobDefaultRequest session)
---                       { method = "POST"
---                       , path   = "/recordm/recordm/definitions/search/advanced/11?size=0" }
-
---     response <- httpJSON request :: IO (Response Value)
---     print response
---     let x = getResponseBody response ^? key "aggregations" . key "sum#soma"
---     print x
---     return $ value <$> (parseMaybe parseJSON =<< x )
-
-
---- Util
 
 -- | @Internal@ Render a 'RecordMQuery'.
 -- @a@ will be converted with 'toRMQuery' 

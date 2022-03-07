@@ -71,8 +71,7 @@ umCreateUser user = do
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path = "/userm/userm/user" }
-    response <- httpJSONEither request
-    unwrapValid @UMRef response
+    httpValidJSON @UMRef request
 
 umAssignGroups :: (Monoid (CobWriter c), MonadIO m) => UMUser -> [UMGroup] -> CobT c m a
 umAssignGroups = undefined
