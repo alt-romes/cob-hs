@@ -19,7 +19,7 @@ import Data.ByteString.Lazy          ( toStrict   )
 
 import Data.Maybe ( listToMaybe )
 
-import Data.Aeson               ( Value(..), FromJSON, parseJSON )
+import Data.Aeson               ( Value(..), FromJSON, ToJSON )
 import Data.Aeson.Encode.Pretty ( encodePretty )
 import Data.Aeson.Types         ( parseEither  )
 
@@ -324,16 +324,13 @@ cobDefaultRequest session =
 -- Perform an HTTP request parsing the response body as JSON
 -- If the response status code isn't successful an error is thrown.
 -- In the event of a JSON parse error, the error is thrown.
-httpValidJSON :: forall a m c. (Monoid (CobWriter c), MonadIO m, FromJSON a) => Request -> CobT c m a
+httpValidJSON :: forall a m c. (Monoid (CobWriter c), MonadIO m, Show a, FromJSON a) => Request -> CobT c m a
 httpValidJSON request = do
 
     response <- httpJSONEither request
 
     let status = responseStatus response
-    mbody <- case responseBody @(Either JSONException Value) response of
-               Left (JSONParseException {}) -> return Nothing -- The response body was (); don't fail
-               Left e -> throwError $ show e                  -- The response body couldn't be parsed as 'Value'
-               Right a -> return (Just a)                     -- The response body was parsed as 'Value'
+        body   = responseBody @(Either JSONException a) response
 
     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
         throwError
@@ -341,16 +338,20 @@ httpValidJSON request = do
             <> show (statusCode status) <> " -- "
             <> BSC8.unpack (statusMessage status))
         <> ("\nResponse body: "
-            <> maybe "()" (BSC8.unpack . toStrict . encodePretty) mbody)
+            <> either prettyBodyFromJSONException show body)
 
-    body <- maybe (throwError "Couldn't parse response body because it doesn't exist") return mbody
-    either throwError return (parseEither parseJSON body) -- Parse the JSON 'Value' as @a@
+    either (throwError . prettyErrorFromJSONException) return body
+
+    where prettyBodyFromJSONException  JSONParseException {}             = "()"
+          prettyBodyFromJSONException  (JSONConversionException _ rv _)  = BSC8.unpack . toStrict . encodePretty . responseBody $ rv
+          prettyErrorFromJSONException j = "Error parsing response body: " <> prettyBodyFromJSONException j <> "\nERROR: " <> case j of (JSONParseException _ _ e) -> show e; (JSONConversionException _ _ e) -> e
+
 
 -- | @Internal@
 --
 -- Perform an HTTP request and ignore the response body
 -- If the response status code isn't successful an error is thrown.
-httpValidNoBody :: forall m c. (Monoid (CobWriter c), MonadIO m) => Request -> CobT c m ()
+httpValidNoBody :: (Monoid (CobWriter c), MonadIO m) => Request -> CobT c m ()
 httpValidNoBody request = do
     response <- httpNoBody request
     let status = responseStatus response
