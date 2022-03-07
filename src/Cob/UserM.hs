@@ -50,8 +50,8 @@ instance ToJSON UMUser where
         , "password"   .= pass
         , "name"       .= name
         , "email"      .= email
-        , "contact"    .= fromMaybe "" pass
-        , "usernameAD" .= fromMaybe "" pass ]
+        , "contact"    .= fromMaybe "" contact
+        , "usernameAD" .= fromMaybe "" usernameAD ]
 
 data UMGroup = UMGroup
 
