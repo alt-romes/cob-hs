@@ -5,10 +5,13 @@
 {-# LANGUAGE TypeFamilies #-}
 module Cob.UserM where
 
+import Control.Monad.Writer ( tell )
 import Control.Monad.Reader ( ask )
 import Control.Monad.IO.Class ( MonadIO )
 
-import Data.Maybe ( fromMaybe )
+import Data.String ( fromString )
+import Data.Maybe  ( fromMaybe )
+import Data.DList  ( DList, singleton )
 
 import Data.Aeson ( Value(..), ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
 
@@ -17,9 +20,12 @@ import Network.HTTP.Conduit ( Request(..), Response(..) )
 
 import Cob
 
--- TODO: How to delete UserM ids to use in tests scenarios ?
-
-type UserM = CobT 'UserM
+-- | UserM writes the added users thorought the Cob computation.
+-- This allows it to undo (delete) all added users in a computation (particularly in a testing environment)
+--
+-- This list of added instances is **unused** when the computation is run with 'runCob'.
+-- However, when the computation is run with 'runUserMTests', all added instances will be deleted
+type instance CobWriter 'UserM = DList UMRef
 
 -- | A UserM user id
 newtype UMRef = UMRef Int
@@ -55,26 +61,34 @@ instance ToJSON UMUser where
 
 data UMGroup = UMGroup
 
-type instance CobWriter 'UserM = ()
-
 -- | Run a UserM computation
-runUserM :: Functor m => CobSession -> UserM m a -> m (Either CobError a)
+runUserM :: Functor m => CobSession -> Cob m a -> m (Either CobError a)
 runUserM session = fmap fst . runCobT session
 {-# INLINE runUserM #-}
 
 
 -- | Create an UserM user
-umCreateUser :: (Monoid (CobWriter c), MonadIO m) => UMUser -> CobT c m UMRef
+umCreateUser :: (CobWritersAreMonoids, MonadIO m) => UMUser -> Cob m UMRef
 umCreateUser user = do
     session <- ask
     let request = setRequestBodyJSON user
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path = "/userm/userm/user" }
-    httpValidJSON @UMRef request
+    ref <- httpValidJSON @UMRef request
+    tell (mempty, singleton ref)
+    return ref
 
-umAssignGroups :: (Monoid (CobWriter c), MonadIO m) => UMUser -> [UMGroup] -> CobT c m a
+umAssignGroups :: (CobWritersAreMonoids, MonadIO m) => UMUser -> [UMGroup] -> Cob m a
 umAssignGroups = undefined
 
-umGenToken :: (Monoid (CobWriter c), MonadIO m) => UMUser -> CobT c m a
+umGenToken :: (CobWritersAreMonoids, MonadIO m) => UMUser -> Cob m a
 umGenToken = undefined
+
+umDeleteUser :: (CobWritersAreMonoids, MonadIO m) => UMRef -> Cob m ()
+umDeleteUser ref = do
+    session <- ask
+    let request = (cobDefaultRequest session)
+                      { method = "DELETE"
+                      , path = "/userm/userm/user/" <> fromString (show ref) }
+    httpValidNoBody request

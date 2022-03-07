@@ -1,3 +1,5 @@
+{-# LANGUAGE ConstraintKinds #-} 
+{-# LANGUAGE InstanceSigs #-} 
 {-# LANGUAGE TypeApplications #-} 
 {-# LANGUAGE UndecidableInstances #-} 
 {-# LANGUAGE TypeFamilies #-}
@@ -32,6 +34,8 @@ import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
 import Control.Monad.IO.Class ( MonadIO, liftIO                    )
 import Control.Monad.Trans    ( MonadTrans, lift                   )
 
+import Data.Monoid (Monoid(..))
+
 import Data.Bifunctor (first, second, bimap)
 
 import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
@@ -41,44 +45,31 @@ import Network.HTTP.Conduit as Net (Manager, Cookie(..), Request(..), Response(.
 import Network.HTTP.Simple (setRequestManager, JSONException(..), httpJSONEither, httpNoBody)
 import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 
--- | The Cob Monad.
--- A context in which computations that interact with @RecordM@ can be executed.
--- 
--- See 'CobT' for more.
-type Cob a = CobT 'NoModule IO a
-
--- | Run a 'Cob' computation and get either a 'CobError' or a value in an 'IO' context.
-runCob :: CobSession -> Cob a -> IO (Either CobError a)
-runCob session = fmap fst . runCobT session
-{-# INLINE runCob #-}
+-- | The 'Cob' monad (transformer).
+--
+-- A constructed monad made out of an existing monad @m@ such that its
+-- computations can be embedded in 'Cob', from which it's also possible to
+-- interact with @RecordM@ and @UserM@.
+--
+newtype Cob m a = Cob { unCob :: CobSession -> m (Either CobError a, (CobWriter 'RecordM, CobWriter 'UserM)) }
 
 -- | A 'Cob' computation will either succeed or return a 'CobError'.
 type CobError = String
 
--- | The 'CobT' monad transformer.
---
--- A constructed monad made out of an existing monad @m@ such that its
--- computations can be embedded in 'CobT', from which it's also possible to
--- interact with @RecordM@.
---
--- The @cm@ parameter is the 'CobModule' -- the base Cob monad is extended by each module
---
-newtype CobT (c :: CobModule) m a = Cob { unCob :: CobSession -> m (Either CobError a, CobWriter c) }
+-- | The 'Cob' modules
+data CobModule = RecordM | UserM
 
--- | The kind of module running in this Cob computation
-data CobModule = NoModule | RecordM | UserM
-
--- | Define which kind of Monoid writer Cob uses, depending on the module
+-- | Define which kind of Monoid writer each module uses
+--
+-- The full 'Cob' writer is a tuple @(CobWriter 'RecordM, CobWriter 'Userm)@
 type family CobWriter (c :: CobModule)
--- | @CobT NoModule@ uses @()@ for the writer monoid
-type instance CobWriter 'NoModule = ()
 
-instance Functor m => Functor (CobT c m) where
+instance Functor m => Functor (Cob m) where
     fmap f = Cob . (fmap . fmap) (first (fmap f)) . unCob
     {-# INLINE fmap #-}
     -- [x] fmap id = id
 
-instance (Monoid (CobWriter c), Monad m) => Applicative (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => Applicative (Cob m) where
     pure = Cob . const . pure . (, mempty) . Right
     {-# INLINE pure #-}
     (Cob f') <*> (Cob g) = Cob $ \r ->
@@ -91,7 +82,7 @@ instance (Monoid (CobWriter c), Monad m) => Applicative (CobT c m) where
     -- [x] pure f <*> pure x = pure (f x)
     -- [x] u <*> pure y = pure ($ y) <*> u
 
-instance (Monoid (CobWriter c), Monad m) => Monad (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => Monad (Cob m) where
     (Cob x') >>= f' = Cob $ \r ->
         x' r >>= \case
           (Left err, l) -> return (Left err, l)
@@ -101,7 +92,7 @@ instance (Monoid (CobWriter c), Monad m) => Monad (CobT c m) where
     -- [x] m >>= return = m
     -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
 
-instance (Monoid (CobWriter c), Monad m) => Alternative (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => Alternative (Cob m) where
     empty = Cob $ const $ pure (Left "Cob (alternative) empty computation. No error message.", mempty)
     {-# INLINE empty #-} 
 
@@ -136,15 +127,15 @@ instance (Monoid (CobWriter c), Monad m) => Alternative (CobT c m) where
             (Right x, l) -> pure (Right x, l) 
     {-# INLINE (<|>) #-} 
 
-instance (Monoid (CobWriter c), Monad m) => MonadPlus (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => MonadPlus (Cob m) where
 
-instance (Monoid (CobWriter c), Monad m) => MonadReader CobSession (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => MonadReader CobSession (Cob m) where
     ask = Cob (pure . (, mempty) . Right)
     {-# INLINE ask #-}
     local f m = Cob (unCob m . f)
     {-# INLINE local #-}
 
-instance (Monoid (CobWriter c), Monad m) => MonadError CobError (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => MonadError CobError (Cob m) where
     throwError = Cob . const . pure . (, mempty) . Left
     {-# INLINE throwError #-}
     (Cob x') `catchError` handler = Cob $ \r ->
@@ -163,12 +154,12 @@ instance (Monoid (CobWriter c), Monad m) => MonadError CobError (CobT c m) where
 -- @
 -- [user1] <- rmDefinitionSearch_ "id:456767*" :: [User]
 -- @
-instance (Monoid (CobWriter c), Monad m) => MonadFail (CobT c m) where
+instance (CobWritersAreMonoids, Monad m) => MonadFail (Cob m) where
     fail = throwError
     {-# INLINE fail #-}
     -- [x] fail s >>= f = fail s
 
-instance (w ~ CobWriter c, Monoid w, Monad m) => MonadWriter w (CobT c m) where
+instance (w ~ (CobWriter 'RecordM, CobWriter 'UserM), CobWritersAreMonoids, Monad m) => MonadWriter w (Cob m) where
     tell = Cob . const . pure . (Right (),)
     {-# INLINE tell #-}
     listen a' = Cob (unCob a' >=> \(a, w) -> return (fmap (,w) a, w))
@@ -179,7 +170,7 @@ instance (w ~ CobWriter c, Monoid w, Monad m) => MonadWriter w (CobT c m) where
           (Right (a, f), w) -> return (Right a, f w)
     {-# INLINE pass #-}
 
-instance (Monoid (CobWriter c), MonadIO m) => MonadIO (CobT c m) where
+instance (CobWritersAreMonoids, MonadIO m) => MonadIO (Cob m) where
     liftIO = Cob . const . fmap ((, mempty) . Right) . liftIO
     {-# INLINE liftIO #-}
     -- [x] liftIO . return = return
@@ -203,21 +194,25 @@ instance (Monoid (CobWriter c), MonadIO m) => MonadIO (CobT c m) where
 --     ...
 --     lift (print "finished!")
 -- @
-instance Monoid (CobWriter c) => MonadTrans (CobT c) where
+instance CobWritersAreMonoids => MonadTrans Cob where
     lift = Cob . const . fmap ((, mempty) . Right)
     {-# INLINE lift #-}
     -- [x] lift . return = return
     -- [x] lift (m >>= f) = lift m >>= (lift . f)
 
 
--- | The inverse of 'CobT'.
+-- | The inverse of 'Cob'.
 --
--- Run a 'CobT' computation and return either a 'CobError' or a value
--- in the argument monad @m@, alongside the writer log
-runCobT :: CobSession -> CobT c m a -> m (Either CobError a, CobWriter c)
+-- Run a 'Cob' computation and get either a 'CobError' or a value
+-- in the argument monad @m@, alongside the 'CobWriter's logs
+runCobT :: CobSession -> Cob m a -> m (Either CobError a, (CobWriter 'RecordM, CobWriter 'UserM))
 runCobT = flip unCob
 {-# INLINE runCobT #-}
 
+-- | Run a 'Cob' computation and get either a 'CobError' or a value in @m@.
+runCob :: Functor m => CobSession -> Cob m a -> m (Either CobError a)
+runCob session = fmap fst . runCobT session
+{-# INLINE runCob #-}
 
 --- Sessions
 
@@ -307,6 +302,10 @@ instance Existable [] where
     {-# INLINE (??) #-}
 
 
+-- | @Internal@ Constraint type synonym to simplify constraints
+type CobWritersAreMonoids = (Monoid (CobWriter 'RecordM), Monoid (CobWriter 'UserM))
+
+
 -- | @Internal@ The default HTTP request used internally (targeting RecordM) in
 -- this module, given a 'CobSession'.
 -- (Session managed TLS to session host:443 with session's cobtoken)
@@ -324,7 +323,7 @@ cobDefaultRequest session =
 -- Perform an HTTP request parsing the response body as JSON
 -- If the response status code isn't successful an error is thrown.
 -- In the event of a JSON parse error, the error is thrown.
-httpValidJSON :: forall a m c. (Monoid (CobWriter c), MonadIO m, Show a, FromJSON a) => Request -> CobT c m a
+httpValidJSON :: forall a m. (CobWritersAreMonoids, MonadIO m, Show a, FromJSON a) => Request -> Cob m a
 httpValidJSON request = do
 
     response <- httpJSONEither request
@@ -351,7 +350,7 @@ httpValidJSON request = do
 --
 -- Perform an HTTP request and ignore the response body
 -- If the response status code isn't successful an error is thrown.
-httpValidNoBody :: (Monoid (CobWriter c), MonadIO m) => Request -> CobT c m ()
+httpValidNoBody :: (CobWritersAreMonoids, MonadIO m) => Request -> Cob m ()
 httpValidNoBody request = do
     response <- httpNoBody request
     let status = responseStatus response

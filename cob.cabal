@@ -26,7 +26,7 @@ library
                       Cob.UserM,
                       Cob.RecordM,
                       Cob.RecordM.TH,
-                      Cob.RecordM.Testing
+                      Cob.Testing
 
     ghc-options:      -fllvm -O2
     build-depends:    base ^>=4.15.0.0,
