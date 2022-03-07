@@ -334,9 +334,9 @@ httpValidJSON request = do
 
     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
         throwError
-        $  ("Request failed with status "
-            <> show (statusCode status) <> " -- "
-            <> BSC8.unpack (statusMessage status))
+        $  ("Request failed with a status of "
+            <> show (statusCode status) <> " ("
+            <> BSC8.unpack (statusMessage status) <> ")")
         <> ("\nResponse body: "
             <> either prettyBodyFromJSONException show body)
 
@@ -356,6 +356,6 @@ httpValidNoBody request = do
     response <- httpNoBody request
     let status = responseStatus response
     unless (statusIsSuccessful status) $
-        throwError ("Request failed with status "
-                    <> show (statusCode status) <> " -- "
-                    <> BSC8.unpack (statusMessage status))
+        throwError ("Request failed with a status of "
+            <> show (statusCode status) <> " ("
+            <> BSC8.unpack (statusMessage status) <> ")")
