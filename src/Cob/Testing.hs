@@ -25,6 +25,7 @@ runCobTests :: MonadIO m => CobSession -> Cob m a -> m (Either CobError a)
 runCobTests session cob = do
     (res, (addedRefs, addedUsers)) <- second (bimap toList toList) <$> runCobT session cob
     do  -- Delete instances and users and if successful return the original computation result
-        runCob session (mapM_ rmDeleteInstance addedRefs)
-        runCob session (mapM_ umDeleteUser addedUsers)
+        err1 <- runCob session (mapM_ rmDeleteInstance addedRefs)
+        err2 <- runCob session (mapM_ umDeleteUser addedUsers)
+        -- TODO: return deletion errors instead of always the result
         return res

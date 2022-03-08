@@ -5,15 +5,19 @@
 {-# LANGUAGE TypeFamilies #-}
 module Cob.UserM where
 
+import Control.Monad.Except ( throwError )
 import Control.Monad.Writer ( tell )
 import Control.Monad.Reader ( ask )
 import Control.Monad.IO.Class ( MonadIO )
+
+import Control.Lens ( (^?) )
 
 import Data.String ( fromString )
 import Data.Maybe  ( fromMaybe )
 import Data.DList  ( singleton )
 
 import Data.Aeson ( Value(..), ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
+import Data.Aeson.Lens ( key, _JSON )
 
 import Network.HTTP.Simple  ( httpJSONEither, setRequestBodyJSON )
 import Network.HTTP.Conduit ( Request(..), Response(..) )
@@ -87,8 +91,20 @@ umAddUsersToGroup users group = do
                       , path = "/userm/userm/group/" <> (fromString . show $ group) <> "/users" }
     httpValidNoBody request
 
-umGenToken :: MonadIO m => UMUser -> Cob m a
-umGenToken = undefined
+-- | Log-in to UserM using a username and password.
+-- Returns a temporary auth token for the logged in user
+umLogin :: MonadIO m => String -> String -> Cob m String
+umLogin username password = do
+    session <- ask
+    let request = setRequestBodyJSON (object
+                    [ "username" .= username
+                    , "password" .= password ])
+                  (cobDefaultRequest session)
+                      { method = "POST"
+                      , path = "/userm/security/auth" }
+    body <- httpValidJSON @Value request
+    body ^? key "securityToken" . _JSON ?? throwError "UserM login response body didn't have securityToken"
+
 
 umDeleteUser :: MonadIO m => UMRef UMUser -> Cob m ()
 umDeleteUser ref = do

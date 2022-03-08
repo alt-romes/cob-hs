@@ -14,6 +14,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob where
 
+-- TODO: Cob.Simple module
+
 import Data.String                   ( fromString )
 import Data.ByteString               ( ByteString )
 import Data.ByteString.Char8 as BSC8 ( unpack     )
