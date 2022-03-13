@@ -32,36 +32,36 @@ library
                       Cob.Testing
 
     ghc-options:      -fllvm -O2
-    build-depends:    base ^>=4.15.0.0,
+    build-depends:    base,
+                      template-haskell,
 
-                      -- text ^>=1.2.5.0,
-                      -- bytestring ^>=0.11.2.0,
+                      -- text                   >= 1.2.5.0,
+                      -- bytestring             >= 0.11.2.0,
                       text,
                       bytestring,
                       uri-encode,
 
-                      mtl ^>=2.2.2,
-                      transformers ^>=0.5.6.2,
+                      mtl                       >= 2.2.2,
+                      transformers              >= 0.5.6.2,
 
-                      lens ^>=5.1,
+                      lens                      >= 5.1,
 
-                      template-haskell ^>=2.17.0.0,
 
                       -- Network
-                      http-conduit ^>=2.3.8,
-                      http-types ^>=0.12.3,
+                      http-conduit              >= 2.3.8,
+                      http-types                >= 0.12.3,
 
                       -- JSON
-                      -- aeson ^>=2.0.3.0,
-                      aeson ^>=1.5.6.0,
-                      aeson-pretty ^>=0.8.9,
-                      lens-aeson ^>=1.1.3,
+                      -- aeson                  >= 2.0.3.0,
+                      aeson                     >= 1.5.6.0,
+                      aeson-pretty              >= 0.8.9,
+                      lens-aeson                >= 1.1.3,
 
                       -- Util
-                      vector ^>=0.12.3.1,
-                      time ^>=1.9.3,
-                      dlist ^>=1.0,
-                      async ^>=2.2.4
+                      vector                    >= 0.12.3.1,
+                      time                      >= 1.9.3,
+                      dlist                     >= 1.0,
+                      async                     >= 2.2.4
 
 
     hs-source-dirs:   src
@@ -72,33 +72,32 @@ executable main
 
     ghc-options:      -threaded -fllvm -rtsopts
 
-    build-depends:    base ^>=4.15.0.0,
+    build-depends:    base,
+                      template-haskell,
 
-                      -- text ^>=1.2.5.0,
-                      -- bytestring ^>=0.11.2.0,
+                      -- text                   >= 1.2.5.0,
+                      -- bytestring             >= 0.11.2.0,
                       text,
                       bytestring,
                       uri-encode,
 
-                      mtl ^>=2.2.2,
-                      transformers ^>=0.5.6.2,
+                      mtl                       >= 2.2.2,
+                      transformers              >= 0.5.6.2,
 
-                      lens ^>=5.1,
-
-                      template-haskell ^>=2.17.0.0,
+                      lens                      >= 5.1,
 
                       -- Network
-                      http-conduit ^>=2.3.8,
-                      http-types ^>=0.12.3,
+                      http-conduit              >= 2.3.8,
+                      http-types                >= 0.12.3,
 
                       -- JSON
-                      -- aeson ^>=2.0.3.0,
-                      aeson ^>=1.5.6.0,
-                      lens-aeson ^>=1.1.3,
+                      -- aeson                  >= 2.0.3.0,
+                      aeson                     >= 1.5.6.0,
+                      lens-aeson                >= 1.1.3,
 
                       -- Util
-                      vector ^>=0.12.3.1,
-                      time ^>=1.9.3,
+                      vector                    >= 0.12.3.1,
+                      time                      >= 1.9.3,
 
                       cob
 
