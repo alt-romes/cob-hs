@@ -1,4 +1,5 @@
-{-# LANGUAGE TemplateHaskellQuotes, LambdaCase #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase #-}
 
 -- | Automatically derive 'Record' given its fields and definition name
 -- A definition called \"Dogs\" with fields ["Owner Name", "Dog Name"], and type that will instance 'Record',
