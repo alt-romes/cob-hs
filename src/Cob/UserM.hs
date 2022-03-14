@@ -32,7 +32,7 @@ import Cob
 type instance CobWriter 'UserM = UMRef UMUser
 
 -- | A UserM user id
-newtype UMRef a = UMRef Int
+newtype UMRef a = UMRef Int deriving (Eq)
 instance Show (UMRef a)  where
     show (UMRef i) = show i
     {-# INLINE show #-}

@@ -132,7 +132,12 @@ instance Monad m => Alternative (Cob m) where
             (Right x, l) -> pure (Right x, l) 
     {-# INLINE (<|>) #-} 
 
-instance Monad m => MonadPlus (Cob m) where
+-- Cob doesn't instance MonadPlus because mzero isn't a right zero but rather is
+-- mzero + the accumulators from the left computation
+-- instance Monad m => MonadPlus (Cob m) where
+    -- ...
+    -- mzero >>= f  =  mzero
+    -- v >> mzero   =  mzero
 
 instance Monad m => MonadReader CobSession (Cob m) where
     ask = Cob (pure . (, mempty) . Right)

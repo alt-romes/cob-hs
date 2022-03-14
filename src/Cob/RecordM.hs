@@ -121,7 +121,7 @@ class (ToJSON a, FromJSON a) => Record a where
 --         [age] <- v .: "age"
 --         return (DogsRecord name (Ref (read ownerId)) (read age))
 -- @
-newtype Ref a = Ref { ref_id :: Int }
+newtype Ref a = Ref { ref_id :: Int } deriving (Eq)
 instance Show (Ref a) where
     show = show . ref_id
     {-# INLINE show #-}
