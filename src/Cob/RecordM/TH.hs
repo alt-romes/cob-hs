@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -78,7 +79,11 @@ mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem ty
 mkParseJSON :: Name -> [SupportedRecordType] -> [Field] -> Q Exp
 mkParseJSON tyConName tys fields = do
         finalStmt <- NoBindS . AppE (VarE $ mkName "return") <$> foldM foldConArgs (ConE tyConName) (zip tys fields)
+#if __GLASGOW_HASKELL__ >= 900
         LamE [VarP $ mkName "v"] . DoE Nothing . (++ [finalStmt]) <$> zipWithM mkParseJSONItem tys fields
+#else
+        LamE [VarP $ mkName "v"] . DoE . (++ [finalStmt]) <$> zipWithM mkParseJSONItem tys fields
+#endif
     where
         mkParseJSONItem :: SupportedRecordType -> Field -> Q Stmt
         mkParseJSONItem (MaybeT _) field =
@@ -100,7 +105,11 @@ mkParseJSON tyConName tys fields = do
 mkRecordPat :: Name -> [SupportedRecordType] -> [Field] -> Q Pat
 mkRecordPat tyConName tyConArgList fields = do
     pats <- zipWithM mkArgPat tyConArgList fields
+#if __GLASGOW_HASKELL__ >= 902
+    return $ ConP tyConName [] pats
+#else
     return $ ConP tyConName pats
+#endif
     where
         mkArgPat :: SupportedRecordType -> Field -> Q Pat
         mkArgPat ty field = case ty of
