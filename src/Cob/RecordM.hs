@@ -18,16 +18,12 @@ module Cob.RecordM where
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Applicative        ( (<|>)                   )
-import Control.Monad              ( forM, join, mapM, mzero )
+import Control.Monad              ( forM, join              )
 import Control.Monad.Reader       ( ask                     )
-import Control.Monad.Except       ( throwError, liftEither  )
-import Control.Monad.IO.Class     ( MonadIO, liftIO         )
+import Control.Monad.Except       ( throwError )
+import Control.Monad.IO.Class     ( MonadIO )
 import Control.Monad.Writer       ( tell                    )
-import Control.Monad.Trans        ( lift                    )
 
-import Data.Bifunctor     ( second              )
-import Data.Either        ( either              )
 import Data.Maybe         ( catMaybes, mapMaybe )
 
 import Data.DList ( singleton )
@@ -37,14 +33,13 @@ import Data.Aeson.Lens  ( key, _Integer )
 
 import Data.Text          ( Text       )
 import Data.ByteString    ( ByteString )
-import Data.ByteString.Char8 as BSC8 ( unpack )
 import Data.String        ( fromString )
 import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
 
-import Network.HTTP.Conduit ( Request(..), Response(..) )
-import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery, statusIsSuccessful, Status(..) )
-import Network.HTTP.Simple  ( setRequestManager, setRequestBodyJSON )
+import Network.HTTP.Conduit ( Request(..) )
+import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery )
+import Network.HTTP.Simple  ( setRequestBodyJSON )
 
 import Cob
 

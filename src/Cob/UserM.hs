@@ -19,8 +19,8 @@ import Data.DList  ( singleton )
 import Data.Aeson ( Value(..), ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
 import Data.Aeson.Lens ( key, _JSON )
 
-import Network.HTTP.Simple  ( httpJSONEither, setRequestBodyJSON )
-import Network.HTTP.Conduit ( Request(..), Response(..) )
+import Network.HTTP.Simple  ( setRequestBodyJSON )
+import Network.HTTP.Conduit ( Request(..) )
 
 import Cob
 

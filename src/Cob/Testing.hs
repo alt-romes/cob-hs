@@ -5,7 +5,7 @@
 {-# LANGUAGE Rank2Types #-}
 module Cob.Testing where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 
 import Data.DList (toList)
 import Data.Bifunctor (bimap, second)

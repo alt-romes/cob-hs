@@ -17,7 +17,6 @@ module Cob where
 -- TODO: Cob.Simple module
 
 import Data.String                   ( fromString )
-import Data.ByteString               ( ByteString )
 import Data.ByteString.Char8 as BSC8 ( unpack     )
 import Data.ByteString.Lazy          ( toStrict   )
 
@@ -25,12 +24,11 @@ import Data.DList ( DList )
 
 import Data.Maybe ( listToMaybe )
 
-import Data.Aeson               ( Value(..), FromJSON, ToJSON )
+import Data.Aeson               ( FromJSON )
 import Data.Aeson.Encode.Pretty ( encodePretty )
-import Data.Aeson.Types         ( parseEither  )
 
 import Control.Applicative ( Alternative, empty, (<|>) )
-import Control.Monad       ( MonadPlus, (>=>), unless )
+import Control.Monad       ( (>=>), unless )
 
 import Control.Monad.Except   ( MonadError, throwError, catchError )
 import Control.Monad.Reader   ( MonadReader, ask, local            )
