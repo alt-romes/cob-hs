@@ -11,6 +11,8 @@ module Cob.RecordM where
 
 -- TODO: Make Async versions of functions that receive a callback or return an async token
 
+-- TODO: Instance Default with StandardRecordMQuery?
+
 -- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
 -- an instance of Record to find them or make body of search conditional on
 -- whether it's a ref or not..
@@ -125,8 +127,8 @@ instance ToJSON (Ref a) where
     {-# INLINE toJSON #-}
 instance FromJSON (Ref a) where
     parseJSON = withObject "RecordM Record Id" $ \v -> do
-        id <- v .: "id"
-        return (Ref id)
+        ref <- v .: "id"
+        return (Ref ref)
     {-# INLINE parseJSON #-}
 
 
@@ -281,6 +283,10 @@ rmDefinitionCount rmQuery = do
     return (Count count)
 {-# INLINABLE rmDefinitionCount #-}
 
+-- ROMES:TODO: Search
+-- rmDefinitionSum :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m (Count a)
+-- rmDefinitionSum rmQuery = do
+-- {-# INLINABLE rmDefinitionSum #-}
 
 -- | Add to @RecordM@ a new instance given a 'Record', and return the 'Ref' of the newly created instance.
 --
@@ -367,18 +373,18 @@ rmUpdateInstancesM :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q
 rmUpdateInstancesM rmQuery updateRecord = do
     records <- rmDefinitionSearch rmQuery
     session <- ask
-    forM records $ \(Ref id, rec) -> do
+    forM records $ \(Ref ref, rec) -> do
         updatedRecord <- updateRecord rec
         let request = setRequestBodyJSON
                       (object
                           [ "type"      .= definition @a
-                          , "condition" .= ("id:" <> show id)
+                          , "condition" .= ("id:" <> show ref)
                           , "values"    .= updatedRecord ])
                       (cobDefaultRequest session)
                           { method = "PUT"
                           , path   = "/recordm/recordm/instances/integration" }
-        httpValidJSON @Value request
-        return (Ref id, updatedRecord)
+        _ <- httpValidJSON @Value request
+        return (Ref ref, updatedRecord)
 {-# INLINABLE rmUpdateInstancesM #-}
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result

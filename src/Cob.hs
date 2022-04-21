@@ -41,7 +41,7 @@ import Data.Bifunctor (first, second, bimap)
 import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
-import Network.HTTP.Conduit as Net (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
+import Network.HTTP.Conduit (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
 import Network.HTTP.Simple (setRequestManager, JSONException(..), httpJSONEither, httpNoBody)
 import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 
@@ -126,7 +126,7 @@ instance Monad m => Alternative (Cob m) where
     -- instances won't be deleted if running with 'runRecordMTests'
     (Cob x') <|> (Cob y) = Cob $ \r ->
         x' r >>= \case
-            (Left e, l) -> second (l <>) <$> y r
+            (Left _, l) -> second (l <>) <$> y r
             (Right x, l) -> pure (Right x, l) 
     {-# INLINE (<|>) #-} 
 
@@ -237,19 +237,20 @@ data CobSession = CobSession { tlsmanager :: Manager
 
 -- | Make a 'CobSession' with the default @TLS Manager@ given the 'Host' and 'CobToken'.
 makeSession :: Host -> CobToken -> IO CobSession
-makeSession host tok = do
+makeSession cobhost tok = do
     manager <- newManager tlsManagerSettings
-    return $ CobSession manager host $ Cookie { cookie_name             = "cobtoken"
-                                              , cookie_value            = fromString tok
-                                              , cookie_secure_only      = True
-                                              , cookie_path             = "/"
-                                              , cookie_domain           = fromString host
-                                              , cookie_expiry_time      = future
-                                              , cookie_creation_time    = past
-                                              , cookie_last_access_time = past
-                                              , cookie_persistent       = True
-                                              , cookie_host_only        = False
-                                              , cookie_http_only        = False }
+    return $ CobSession manager cobhost $
+        Cookie { cookie_name             = "cobtoken"
+               , cookie_value            = fromString tok
+               , cookie_secure_only      = True
+               , cookie_path             = "/"
+               , cookie_domain           = fromString cobhost
+               , cookie_expiry_time      = future
+               , cookie_creation_time    = past
+               , cookie_last_access_time = past
+               , cookie_persistent       = True
+               , cookie_host_only        = False
+               , cookie_http_only        = False }
     where
     past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
@@ -310,13 +311,12 @@ instance Existable [] where
     {-# INLINE (??) #-}
 
 
--- | @Internal@ The default HTTP request used internally (targeting RecordM) in
--- this module, given a 'CobSession'.
+-- | @Internal@ The default HTTP request used internally, given a 'CobSession'.
 -- (Session managed TLS to session host:443 with session's cobtoken)
 cobDefaultRequest :: CobSession -> Request
 cobDefaultRequest session =
     setRequestManager (tlsmanager session) $
-    Net.defaultRequest { secure    = True
+        defaultRequest { secure    = True
                        , port      = 443
                        , host      = fromString $ serverhost session
                        , cookieJar = Just $ createCookieJar [cobtoken session] }

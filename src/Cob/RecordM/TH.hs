@@ -92,7 +92,7 @@ mkParseJSON tyConName tys fields = do
             BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| v .: fromString $(mkString $ fieldNormalize field) |]
 
         foldConArgs :: Exp -> (SupportedRecordType, Field) -> Q Exp
-        exp `foldConArgs` (ty, field) = AppE exp <$> [e| $(mods ty) $(mkVarE $ fieldNormalizeVar field) |]
+        expr `foldConArgs` (ty, field) = AppE expr <$> [e| $(mods ty) $(mkVarE $ fieldNormalizeVar field) |]
 
         mods :: SupportedRecordType -> Q Exp
         mods ty = case ty of
@@ -131,7 +131,7 @@ parseTyConArgList = mapM parseTyConArg
     where
         parseTyConArg :: Type -> Q SupportedRecordType
         parseTyConArg = \case
-            t@(ConT conTy)
+            ConT conTy
               | conTy == ''String     -> return StringT
               | conTy == ''Text       -> return TextT
               | conTy == ''ByteString -> return ByteStringT
@@ -209,8 +209,8 @@ fieldNormalize = map (toLower . \c -> if c == ' ' then '_' else c)
 fieldNormalizeVar :: Field -> String
 fieldNormalizeVar = ("___" <>) . fieldNormalize
 
-fieldNormalizeRef :: Field -> String
-fieldNormalizeRef = (<> "_id") . fieldNormalizeVar
+-- fieldNormalizeRef :: Field -> String
+-- fieldNormalizeRef = (<> "_id") . fieldNormalizeVar
 
 mkTy :: Name -> Q Type
 mkTy = return . ConT 

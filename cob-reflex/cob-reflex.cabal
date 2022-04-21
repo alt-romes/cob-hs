@@ -33,7 +33,8 @@ executable demo
                       cob-reflex
 
 library
-    exposed-modules:  Cob.RecordM.Reflex
+    exposed-modules:  Cob.RecordM.Reflex,
+                      Cob.UserM.Reflex 
 
     -- Modules included in this library but not exported.
     -- other-modules:

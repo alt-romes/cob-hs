@@ -41,18 +41,18 @@ instance ToJSON (UMRef a) where
     {-# INLINE toJSON #-}
 instance FromJSON (UMRef a) where
     parseJSON = withObject "UserM User Id" $ \v -> do
-        id <- v .: "id"
-        return (UMRef id)
+        ref <- v .: "id"
+        return (UMRef ref)
     {-# INLINE parseJSON #-}
 
 -- | An UserM User
 data UMUser = UMUser
-    { username    :: String
-    , password    :: Maybe String
-    , name        :: String
-    , email       :: String
-    , contact     :: Maybe String
-    , usernameAD  :: Maybe String
+    { uusername    :: String
+    , upassword    :: Maybe String
+    , uname        :: String
+    , uemail       :: String
+    , ucontact     :: Maybe String
+    , uusernameAD  :: Maybe String
     }
 instance ToJSON UMUser where
     toJSON (UMUser username pass name email contact usernameAD) = object
@@ -94,11 +94,11 @@ umAddUsersToGroup users group = do
 -- | Log-in to UserM using a username and password.
 -- Returns a temporary auth token for the logged in user
 umLogin :: MonadIO m => String -> String -> Cob m String
-umLogin username password = do
+umLogin username pass = do
     session <- ask
     let request = setRequestBodyJSON (object
                     [ "username" .= username
-                    , "password" .= password ])
+                    , "password" .= pass     ])
                   (cobDefaultRequest session)
                       { method = "POST"
                       , path = "/userm/security/auth" }
