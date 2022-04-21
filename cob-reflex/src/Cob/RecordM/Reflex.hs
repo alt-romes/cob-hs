@@ -1,7 +1,10 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MonoLocalBinds #-}
-module Cob.RecordM.Reflex where
+module Cob.RecordM.Reflex
+    ( rmDefinitionInstances
+    , rmAddInstances
+    ) where
 
 import System.IO
 
@@ -25,7 +28,7 @@ rmDefinitionInstances :: forall a q m t. (MonadWidget t m, RecordMQuery q a)
 rmDefinitionInstances refreshRate query session = do
     now    <- liftIO getCurrentTime
     evTime <- tickLossy refreshRate now
-    evt    <- performEvent ((liftIO $ runCobEvent) <$ evTime)
+    evt    <- performEvent ((liftIO runCobEvent) <$ evTime)
     holdDyn [] evt
     where
         runCobEvent = do
@@ -34,3 +37,17 @@ rmDefinitionInstances refreshRate query session = do
               Left err -> hPutStrLn stderr err >> return []
               Right val -> return val
 
+-- | Add an instance of @a@ to RecordM every time the event of @a@ occurs
+rmAddInstances :: forall a q m t. (MonadWidget t m, Record a)
+               => Event t a
+               -> CobSession
+               -> m (Dynamic t [Ref a])
+rmAddInstances evt session = do
+    addEvt <- performEvent ((liftIO . runCobEvent) <$> evt)
+    foldDynMaybe (flip $ \y -> fmap (:y)) [] addEvt
+    where
+        runCobEvent record = do
+            res <- runCob session (rmAddInstance record)
+            case res of
+              Left err -> hPutStrLn stderr err >> return Nothing
+              Right ref -> return (Just ref)
