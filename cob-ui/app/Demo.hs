@@ -22,7 +22,7 @@ main :: IO ()
 main = do
     cobToken <- init <$> readFile "../cob-token.secret"
     session  <- makeSession "mimes8.cultofbits.com" cobToken
-    mainWidgetWithHead headWidget (rootWidget session)
+    return ()
 
 -- newTodoForm :: MonadWidget t m => m (Event t Todo)
 -- newTodoForm = divClass "field has-addons has-addons-centered" $ do

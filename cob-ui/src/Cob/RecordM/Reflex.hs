@@ -4,6 +4,7 @@
 module Cob.RecordM.Reflex
     ( rmDefinitionInstances
     , rmAddInstances
+    , NominalDiffTime
     ) where
 
 import System.IO
@@ -24,7 +25,8 @@ import Cob.RecordM
 --
 -- If communication with RecordM fails the computation will continue but errors will be printed to stderr
 rmDefinitionInstances :: forall a q m t. (MonadWidget t m, RecordMQuery q a)
-                      => NominalDiffTime -> q -> CobSession -> m (Dynamic t [a])
+                      => NominalDiffTime
+                      -> q -> CobSession -> m (Dynamic t [a])
 rmDefinitionInstances refreshRate query session = do
     now    <- liftIO getCurrentTime
     evTime <- tickLossy refreshRate now

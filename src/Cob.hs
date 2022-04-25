@@ -255,6 +255,13 @@ makeSession cobhost tok = do
     past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
 
+-- | Create an empty 'CobSession', i.e. without a token
+emptySession :: Host -> IO CobSession
+emptySession = flip makeSession ""
+
+-- | Update the 'CobToken' of a 'CobSession'
+updateSessionToken :: CobSession -> CobToken -> CobSession
+updateSessionToken s t = s { cobtoken = (cobtoken s) { cookie_value = fromString t } }
 
 -- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
 -- to retrieve the element if it exists or return a default value (passed in
