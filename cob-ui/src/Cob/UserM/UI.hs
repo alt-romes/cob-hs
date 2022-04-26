@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.UserM.UI where
 
@@ -17,3 +19,33 @@ userLoginPage host = contentView $ vstack $ do
     p <- inputL "Password"-- Password
     click <- button "Login"
     userLogin (current u) (current p) click host
+
+data CobRoute = CRLogin | CRLogout | CRMain
+
+-- | Cob Login + Logout + Main router!
+--
+--
+cobRouter :: Reflex t => Host -> (CobSession -> UI t (Event t CobRoute)) -> UI t ()
+cobRouter host mainContent =
+    router (CRLogin, Nothing) $ \case
+
+        (CRLogin, Nothing) -> do
+            loginEv <- userLoginPage host
+            return ((\case
+                        Nothing -> (CRLogin, Nothing)
+                        Just s -> (CRMain, Just s)) <$> loginEv
+                   )
+
+        (CRLogin, Just session) -> do
+            text "Already logged in..."
+            ((CRMain, Just session) <$) <$> (after 1)
+
+        (CRLogout, _) -> do
+            text "Logging out..."
+            ((CRLogin, Nothing) <$) <$> (after 1)
+
+        (CRMain, Nothing) -> ((CRLogin, Nothing) <$) <$> verySoon
+
+        (CRMain, Just session) -> do
+            ev <- mainContent session
+            return ((, Just session) <$> ev)

@@ -12,7 +12,6 @@ import System.IO
 import Data.Time   ( NominalDiffTime, getCurrentTime )
 import Control.Monad.Reader
 
-import Reflex.Time ( tickLossyFromPostBuildTime )
 import Reflex.Dom 
 
 import Cob
