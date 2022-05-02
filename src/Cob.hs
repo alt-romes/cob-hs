@@ -36,13 +36,15 @@ import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
 import Control.Monad.IO.Class ( MonadIO, liftIO                    )
 import Control.Monad.Trans    ( MonadTrans, lift                   )
 
+import Control.Exception as E ( catch )
+
 import Data.Bifunctor (first, second, bimap)
 
 import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
 import Network.HTTP.Conduit (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
-import Network.HTTP.Simple (setRequestManager, JSONException(..), httpJSONEither, httpNoBody)
+import Network.HTTP.Simple (setRequestManager, JSONException(..), HttpException, httpJSONEither, httpNoBody)
 import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 
 -- | The 'Cob' monad (transformer).
@@ -337,7 +339,7 @@ cobDefaultRequest session =
 httpValidJSON :: forall a m. (MonadIO m, Show a, FromJSON a) => Request -> Cob m a
 httpValidJSON request = do
 
-    response <- httpJSONEither request
+    response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
 
     let status = responseStatus response
         body   = responseBody @(Either JSONException a) response
@@ -363,7 +365,7 @@ httpValidJSON request = do
 -- If the response status code isn't successful an error is thrown.
 httpValidNoBody :: MonadIO m => Request -> Cob m ()
 httpValidNoBody request = do
-    response <- httpNoBody request
+    response <- liftIO ((Right <$> httpNoBody request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
     let status = responseStatus response
     unless (statusIsSuccessful status) $
         throwError ("Request failed with a status of "
