@@ -27,9 +27,10 @@ rmDefinitionInstances :: forall a q m t. (MonadWidget t m, RecordMQuery q a)
                       => NominalDiffTime
                       -> q -> CobSession -> m (Dynamic t [a])
 rmDefinitionInstances refreshRate query session = do
-    now    <- liftIO getCurrentTime
-    evTime <- tickLossy refreshRate now
-    evt    <- performEvent ((liftIO runCobEvent) <$ evTime)
+    currentTime <- liftIO getCurrentTime
+    evTime <- tickLossy refreshRate currentTime
+    pb  <- getPostBuild
+    evt <- performEvent ((liftIO runCobEvent) <$ (pb <> (() <$ evTime)))
     holdDyn [] evt
     where
         runCobEvent = do

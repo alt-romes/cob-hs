@@ -1,22 +1,27 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.UserM.UI where
 
 import qualified Cob.UserM.Reflex as R
 import Cob
 
-import UI.Extended
+import UI.Class
+import UI.Theme
+import UI.Input
+import UI.Text
+import UI.Router
 import UI
 
 userLogin :: Reflex t => Behavior t Text -> Behavior t Text -> Event t a -> Host -> UI t (Event t (Maybe CobSession))
 userLogin u p ev h = UI $ R.userLogin u p ev h
 {-# INLINE userLogin #-}
 
-userLoginPage :: Reflex t => Host -> UI t (Event t (Maybe CobSession))
-userLoginPage host = contentView $ vstack $ do
-    u <- inputL "Username"
-    p <- inputL "Password"-- Password
+userLoginPage :: Theme UI => Reflex t => Host -> UI t (Event t (Maybe CobSession))
+userLoginPage host = vstack $ do
+    u <- label "Username" (input "Username")
+    p <- label "Password" (inputP "Password")
     click <- button "Login"
     userLogin (current u) (current p) click host
 
@@ -24,9 +29,25 @@ data CobRoute = CRLogin | CRLogout | CRMain
 
 -- | Cob Login + Logout + Main router!
 --
+-- @
+--    cobRouter "*.cultofbits.com" (\session -> do
 --
-cobRouter :: Reflex t => Host -> (CobSession -> UI t (Event t CobRoute)) -> UI t ()
-cobRouter host mainContent =
+--         mainContent session
+--
+--         x <- after 150000
+--
+--         contentView $ hstack $ do
+--             toLogout <- button "To logout"
+--             toLogin  <- button "To login"
+--             return $ leftmost $
+--                 [ CRLogout <$ toLogout
+--                 , CRLogin  <$ toLogin
+--                 , CRLogout <$ x
+--                 ]
+--                                       )
+-- @
+cobLogin :: Theme UI => Reflex t => Host -> (CobSession -> UI t (Event t CobRoute)) -> UI t ()
+cobLogin host mainContent =
     router (CRLogin, Nothing) $ \case
 
         (CRLogin, Nothing) -> do
@@ -48,4 +69,5 @@ cobRouter host mainContent =
 
         (CRMain, Just session) -> do
             ev <- mainContent session
+            -- TODO: Event or if token time expires
             return ((, Just session) <$> ev)
