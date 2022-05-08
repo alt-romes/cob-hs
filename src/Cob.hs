@@ -330,29 +330,39 @@ cobDefaultRequest session =
                        , host      = fromString $ serverhost session
                        , cookieJar = Just $ createCookieJar [cobtoken session] }
 
-
 -- | @Internal@
 --
 -- Perform an HTTP request parsing the response body as JSON
 -- If the response status code isn't successful an error is thrown.
 -- In the event of a JSON parse error, the error is thrown.
 httpValidJSON :: forall a m. (MonadIO m, Show a, FromJSON a) => Request -> Cob m a
-httpValidJSON request = do
+httpValidJSON = flip httpValidJSON' id
+{-# INLINE httpValidJSON #-}
 
-    response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
+
+-- | @Internal@
+--
+-- Perform an HTTP request parsing the response body as JSON
+-- If the response status code isn't successful an error created with a function
+-- from @(String -> error_type)@ is thrown.
+-- In the event of a JSON parse error, the error is thrown.
+httpValidJSON' :: forall a e m. (MonadIO m, MonadError e m, Show a, FromJSON a) => Request -> (String -> e) -> m a
+httpValidJSON' request mkError = do
+
+    response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . mkError . show) return -- Handle Http Exceptions
 
     let status = responseStatus response
         body   = responseBody @(Either JSONException a) response
 
     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
-        throwError
+        throwError . mkError
         $  ("Request failed with a status of "
             <> show (statusCode status) <> " ("
             <> BSC8.unpack (statusMessage status) <> ")")
         <> ("\nResponse body: "
             <> either prettyBodyFromJSONException show body)
 
-    either (throwError . prettyErrorFromJSONException) return body
+    either (throwError . mkError . prettyErrorFromJSONException) return body
 
     where prettyBodyFromJSONException  JSONParseException {}             = "()"
           prettyBodyFromJSONException  (JSONConversionException _ rv _)  = BSC8.unpack . toStrict . encodePretty . responseBody $ rv

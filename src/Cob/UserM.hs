@@ -8,7 +8,7 @@ module Cob.UserM where
 import Control.Monad.Except ( throwError )
 import Control.Monad.Writer ( tell )
 import Control.Monad.Reader ( ask )
-import Control.Monad.IO.Class ( MonadIO )
+import Control.Monad.IO.Class ( MonadIO, liftIO )
 
 import Control.Lens ( (^?) )
 
@@ -104,6 +104,19 @@ umLogin username pass = do
                       , path = "/userm/security/auth" }
     body <- httpValidJSON @Value request
     body ^? key "securityToken" . _JSON ?? throwError "UserM login response body didn't have securityToken"
+
+-- | Log-in to UserM using a username and password.
+-- Returns a temporary 'CobSession' for the logged in user
+--
+-- Useful for interactive sessions e.g. with GHCi
+umSession :: Host
+          -> String -- ^ Username
+          -> String -- ^ Password
+          -> IO CobSession
+umSession hostname username pass = do
+    session <- liftIO $ emptySession hostname
+    Right tok <- runCob session (umLogin username pass)
+    return (updateSessionToken session tok)
 
 
 umDeleteUser :: MonadIO m => UMRef UMUser -> Cob m ()

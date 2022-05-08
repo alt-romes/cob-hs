@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,13 +18,15 @@ module Cob.RecordM where
 -- an instance of Record to find them or make body of search conditional on
 -- whether it's a ref or not..
 
+import System.IO.Unsafe -- This is used solely to generate the lazy list of records
+
 import Control.Lens               ( (^?)       )
 import qualified Data.Vector as V ( fromList   )
 
 import Control.Monad              ( forM, join              )
 import Control.Monad.Reader       ( ask                     )
-import Control.Monad.Except       ( throwError )
-import Control.Monad.IO.Class     ( MonadIO )
+import Control.Monad.Except       ( MonadError, throwError )
+import Control.Monad.IO.Class     ( MonadIO, liftIO )
 import Control.Monad.Writer       ( tell                    )
 
 import Data.Maybe         ( catMaybes, mapMaybe )
@@ -228,12 +231,85 @@ rmDefinitionSearch rmQuery = do
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
                       , queryString = renderRMQuery @q @a rmQuery }
     rbody <- httpValidJSON request
-    hits  <- getResponseHitsHits rbody                    -- Get hits.hits from response body
+    hits  <- getResponseHitsHits rbody id                 -- Get hits.hits from response body 
     let hitsSources = mapMaybe (^? key "_source") hits    -- Get _source from each hit
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
     records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                              -- Return list of (id, record)
 {-# INLINABLE rmDefinitionSearch #-}
+
+-- TODO: Use streaming cob API + conduit-http sinks for streaming large amounts of data
+
+-- | Like 'rmDefinitionSearch', but returns a lazy list of all
+-- records, rather than a range.
+--
+-- The search starts from the `from` field in the query, but ignores the `size` field
+--
+-- The return result is a list of all records that will only be fetched as needed;
+--
+-- Example
+-- ======
+--
+-- @
+-- 
+-- @
+--
+--
+-- The records in the list will only be fetched as needed, but operations such
+-- as `!!` will unfortunately require that all items until the requested item
+-- be forced (dev note: because we can't assume the number of records
+-- available, we must fetch batches as needed until one turns to be empty: one
+-- way or another we'll have to join lists of lists... so we can't get *just the requested item*, but rather all up until the requested one.
+-- see more notes in the source code)
+--
+-- You should be careful using this abstraction, e.g. a function such as
+-- `length` will force all values to be fetched. Furthermore, errors won't be
+-- propagated as CobErrors, but rather as IOExceptions
+--
+-- Bottom line: this is a very convenient abstraction; use it wisely.
+rmLazyDefinitionSearch :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m [(Ref a, a)]
+rmLazyDefinitionSearch rmQuery = do
+    ask >>= liftIO . go (_from . toRMQuery @q @a $ rmQuery)
+    --
+    -- This commented only kind of works on the assumption that the number of records
+    -- doesn't change, which is false; I couldn't find a way to think about
+    -- this so I settled for the "take as you need" version
+    --
+    -- session <- ask
+    -- Count count <- rmDefinitionCount @a @q rmQuery
+    -- let records = map (unsafePerformIO . searchRange session) [0,batchSize..fromInteger count-1]
+    -- return $
+    --     flip map [0..fromInteger count-1] $ \x ->
+    --         case splitAt (x `mod` batchSize) (records !! (x `div` batchSize)) of
+    --           (_, i:_) -> i
+    --           _ -> error "bad"
+    where 
+        go :: Int -> CobSession -> IO [(Ref a, a)]
+        go from session = unsafeInterleaveIO $ do
+          searchRange session from >>= \case
+            [] -> return []
+            vs
+              | length vs < batchSize -- Don't fetch if this batch was smaller than expected
+              -> return vs
+              | otherwise
+              ->
+                (vs <>) <$> go (from + batchSize) session
+
+        batchSize = 2
+
+        searchRange :: CobSession -> Int -> IO [(Ref a, a)] 
+        searchRange session from = do
+            -- putStrLn ("Fetching things from " <> show from)
+            let request = (cobDefaultRequest session)
+                              { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
+                              , queryString = renderRMQuery' @q @a from batchSize rmQuery }
+            rbody <- httpValidJSON' request userError
+            hits  <- getResponseHitsHits rbody userError          -- Get hits.hits from response body
+            let hitsSources = mapMaybe (^? key "_source") hits    -- Get _source from each hit
+            let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
+            records <- (either (throwError . userError) return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+            return (zip ids records)                              -- Return list of (id, record)
+{-# INLINABLE rmLazyDefinitionSearch #-}
 
 -- | Get an instance by id and fail if the instance isn't found
 --
@@ -251,6 +327,11 @@ rmGetInstance ref = rmDefinitionSearch_ ref ??? throwError ("Couldn't find insta
 rmDefinitionSearch_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m [a]
 rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
 {-# INLINE rmDefinitionSearch_ #-}
+
+-- | As 'rmLazyDefinitionSearch' but ignore references
+rmLazyDefinitionSearch_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m [a]
+rmLazyDefinitionSearch_ q = map snd <$> rmLazyDefinitionSearch q
+{-# INLINE rmLazyDefinitionSearch_ #-}
 
 -- | A 'Count' is parametrized with a phantom type @a@ that represents the type
 -- of records to count in a definition. Because 'Count' instances 'Num', 'Eq'
@@ -272,12 +353,12 @@ instance Ord (Count a) where
     (Count x) <= (Count y) = x <= y
 
 -- | Count the number of records matching a query in a definition
-rmDefinitionCount :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m (Count a)
+rmDefinitionCount :: forall a q m. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m (Count a)
 rmDefinitionCount rmQuery = do
     session <- ask
     let request = (cobDefaultRequest session)
                       { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-                      , queryString = renderRMQuery @q @a rmQuery}
+                      , queryString = renderRMQuery' @q @a 0 0 rmQuery}
     rbody    <- httpValidJSON @Value request
     count    <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?? throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
@@ -432,12 +513,30 @@ renderRMQuery q' =
             ,   (,) "ascending" . fromString . show <$> _ascending q ]
 {-# INLINE renderRMQuery #-}
 
+-- | @Internal@ Render a 'RecordMQuery' with an external range (ignoring the
+-- one in the query)
+-- @a@ will be converted with 'toRMQuery' 
+renderRMQuery' :: forall q a. (Record a, RecordMQuery q a)
+              => Int -- ^ From (Starting from record #)
+              -> Int -- ^ Size (# of records)
+              -> q
+              -> ByteString
+renderRMQuery' from size q' =
+    let q = toRMQuery @q @a q' in
+        renderQuery True $ simpleQueryToQuery $ catMaybes
+            [ Just ("q"   , encodeUtf8 (_q q))
+            , Just ("from", fromString $ show from)
+            , Just ("size", fromString $ show size)
+            ,   (,) "sort"  <$> _sort q
+            ,   (,) "ascending" . fromString . show <$> _ascending q ]
+{-# INLINE renderRMQuery' #-}
+
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
-getResponseHitsHits :: Monad m => Value -> Cob m [Value]
-getResponseHitsHits responseBody = maybe
-        (throwError "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
-        (either throwError return . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
+getResponseHitsHits :: MonadError e m => Value -> (String -> e) -> m [Value]
+getResponseHitsHits responseBody mkError = maybe
+        (throwError . mkError $ "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
+        (either (throwError . mkError) return . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
         (responseBody ^? key "hits" . key "hits") -- Find hits.hits in response body
 {-# INLINE getResponseHitsHits #-}
 

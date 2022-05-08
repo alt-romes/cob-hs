@@ -14,11 +14,11 @@ import UI.Text
 import UI.Router
 import UI
 
-userLogin :: Reflex t => Behavior t Text -> Behavior t Text -> Event t a -> Host -> UI t (Event t (Maybe CobSession))
+userLogin :: Behavior Text -> Behavior Text -> Event a -> Host -> UI (Event (Maybe CobSession))
 userLogin u p ev h = UI $ R.userLogin u p ev h
 {-# INLINE userLogin #-}
 
-userLoginPage :: Theme UI => Reflex t => Host -> UI t (Event t (Maybe CobSession))
+userLoginPage :: Theme UI => Host -> UI (Event (Maybe CobSession))
 userLoginPage host = vstack $ do
     u <- label "Username" (input "Username")
     p <- label "Password" (inputP "Password")
@@ -46,7 +46,7 @@ data CobRoute = CRLogin | CRLogout | CRMain
 --                 ]
 --                                       )
 -- @
-cobLogin :: Theme UI => Reflex t => Host -> (CobSession -> UI t (Event t CobRoute)) -> UI t ()
+cobLogin :: Theme UI => Host -> (CobSession -> UI (Event CobRoute)) -> UI ()
 cobLogin host mainContent =
     router (CRLogin, Nothing) $ \case
 
