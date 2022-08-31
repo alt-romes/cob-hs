@@ -46,7 +46,7 @@ library
                       vector                    >= 0.12.3.1,
                       time                      >= 1,
                       dlist                     >= 1.0,
-                      async                     >= 2.2.4
+                      streamly
 
 
     hs-source-dirs:   src
@@ -59,7 +59,8 @@ executable main
 
     build-depends:    base >= 4 && <= 5,
                       template-haskell,
-                      lens,
+                      microlens,
+                      microlens-th,
 
                       text,
                       bytestring,
