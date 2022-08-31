@@ -8,6 +8,8 @@ module Main where
 
 import Data.Proxy
 
+import System.IO.Unsafe
+
 import Data.DList
 import Control.Monad.Identity
 
@@ -18,8 +20,8 @@ import Cob
 import Cob.RecordM
 import Cob.UserM
 
-instance Show a => Show (Cob Identity a) where
-    show (Cob f) = show (f undefined)
+instance Show a => Show (Cob m a) where
+    show _ = "?"
 
 instance Arbitrary a => Arbitrary (DList a) where
     arbitrary = fromList <$> arbitrary
@@ -31,14 +33,17 @@ instance (Monad m, Arbitrary a) => Arbitrary (Cob m a) where
     arbitrary = Cob . const . return <$> arbitrary
 
 instance Eq a => Eq (Cob Identity a) where
-    Cob f == Cob g = let f' = f undefined
-                         g' = g undefined
-                     in f' == g'
+    Cob f == Cob g = runIdentity $ do
+      (==) <$> (f undefined) <*> (g undefined)
+
+instance Eq a => Eq (Cob IO a) where
+    Cob f == Cob g = unsafePerformIO $ do
+      (==) <$> (f undefined) <*> (g undefined)
 
 main = do
     lawsCheck $ functorLaws cobProxy
     lawsCheck $ applicativeLaws cobProxy
     lawsCheck $ monadLaws cobProxy
-    lawsCheck $ alternativeLaws cobProxy
+    lawsCheck $ alternativeLaws (Proxy @(Cob IO))
 
     where cobProxy = Proxy @(Cob Identity)

@@ -5,8 +5,6 @@
 {-# LANGUAGE Rank2Types #-}
 module Cob.Testing where
 
-import Control.Monad.IO.Class (MonadIO)
-
 import Data.DList (toList)
 import Data.Bifunctor (bimap, second)
 
@@ -21,11 +19,11 @@ import Cob.UserM
 -- deleted when the test finishes running.
 --
 -- Note: updates to already existing instances will NOT be undone.
-runCobTests :: MonadIO m => CobSession -> Cob m a -> m (Either CobError a)
+runCobTests :: CobSession -> Cob IO a -> IO a
 runCobTests session cob = do
     (res, (addedRefs, addedUsers)) <- second (bimap toList toList) <$> runCobT session cob
     do  -- Delete instances and users and if successful return the original computation result
-        err1 <- runCob session (mapM_ rmDeleteInstance addedRefs)
-        err2 <- runCob session (mapM_ umDeleteUser addedUsers)
+        _ <- runCob session (mapM_ rmDeleteInstance addedRefs)
+        _ <- runCob session (mapM_ umDeleteUser addedUsers)
         -- TODO: return deletion errors instead of always the result
         return res

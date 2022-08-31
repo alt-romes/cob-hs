@@ -5,7 +5,6 @@ module Main where
 import Control.Lens
 import Control.Lens.TH
 
-import Data.Aeson
 import System.Environment
 
 import Control.Monad.Except
@@ -68,14 +67,14 @@ data Dog = Dog (Ref Owner) String
          deriving (Show)
 mkRecord ''Dog "Dogs" ["Owner", "Dog"]
 
-test1 :: MonadIO m => Cob m [(Ref Dog, Dog)]
+test1 :: Cob IO [(Ref Dog, Dog)]
 test1 = do
     owner1 <- rmAddInstance (Owner "Owner1")
     dog1 <- rmAddInstance (Dog owner1 "dog1")
     dog2 <- rmAddInstance (Dog owner1 "dog2")
     rmDefinitionSearch @Dog ("owner:" <> show owner1)
 
-run1 :: MonadIO m => Cob m [(Ref Dog, Dog)]
+run1 :: Cob IO [(Ref Dog, Dog)]
 run1 = do
     owner1 <- rmAddInstance (Owner "Owner1")
     dog1 <- rmAddInstance (Dog owner1 "dog1")
@@ -174,8 +173,8 @@ run1 = do
 main :: IO ()
 main = do
     cobToken <- init <$> readFile "cob-token.secret"
-    session <- makeSession "mimes8.cultofbits.com" cobToken
-    res <- runCobTests session run1
+    session  <- makeSession "mimes8.cultofbits.com" cobToken
+    res      <- runCobTests session run1
     print res
 
 

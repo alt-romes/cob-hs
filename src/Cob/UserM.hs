@@ -8,16 +8,13 @@ module Cob.UserM where
 import Control.Monad.Except ( throwError )
 import Control.Monad.Writer ( tell )
 import Control.Monad.Reader ( ask )
-import Control.Monad.IO.Class ( MonadIO, liftIO )
-
-import Control.Lens ( (^?) )
 
 import Data.String ( fromString )
 import Data.Maybe  ( fromMaybe )
 import Data.DList  ( singleton )
 
 import Data.Aeson ( Value(..), ToJSON, toJSON, FromJSON, parseJSON, withObject, (.:), object, (.=) )
-import Data.Aeson.Lens ( key, _JSON )
+import Data.Aeson.Types ( parseMaybe )
 
 import Network.HTTP.Simple  ( setRequestBodyJSON )
 import Network.HTTP.Conduit ( Request(..) )
@@ -70,7 +67,7 @@ data UMGroup = UMGroup
     }
 
 -- | Create an UserM user
-umCreateUser :: MonadIO m => UMUser -> Cob m (UMRef UMUser)
+umCreateUser :: UMUser -> Cob IO (UMRef UMUser)
 umCreateUser user = do
     session <- ask
     let request = setRequestBodyJSON user
@@ -82,7 +79,7 @@ umCreateUser user = do
     return ref
 
 -- | Add users to a group given their ids
-umAddUsersToGroup :: MonadIO m => [UMRef UMUser] -> UMRef UMGroup -> Cob m ()
+umAddUsersToGroup :: [UMRef UMUser] -> UMRef UMGroup -> Cob IO ()
 umAddUsersToGroup users group = do
     session <- ask
     let request = setRequestBodyJSON users
@@ -93,7 +90,7 @@ umAddUsersToGroup users group = do
 
 -- | Log-in to UserM using a username and password.
 -- Returns a temporary auth token for the logged in user
-umLogin :: MonadIO m => String -> String -> Cob m String
+umLogin :: String -> String -> Cob IO String
 umLogin username pass = do
     session <- ask
     let request = setRequestBodyJSON (object
@@ -103,7 +100,7 @@ umLogin username pass = do
                       { method = "POST"
                       , path = "/userm/security/auth" }
     body <- httpValidJSON @Value request
-    body ^? key "securityToken" . _JSON ?? throwError "UserM login response body didn't have securityToken"
+    parseMaybe (withObject "wO" (.: "securityToken")) body ?? throwError "UserM login response body didn't have securityToken"
 
 -- | Log-in to UserM using a username and password.
 -- Returns a temporary 'CobSession' for the logged in user
@@ -114,12 +111,12 @@ umSession :: Host
           -> String -- ^ Password
           -> IO CobSession
 umSession hostname username pass = do
-    session <- liftIO $ emptySession hostname
-    Right tok <- runCob session (umLogin username pass)
+    session <- emptySession hostname
+    tok     <- runCob session (umLogin username pass)
     return (updateSessionToken session tok)
 
 
-umDeleteUser :: MonadIO m => UMRef UMUser -> Cob m ()
+umDeleteUser :: UMRef UMUser -> Cob IO ()
 umDeleteUser ref = do
     session <- ask
     let request = (cobDefaultRequest session)
