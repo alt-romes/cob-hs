@@ -36,7 +36,7 @@ import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
 import Control.Monad.IO.Class ( MonadIO, liftIO                    )
 import Control.Monad.Trans    ( MonadTrans, lift                   )
 
-import Control.Exception as E ( catch )
+import Control.Exception as E ( Exception(..), catch, throwIO )
 
 import Data.Bifunctor (first, second, bimap)
 
@@ -53,7 +53,7 @@ import Network.HTTP.Types  (statusIsSuccessful, Status(..))
 -- computations can be embedded in 'Cob', from which it's also possible to
 -- interact with @RecordM@ and @UserM@.
 --
-newtype Cob m a = Cob { unCob :: CobSession -> m (Either CobError a, CobWriters) }
+newtype Cob m a = Cob { unCob :: CobSession -> m (a, CobWriters) }
 
 -- | A 'Cob' computation will either succeed or return a 'CobError'.
 type CobError = String
@@ -70,17 +70,16 @@ type CobWriters = (DList (CobWriter 'RecordM), DList (CobWriter 'UserM))
 type family CobWriter (c :: CobModule)
 
 instance Functor m => Functor (Cob m) where
-    fmap f = Cob . (fmap . fmap) (first (fmap f)) . unCob
+    fmap f = Cob . (fmap . fmap) (first f) . unCob
     {-# INLINE fmap #-}
     -- [x] fmap id = id
 
 instance Monad m => Applicative (Cob m) where
-    pure = Cob . const . pure . (, mempty) . Right
+    pure = Cob . const . pure . (, mempty)
     {-# INLINE pure #-}
     (Cob f') <*> (Cob g) = Cob $ \r ->
         f' r >>= \case
-            (Left e, l) -> pure (Left e, l)
-            (Right f, l) -> bimap (fmap f) (l <>) <$> g r
+            (f, l) -> bimap f (l <>) <$> g r
     {-# INLINE (<*>) #-}
     -- [x] pure id <*> v = v
     -- [x] pure (.) <*> u <*> v <*> w = u <*> (v <*> w)
@@ -90,15 +89,19 @@ instance Monad m => Applicative (Cob m) where
 instance Monad m => Monad (Cob m) where
     (Cob x') >>= f' = Cob $ \r ->
         x' r >>= \case
-          (Left err, l) -> return (Left err, l)
-          (Right x, l)  -> second (l <>) <$> unCob (f' x) r
+          (x, l)  -> second (l <>) <$> unCob (f' x) r
     {-# INLINE (>>=) #-}
     -- [x] return a >>= k = k a
     -- [x] m >>= return = m
     -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
 
-instance Monad m => Alternative (Cob m) where
-    empty = Cob $ const $ pure (Left "Cob (alternative) empty computation. No error message.", mempty)
+data CobAltError = FailedWithWriters CobWriters CobError
+instance Show CobAltError where
+  show (FailedWithWriters _ e) = "FailedWithWriters: " <> e
+instance Exception CobAltError
+
+instance Alternative (Cob IO) where
+    empty = liftIO . throwIO $ FailedWithWriters mempty "empty Alternative" -- Cob $ const $ pure (Left "Cob (alternative) empty computation. No error message.", mempty)
     {-# INLINE empty #-} 
 
     -- | The Cob alternative instance.
@@ -127,9 +130,7 @@ instance Monad m => Alternative (Cob m) where
     -- is thrown, the computation won't fail cleanly and therefore the added
     -- instances won't be deleted if running with 'runRecordMTests'
     (Cob x') <|> (Cob y) = Cob $ \r ->
-        x' r >>= \case
-            (Left _, l) -> second (l <>) <$> y r
-            (Right x, l) -> pure (Right x, l) 
+        x' r `catch` (\(FailedWithWriters l _) -> second (l <>) <$> y r)
     {-# INLINE (<|>) #-} 
 
 -- Cob doesn't instance MonadPlus because mzero isn't a right zero but rather is
@@ -140,18 +141,16 @@ instance Monad m => Alternative (Cob m) where
     -- v >> mzero   =  mzero
 
 instance Monad m => MonadReader CobSession (Cob m) where
-    ask = Cob (pure . (, mempty) . Right)
+    ask = Cob (pure . (, mempty))
     {-# INLINE ask #-}
     local f m = Cob (unCob m . f)
     {-# INLINE local #-}
 
-instance Monad m => MonadError CobError (Cob m) where
-    throwError = Cob . const . pure . (, mempty) . Left
+instance MonadError CobError (Cob IO) where
+    throwError e = liftIO (throwIO (FailedWithWriters mempty e))
     {-# INLINE throwError #-}
     (Cob x') `catchError` handler = Cob $ \r ->
-        x' r >>= \case
-          (Left err, l) -> second (l <>) <$> unCob (handler err) r
-          _ -> x' r
+        x' r `catch` (\(FailedWithWriters l e) -> second (l <>) <$> unCob (handler e) r)
     {-# INLINE catchError #-}
 
 -- | Allow Cob computations to fail
@@ -164,24 +163,23 @@ instance Monad m => MonadError CobError (Cob m) where
 -- @
 -- [user1] <- rmDefinitionSearch_ "id:456767*" :: [User]
 -- @
-instance Monad m => MonadFail (Cob m) where
+instance MonadFail (Cob IO) where
     fail = throwError
     {-# INLINE fail #-}
     -- [x] fail s >>= f = fail s
 
 instance (w ~ CobWriters, Monad m) => MonadWriter w (Cob m) where
-    tell = Cob . const . pure . (Right (),)
+    tell = Cob . const . pure . ((),)
     {-# INLINE tell #-}
-    listen a' = Cob (unCob a' >=> \(a, w) -> return (fmap (,w) a, w))
+    listen a' = Cob (unCob a' >=> \(a, w) -> return ((,w) a, w))
     {-# INLINE listen #-}
     pass (Cob a') = Cob $ \r -> do
         a' r >>= \case
-          (Left err, w) -> return (Left err, w)
-          (Right (a, f), w) -> return (Right a, f w)
+          ((a, f), w) -> return (a, f w)
     {-# INLINE pass #-}
 
 instance MonadIO m => MonadIO (Cob m) where
-    liftIO = Cob . const . fmap ((, mempty) . Right) . liftIO
+    liftIO = Cob . const . fmap (, mempty) . liftIO
     {-# INLINE liftIO #-}
     -- [x] liftIO . return = return
     -- [x] liftIO (m >>= f) = liftIO m >>= (liftIO . f)
@@ -205,7 +203,7 @@ instance MonadIO m => MonadIO (Cob m) where
 --     lift (print "finished!")
 -- @
 instance MonadTrans Cob where
-    lift = Cob . const . fmap ((, mempty) . Right)
+    lift = Cob . const . fmap (, mempty)
     {-# INLINE lift #-}
     -- [x] lift . return = return
     -- [x] lift (m >>= f) = lift m >>= (lift . f)
@@ -215,12 +213,12 @@ instance MonadTrans Cob where
 --
 -- Run a 'Cob' computation and get either a 'CobError' or a value
 -- in the argument monad @m@, alongside the 'CobWriter's logs
-runCobT :: CobSession -> Cob m a -> m (Either CobError a, CobWriters)
+runCobT :: CobSession -> Cob m a -> m (a, CobWriters)
 runCobT = flip unCob
 {-# INLINE runCobT #-}
 
 -- | Run a 'Cob' computation and get either a 'CobError' or a value in @m@.
-runCob :: Functor m => CobSession -> Cob m a -> m (Either CobError a)
+runCob :: Functor m => CobSession -> Cob m a -> m a
 runCob session = fmap fst . runCobT session
 {-# INLINE runCob #-}
 
@@ -335,7 +333,7 @@ cobDefaultRequest session =
 -- Perform an HTTP request parsing the response body as JSON
 -- If the response status code isn't successful an error is thrown.
 -- In the event of a JSON parse error, the error is thrown.
-httpValidJSON :: forall a m. (MonadIO m, Show a, FromJSON a) => Request -> Cob m a
+httpValidJSON :: forall a. (Show a, FromJSON a) => Request -> Cob IO a
 httpValidJSON = flip httpValidJSON' id
 {-# INLINE httpValidJSON #-}
 
@@ -373,7 +371,7 @@ httpValidJSON' request mkError = do
 --
 -- Perform an HTTP request and ignore the response body
 -- If the response status code isn't successful an error is thrown.
-httpValidNoBody :: MonadIO m => Request -> Cob m ()
+httpValidNoBody :: Request -> Cob IO ()
 httpValidNoBody request = do
     response <- liftIO ((Right <$> httpNoBody request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
     let status = responseStatus response

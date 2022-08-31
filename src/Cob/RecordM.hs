@@ -236,7 +236,6 @@ rmDefinitionSearch rmQuery = do
     let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
     records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                              -- Return list of (id, record)
-{-# INLINABLE rmDefinitionSearch #-}
 
 -- TODO: Use streaming cob API + conduit-http sinks for streaming large amounts of data
 
@@ -309,7 +308,6 @@ rmLazyDefinitionSearch rmQuery = do
             let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
             records <- (either (throwError . userError) return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
             return (zip ids records)                              -- Return list of (id, record)
-{-# INLINABLE rmLazyDefinitionSearch #-}
 
 -- | Get an instance by id and fail if the instance isn't found
 --
@@ -362,7 +360,6 @@ rmDefinitionCount rmQuery = do
     rbody    <- httpValidJSON @Value request
     count    <- rbody ^? key "hits" . key "total" . key "value" . _Integer ?? throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
-{-# INLINABLE rmDefinitionCount #-}
 
 -- ROMES:TODO: Search
 -- rmDefinitionSum :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> Cob m (Count a)
@@ -420,7 +417,6 @@ rmAddInstanceWith waitForSearchAvailability record = do
     ref <- httpValidJSON request
     tell (singleton (Ref . ref_id $ ref), mempty)
     return ref
-{-# INLINABLE rmAddInstanceWith #-}
 
 -- | Update an instance with an id and return the updated record.
 -- An error will be thrown if no record is successfully updated.
@@ -466,7 +462,6 @@ rmUpdateInstancesM rmQuery updateRecord = do
                           , path   = "/recordm/recordm/instances/integration" }
         _ <- httpValidJSON @Value request
         return (Ref ref, updatedRecord)
-{-# INLINABLE rmUpdateInstancesM #-}
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
 rmUpdateInstances_ :: forall a m q. (MonadIO m, Record a, RecordMQuery q a) => q -> (a -> a) -> Cob m [a]
@@ -483,7 +478,6 @@ rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (retu
 -- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
 rmUpdateInstancesWithMakeQueryM :: forall a b m q r. (MonadIO m, Record a, Record b, RecordMQuery q a, RecordMQuery r b) => q -> (a -> r) -> (b -> Cob m b) -> Cob m [(Ref b, b)]
 rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
-{-# INLINABLE rmUpdateInstancesWithMakeQueryM #-}
 
 
 -- | Delete an instance by id, ignoring if it has any references
@@ -497,7 +491,6 @@ rmDeleteInstance ref = do
                       , path = "/recordm/recordm/instances/" <> fromString (show ref)
                       , queryString = renderQuery True $ simpleQueryToQuery [("ignoreRefs", "true")] }
     httpValidNoBody request
-{-# INLINABLE rmDeleteInstance #-}
 
 
 -- | @Internal@ Render a 'RecordMQuery'.

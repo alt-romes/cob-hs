@@ -9,6 +9,7 @@ import Cob
 
 import UI.Class
 import UI.Theme
+import UI.Layout
 import UI.Input
 import UI.Text
 import UI.Router
@@ -20,8 +21,8 @@ userLogin u p ev h = UI $ R.userLogin u p ev h
 
 userLoginPage :: Theme UI => Host -> UI (Event (Maybe CobSession))
 userLoginPage host = vstack $ do
-    u <- label "Username" (input "Username")
-    p <- label "Password" (inputP "Password")
+    u <- label (text "Username") (input "Username")
+    p <- label (text "Password") (inputP "Password")
     click <- button "Login"
     userLogin (current u) (current p) click host
 

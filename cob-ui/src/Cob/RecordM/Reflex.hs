@@ -34,7 +34,7 @@ rmDefinitionInstances refreshRate query session = do
     holdDyn [] evt
     where
         runCobEvent = do
-            res <- runCob session (rmDefinitionSearch_ query)
+            res <- runCob session (rmLazyDefinitionSearch_ query)
             case res of
               Left err -> hPutStrLn stderr err >> return []
               Right val -> return val
@@ -53,3 +53,4 @@ rmAddInstances evt session = do
             case res of
               Left err -> hPutStrLn stderr err >> return Nothing
               Right ref -> return (Just ref)
+
