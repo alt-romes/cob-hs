@@ -45,7 +45,8 @@ import Data.String (fromString)
 
 import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:), (.:?))
 
-import Cob.RecordM (Record(..), Ref(..))
+import Cob.RecordM.Ref (Ref(..))
+import Cob.RecordM     (Record(..))
 
 import Language.Haskell.TH
 

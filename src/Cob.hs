@@ -16,36 +16,33 @@ module Cob where
 
 -- TODO: Cob.Simple module
 
+import GHC.Conc
+
 import Data.String                   ( fromString )
-import Data.ByteString.Char8 as BSC8 ( unpack     )
-import Data.ByteString.Lazy          ( toStrict   )
 
 import Data.DList ( DList )
 
 import Data.Maybe ( listToMaybe )
 
-import Data.Aeson               ( FromJSON )
-import Data.Aeson.Encode.Pretty ( encodePretty )
-
 import Control.Applicative ( Alternative, empty, (<|>) )
-import Control.Monad       ( (>=>), unless )
 
+import Control.Monad ((>=>))
 import Control.Monad.Except   ( MonadError, throwError, catchError )
 import Control.Monad.Reader   ( MonadReader, ask, local            )
 import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
 import Control.Monad.IO.Class ( MonadIO, liftIO                    )
 import Control.Monad.Trans    ( MonadTrans, lift                   )
 
-import Control.Exception as E ( Exception(..), catch, throwIO )
+import Control.Exception as E ( Exception(..), catch, throwIO, throw )
 
 import Data.Bifunctor (first, second, bimap)
 
 import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
-import Network.HTTP.Conduit (Manager, Cookie(..), Request(..), Response(..), defaultRequest, newManager, tlsManagerSettings, createCookieJar)
-import Network.HTTP.Simple (setRequestManager, JSONException(..), HttpException, httpJSONEither, httpNoBody)
-import Network.HTTP.Types  (statusIsSuccessful, Status(..))
+import Network.HTTP.Client (Cookie(..), CookieJar, createCookieJar, newManager)
+import Network.HTTP.Client.TLS  (tlsManagerSettings)
+import Servant.Client      as C (runClientM, ClientEnv(ClientEnv, baseUrl, cookieJar), ClientM, BaseUrl(..), Scheme(..), defaultMakeClientRequest)
 
 -- | The 'Cob' monad (transformer).
 --
@@ -231,37 +228,44 @@ type Host      = String
 -- | A 'Cob' session, required an argument to run a 'Cob' computation with 'runCob'.
 -- It should be created using 'makeSession' unless finer control over the TLS
 -- session manager or the cobtoken cookie is needed.
-data CobSession = CobSession { tlsmanager :: Manager
-                             , serverhost :: Host
-                             , cobtoken   :: Cookie }
+newtype CobSession = CobSession ClientEnv
 
 -- | Make a 'CobSession' with the default @TLS Manager@ given the 'Host' and 'CobToken'.
 makeSession :: Host -> CobToken -> IO CobSession
 makeSession cobhost tok = do
     manager <- newManager tlsManagerSettings
-    return $ CobSession manager cobhost $
-        Cookie { cookie_name             = "cobtoken"
-               , cookie_value            = fromString tok
-               , cookie_secure_only      = True
-               , cookie_path             = "/"
-               , cookie_domain           = fromString cobhost
-               , cookie_expiry_time      = future
-               , cookie_creation_time    = past
-               , cookie_last_access_time = past
-               , cookie_persistent       = True
-               , cookie_host_only        = False
-               , cookie_http_only        = False }
-    where
-    past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
-    future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
+    tvar    <- newTVarIO (makeCookieJar cobhost tok)
+    return $ CobSession $ ClientEnv manager (BaseUrl Https cobhost 443 "") (Just tvar) defaultMakeClientRequest
 
 -- | Create an empty 'CobSession', i.e. without a token
 emptySession :: Host -> IO CobSession
-emptySession = flip makeSession ""
+emptySession cobhost = do
+  manager <- newManager tlsManagerSettings
+  return $ CobSession $ ClientEnv manager (BaseUrl Https cobhost 443 "") Nothing defaultMakeClientRequest
 
 -- | Update the 'CobToken' of a 'CobSession'
-updateSessionToken :: CobSession -> CobToken -> CobSession
-updateSessionToken s t = s { cobtoken = (cobtoken s) { cookie_value = fromString t } }
+updateSessionToken :: CobSession -> CobToken -> IO CobSession
+updateSessionToken (CobSession clEnv) tok = do
+  tvar    <- newTVarIO (makeCookieJar (baseUrlHost $ baseUrl clEnv) tok)
+  return (CobSession (clEnv { C.cookieJar = Just tvar }))
+
+makeCookieJar :: Host -> CobToken -> CookieJar
+makeCookieJar cobhost tok = createCookieJar
+      [Cookie { cookie_name             = "cobtoken"
+              , cookie_value            = fromString tok
+              , cookie_secure_only      = True
+              , cookie_path             = "/"
+              , cookie_domain           = fromString cobhost
+              , cookie_expiry_time      = future
+              , cookie_creation_time    = past
+              , cookie_last_access_time = past
+              , cookie_persistent       = True
+              , cookie_host_only        = False
+              , cookie_http_only        = False }]
+  where
+    past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
+    future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
+
 
 -- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
 -- to retrieve the element if it exists or return a default value (passed in
@@ -318,24 +322,14 @@ instance Existable [] where
     {-# INLINE (??) #-}
 
 
--- | @Internal@ The default HTTP request used internally, given a 'CobSession'.
--- (Session managed TLS to session host:443 with session's cobtoken)
-cobDefaultRequest :: CobSession -> Request
-cobDefaultRequest session =
-    setRequestManager (tlsmanager session) $
-        defaultRequest { secure    = True
-                       , port      = 443
-                       , host      = fromString $ serverhost session
-                       , cookieJar = Just $ createCookieJar [cobtoken session] }
-
 -- | @Internal@
 --
 -- Perform an HTTP request parsing the response body as JSON
 -- If the response status code isn't successful an error is thrown.
 -- In the event of a JSON parse error, the error is thrown.
-httpValidJSON :: forall a. (Show a, FromJSON a) => Request -> Cob IO a
-httpValidJSON = flip httpValidJSON' id
-{-# INLINE httpValidJSON #-}
+-- httpValidJSON :: forall a. (Show a, FromJSON a) => Request -> Cob IO a
+-- httpValidJSON = flip httpValidJSON' id
+-- {-# INLINE httpValidJSON #-}
 
 
 -- | @Internal@
@@ -344,38 +338,45 @@ httpValidJSON = flip httpValidJSON' id
 -- If the response status code isn't successful an error created with a function
 -- from @(String -> error_type)@ is thrown.
 -- In the event of a JSON parse error, the error is thrown.
-httpValidJSON' :: forall a e m. (MonadIO m, MonadError e m, Show a, FromJSON a) => Request -> (String -> e) -> m a
-httpValidJSON' request mkError = do
+-- httpValidJSON' :: forall a e m. (MonadIO m, MonadError e m, Show a, FromJSON a) => Request -> (String -> e) -> m a
+-- httpValidJSON' request mkError = do
 
-    response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . mkError . show) return -- Handle Http Exceptions
+--     response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . mkError . show) return -- Handle Http Exceptions
 
-    let status = responseStatus response
-        body   = responseBody @(Either JSONException a) response
+--     let status = responseStatus response
+--         body   = responseBody @(Either JSONException a) response
 
-    unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
-        throwError . mkError
-        $  ("Request failed with a status of "
-            <> show (statusCode status) <> " ("
-            <> BSC8.unpack (statusMessage status) <> ")")
-        <> ("\nResponse body: "
-            <> either prettyBodyFromJSONException show body)
+--     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
+--         throwError . mkError
+--         $  ("Request failed with a status of "
+--             <> show (statusCode status) <> " ("
+--             <> BSC8.unpack (statusMessage status) <> ")")
+--         <> ("\nResponse body: "
+--             <> either prettyBodyFromJSONException show body)
 
-    either (throwError . mkError . prettyErrorFromJSONException) return body
+--     either (throwError . mkError . prettyErrorFromJSONException) return body
 
-    where prettyBodyFromJSONException  JSONParseException {}             = "()"
-          prettyBodyFromJSONException  (JSONConversionException _ rv _)  = BSC8.unpack . toStrict . encodePretty . responseBody $ rv
-          prettyErrorFromJSONException j = "Error parsing response body: " <> prettyBodyFromJSONException j <> "\nERROR: " <> case j of (JSONParseException _ _ e) -> show e; (JSONConversionException _ _ e) -> e
+--     where prettyBodyFromJSONException  JSONParseException {}             = "()"
+--           prettyBodyFromJSONException  (JSONConversionException _ rv _)  = BSC8.unpack . toStrict . encodePretty . responseBody $ rv
+--           prettyErrorFromJSONException j = "Error parsing response body: " <> prettyBodyFromJSONException j <> "\nERROR: " <> case j of (JSONParseException _ _ e) -> show e; (JSONConversionException _ _ e) -> e
 
 
--- | @Internal@
---
--- Perform an HTTP request and ignore the response body
--- If the response status code isn't successful an error is thrown.
-httpValidNoBody :: Request -> Cob IO ()
-httpValidNoBody request = do
-    response <- liftIO ((Right <$> httpNoBody request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
-    let status = responseStatus response
-    unless (statusIsSuccessful status) $
-        throwError ("Request failed with a status of "
-            <> show (statusCode status) <> " ("
-            <> BSC8.unpack (statusMessage status) <> ")")
+---- | @Internal@
+----
+---- Perform an HTTP request and ignore the response body
+---- If the response status code isn't successful an error is thrown.
+--httpValidNoBody :: Request -> Cob IO ()
+--httpValidNoBody request = do
+--    response <- liftIO ((Right <$> httpNoBody request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
+--    let status = responseStatus response
+--    unless (statusIsSuccessful status) $
+--        throwError ("Request failed with a status of "
+--            <> show (statusCode status) <> " ("
+--            <> BSC8.unpack (statusMessage status) <> ")")
+
+performReq :: ClientM a -> Cob IO a
+performReq c = do
+    CobSession session <- ask
+    liftIO (runClientM c session) >>= \case
+      Left e -> throw e
+      Right b -> return b

@@ -41,21 +41,22 @@ mkRecord ''MovimentoR "CASA Finanças Movimentos" ["Classificação", "Observaç
 parseArgs :: [String] -> [(Ref a, Double)]
 parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
 
-logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Cob IO ()
-logic (movimentoId, total) splits = do
-    unless (total == sum (map snd splits)) (throwError "Total sum doesn't equal separate amounts")
+-- TODO:::::: uncomment
+-- logic :: (Ref MovimentoR, Movimento) -> [(Ref Classificação, Movimento)] -> Cob IO ()
+-- logic (movimentoId, total) splits = do
+--     unless (total == sum (map snd splits)) (throwError "Total sum doesn't equal separate amounts")
 
-    [updatedMov] <- rmUpdateInstances_ (byId movimentoId) (classificação ?~ Ref 76564)
+    -- [updatedMov] <- map snd <$> rmUpdateInstances (byId movimentoId) (classificação ?~ Ref 76564)
 
-    let commonMov = updatedMov & descrição ?~ "Desdobramento automático: " <> show movimentoId
-                               & ultsaldo  .~ "Não"
+    -- let commonMov = updatedMov & descrição ?~ "Desdobramento automático: " <> show movimentoId
+    --                            & ultsaldo  .~ "Não"
 
-    forM_ splits $ \(refclass, amount) ->
-        rmAddInstance (commonMov & classificação ?~ refclass
-                                 & mov .~ amount)
+    -- forM_ splits $ \(refclass, amount) ->
+    --     rmAddInstance (commonMov & classificação ?~ refclass
+    --                              & mov .~ amount)
 
-    forM_ splits $ \(_, amount) ->
-        rmAddInstance (commonMov & mov .~ -amount)
+    -- forM_ splits $ \(_, amount) ->
+    --     rmAddInstance (commonMov & mov .~ -amount)
 
 
 
@@ -177,11 +178,18 @@ run5 = do
     liftIO $ print dogs
     return ()
 
+run6 :: Cob IO [Dog]
+run6 = do
+    owner1 <- rmAddInstanceSync (Owner "João")
+    dog1   <- rmAddInstanceSync (Dog owner1 "Bobby")
+    dog2   <- rmAddInstance (Dog owner1 "Farrusca")
+    map snd <$> rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
+
 main :: IO ()
 main = do
     cobToken <- init <$> readFile "cob-token.secret"
     session  <- makeSession "mimes8.cultofbits.com" cobToken
-    res      <- runCob session run5
+    res      <- runCob session run6
     -- res      <- runCobTests session run1
     print res
 

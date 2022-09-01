@@ -18,7 +18,10 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:  Cob,
                       Cob.UserM,
+                      Cob.UserM.Types,
+                      Cob.UserM.Servant,
                       Cob.RecordM,
+                      Cob.RecordM.Ref,
                       Cob.RecordM.TH,
                       Cob.RecordM.Servant,
                       Cob.Testing
@@ -37,16 +40,11 @@ library
 
                       servant,
                       servant-client,
-
-                      -- Network
                       http-client,
                       http-client-tls,
-                      http-conduit,
-                      http-types,
 
                       -- JSON
                       aeson                     >= 1.5.6.0,
-                      aeson-pretty              >= 0.8.9,
 
                       -- Util
                       vector                    >= 0.12.3.1,

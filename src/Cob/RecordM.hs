@@ -8,7 +8,9 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Cob.RecordM where
+module Cob.RecordM
+  ( module Cob.RecordM
+  , module Cob.RecordM.Ref ) where
 
 -- TODO: Make Async versions of functions that receive a callback or return an async token
 
@@ -18,38 +20,27 @@ module Cob.RecordM where
 -- an instance of Record to find them or make body of search conditional on
 -- whether it's a ref or not..
 
-import System.IO.Unsafe -- This is used solely to generate the lazy list of records
+-- import System.IO.Unsafe -- This is used solely to generate the lazy list of records
 
-import GHC.Conc
-import Control.Exception
-
+import Data.Maybe (mapMaybe)
 import Cob.RecordM.Servant
-import Servant.Client
 
 import qualified Data.Vector as V ( fromList   )
 
-import Control.Monad              ( forM, join, (>=>)       )
-import Control.Monad.Reader       ( ask                     )
+import Control.Monad              ((>=>))
 import Control.Monad.Except       ( MonadError, throwError )
 import Control.Monad.Writer       ( tell                    )
-import Control.Monad.IO.Class     ( liftIO                  )
-
-import Data.Maybe         ( catMaybes, mapMaybe )
 
 import Data.DList ( singleton )
 
-import Data.Aeson.Types ( ToJSON, FromJSON, toJSON, parseJSON, Value(..), withObject, (.:), (.=), object, parseEither, parseMaybe )
+import Data.Aeson.Types ( ToJSON, FromJSON, parseJSON, Value(..), withObject, (.:), parseEither, parseMaybe )
 
 import Data.Text          ( Text       )
 import Data.ByteString    ( ByteString )
 import Data.String        ( fromString, IsString )
-import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
 
-import Network.HTTP.Conduit ( Request(..), createCookieJar )
-import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery )
-import Network.HTTP.Simple  ( setRequestBodyJSON )
-
+import Cob.RecordM.Ref
 import Cob
 
 --- RecordM
@@ -101,52 +92,6 @@ class (ToJSON a, FromJSON a) => Record a where
     -- | Get the RecordM 'Definition' that has this type of 'Record'
     definition :: Definition
 
--- | A 'Ref' of a 'Record' holds the RecordM /id/ of another record
--- 
--- ==== __Example__
---
--- Taking the above /Dogs/ definition,
--- and modifying the /Owner Name/ field to a reference to a different table called /Owners/,
--- the @DogsRecord@ must be modified with `Ref` to reflect this.
---
--- @
--- data OwnersRecord ...
--- data DogsRecord = DogsRecord Text (Ref OwnersRecord) Int
---
--- instance ToJSON DogsRecord where
---     toJSON (DogsRecord name (Ref ownerId) age) = object
---         [ \"Name\" .= name
---         , \"Owner name\" .= show ownerId
---         , \"Age\" .= age ]
--- instance FromJSON DogsRecord where
---     parseJSON = withObject "user record" $ \v -> do
---         [name] <- v .: "name"
---         [ownerId] <- v .: "owner_name"
---         [age] <- v .: "age"
---         return (DogsRecord name (Ref (read ownerId)) (read age))
--- @
-newtype Ref a = Ref { ref_id :: Integer } deriving (Eq)
-
-instance Num (Ref a) where
-  fromInteger = Ref
-  (+) _ _ = error "Don't (+) Refs"
-  (*) _ _ = error "Don't (*) Refs"
-  (-) _ _ = error "Don't (-) Refs"
-  abs _   = error "Don't abs Refs"
-  signum _ = error "Don't signum Refs"
-
-instance Show (Ref a) where
-    show = show . ref_id
-    {-# INLINE show #-}
-instance ToJSON (Ref a) where
-    toJSON = toJSON . ref_id
-    {-# INLINE toJSON #-}
-instance FromJSON (Ref a) where
-    parseJSON = withObject "RecordM Record Id" $ \v -> do
-        ref <- v .: "id"
-        return (Ref ref)
-    {-# INLINE parseJSON #-}
-
 
 -- | A @RecordM@ query
 data Query a = Query { _q         :: Text
@@ -193,7 +138,7 @@ byId (Ref r) = defaultRMQuery { _q = "id:" <> fromString (show r) }
 
 -- | 'Query' by 'String'
 byStr :: String -> Query a
-byStr t = defaultRMQuery { _q = "id:" <> fromString t }
+byStr t = defaultRMQuery { _q = fromString t }
 
 -- | Search a @RecordM@ 'Definition' given a 'Query, and return a list of references ('Ref') of a record and the corresponding records ('Record').
 --
@@ -218,21 +163,12 @@ byStr t = defaultRMQuery { _q = "id:" <> fromString t }
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
 rmDefinitionSearch :: forall a. Record a => Query a -> Cob IO [(Ref a, a)]
 rmDefinitionSearch rmQuery = do
-    session <- ask
-    tvar <- liftIO $ newTVarIO (createCookieJar [cobtoken session])
-    let ce = ClientEnv (tlsmanager session) (BaseUrl Https (serverhost session) 443 "recordm") (Just tvar) defaultMakeClientRequest
-    liftIO (runClientM (searchByName (encode (definition @a)) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing) ce) >>= \case
-      Left e      -> throw e
-      Right rbody -> do
-    -- let request = (cobDefaultRequest session)
-    --                   { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-    --                   , queryString = renderRMQuery @a rmQuery }
-    -- rbody <- httpValidJSON request
-        hits  <- getResponseHitsHits rbody id                 -- Get hits.hits from response body 
-        let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
-        let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
-        records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
-        return (zip ids records)                              -- Return list of (id, record)
+    rbody <- performReq $ searchByName (encode (definition @a)) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing
+    hits  <- getResponseHitsHits rbody id                 -- Get hits.hits from response body 
+    let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
+    let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
+    records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    return (zip ids records)                              -- Return list of (id, record)
 
 -- TODO: Use streaming cob API + conduit-http sinks for streaming large amounts of data
 
@@ -263,9 +199,10 @@ rmDefinitionSearch rmQuery = do
 -- propagated as CobErrors, but rather as IOExceptions
 --
 -- Bottom line: this is a very convenient abstraction; use it wisely.
-rmLazyDefinitionSearch :: forall a. Record a => Query a -> Cob IO [(Ref a, a)]
-rmLazyDefinitionSearch rmQuery = do
-    ask >>= liftIO . go (_from rmQuery)
+-- rmLazyDefinitionSearch :: forall a. Record a => Query a -> Cob IO [(Ref a, a)]
+-- rmLazyDefinitionSearch rmQuery = do
+--     ask >>= liftIO . go (_from rmQuery)
+
     --
     -- This commented only kind of works on the assumption that the number of records
     -- doesn't change, which is false; I couldn't find a way to think about
@@ -279,38 +216,44 @@ rmLazyDefinitionSearch rmQuery = do
     --         case splitAt (x `mod` batchSize) (records !! (x `div` batchSize)) of
     --           (_, i:_) -> i
     --           _ -> error "bad"
-    where 
-        go :: Int -> CobSession -> IO [(Ref a, a)]
-        go from session = unsafeInterleaveIO $ do
-          searchRange session from >>= \case
-            [] -> return []
-            vs
-              | length vs < batchSize -- Don't fetch if this batch was smaller than expected
-              -> return vs
-              | otherwise
-              ->
-                (vs <>) <$> go (from + batchSize) session
 
-        batchSize = 2
 
-        searchRange :: CobSession -> Int -> IO [(Ref a, a)] 
-        searchRange session from = do
-            -- putStrLn ("Fetching things from " <> show from)
-            let request = (cobDefaultRequest session)
-                              { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-                              , queryString = renderRMQuery @a rmQuery {_from = from, _size = batchSize} }
-            rbody <- httpValidJSON' request userError
-            hits  <- getResponseHitsHits rbody userError          -- Get hits.hits from response body
-            let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
-            let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
-            records <- (either (throwError . userError) return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
-            return (zip ids records)                              -- Return list of (id, record)
+
+    -- where 
+    --     go :: Int -> CobSession -> IO [(Ref a, a)]
+    --     go from session = unsafeInterleaveIO $ do
+    --       searchRange session from >>= \case
+    --         [] -> return []
+    --         vs
+    --           | length vs < batchSize -- Don't fetch if this batch was smaller than expected
+    --           -> return vs
+    --           | otherwise
+    --           ->
+    --             (vs <>) <$> go (from + batchSize) session
+
+    --     batchSize = 2
+
+    --     searchRange :: CobSession -> Int -> IO [(Ref a, a)] 
+    --     searchRange session from = do
+    --         -- putStrLn ("Fetching things from " <> show from)
+    --         let request = (cobDefaultRequest session)
+    --                           { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
+    --                           , queryString = renderRMQuery @a rmQuery {_from = from, _size = batchSize} }
+    --         rbody <- httpValidJSON' request userError
+    --         hits  <- getResponseHitsHits rbody userError          -- Get hits.hits from response body
+    --         let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
+    --         let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
+    --         records <- (either (throwError . userError) return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+    --         return (zip ids records)                              -- Return list of (id, record)
 
 -- | Get an instance by id and fail if the instance isn't found
 --
 -- TODO: Use /recordm/instances/{id} instead of definitions/search?
+-- Difficulty of ^ is parsing
+-- Otherwise:
+-- rbody <- performReq (getInstance (fromInteger ref) Nothing) `catchError` throwError ("Couldn't find instance with id " <> show ref)
 rmGetInstance :: forall a. Record a => Ref a -> Cob IO a
-rmGetInstance ref = rmDefinitionSearch_ (byId ref) ??? throwError ("Couldn't find instance with id " <> show ref)
+rmGetInstance ref = snd <$> (rmDefinitionSearch ((byId ref) {_size = 1})) ??? throwError ("Couldn't find instance with id " <> show ref)
 {-# INLINE rmGetInstance #-}
 
 
@@ -319,14 +262,9 @@ rmGetInstance ref = rmDefinitionSearch_ (byId ref) ??? throwError ("Couldn't fin
 -- Instead, this function returns only a list of the records ('Record') found.
 --
 -- See also 'rmDefinitionSearch'
-rmDefinitionSearch_ :: forall a. Record a => Query a -> Cob IO [a]
-rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
-{-# INLINE rmDefinitionSearch_ #-}
-
--- | As 'rmLazyDefinitionSearch' but ignore references
-rmLazyDefinitionSearch_ :: forall a. Record a => Query a -> Cob IO [a]
-rmLazyDefinitionSearch_ q = map snd <$> rmLazyDefinitionSearch q
-{-# INLINE rmLazyDefinitionSearch_ #-}
+-- rmDefinitionSearch_ :: forall a. Record a => Query a -> Cob IO [a]
+-- rmDefinitionSearch_ q = map snd <$> rmDefinitionSearch q
+-- {-# INLINE rmDefinitionSearch_ #-}
 
 -- | A 'Count' is parametrized with a phantom type @a@ that represents the type
 -- of records to count in a definition. Because 'Count' instances 'Num', 'Eq'
@@ -347,15 +285,13 @@ instance Eq (Count a) where
 instance Ord (Count a) where
     (Count x) <= (Count y) = x <= y
 
+-- ROMES:TODO: Don't ignore sorting!
+
 -- | Count the number of records matching a query in a definition
 rmDefinitionCount :: forall a. Record a => Query a -> Cob IO (Count a)
 rmDefinitionCount rmQuery = do
-    session <- ask
-    let request = (cobDefaultRequest session)
-                      { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-                      , queryString = renderRMQuery @a rmQuery {_from = 0, _size = 0} }
-    rbody    <- httpValidJSON @Value request
-    count    <- parseMaybe (withObject "wO" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody ?? throwError "Couldn't find hits.total.value when doing a definition count"
+    rbody <- performReq $ searchByName (encode (definition @a)) (Just (_q rmQuery)) (Just 0) (Just 0) Nothing
+    count <- parseMaybe (withObject "wO" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody ?? throwError "Couldn't find hits.total.value when doing a definition count"
     return (Count count)
 
 -- ROMES:TODO: Search
@@ -401,25 +337,15 @@ rmAddInstanceSync = rmAddInstanceWith True
 -- @
 rmAddInstanceWith :: forall a. Record a => Bool -> a -> Cob IO (Ref a)
 rmAddInstanceWith waitForSearchAvailability record = do
-    session <- ask
-    let request = setRequestBodyJSON
-                  (object $ catMaybes
-                      [ Just ("type"   .= definition @a)
-                      , Just ("values" .= record)
-                      , if waitForSearchAvailability then Just ("waitForSearchAvailability" .= True) else Nothing
-                      ])
-                  (cobDefaultRequest session)
-                      { method = "POST"
-                      , path   = "/recordm/recordm/instances/integration" }
-    ref <- httpValidJSON request
-    tell (singleton (Ref . ref_id $ ref), mempty)
-    return ref
+  ref <- performReq $ addInstance (AddSpec (definition @a) record waitForSearchAvailability)
+  tell (singleton (Ref . ref_id $ ref), mempty)
+  return ref
 
 -- | Update an instance with an id and return the updated record.
 -- An error will be thrown if no record is successfully updated.
-rmUpdateInstance :: forall a. Record a => Ref a -> (a -> a) -> Cob IO a
-rmUpdateInstance ref f = rmUpdateInstances_ (byId ref) f ??? throwError ("Updating instance " <> show ref <> " was not successful!")
-{-# INLINE rmUpdateInstance #-}
+-- rmUpdateInstance :: forall a. Record a => Ref a -> (a -> a) -> Cob IO a
+-- rmUpdateInstance ref f = rmUpdateInstances_ (byId ref) f ??? throwError ("Updating instance " <> show ref <> " was not successful!")
+-- {-# INLINE rmUpdateInstance #-}
 
 -- | Update in @RecordM@ all instances matching a query given a function that
 -- transforms records, and return the list of updated records Warning: This
@@ -438,68 +364,51 @@ rmUpdateInstance ref f = rmUpdateInstances_ (byId ref) f ??? throwError ("Updati
 -- Another note: The query will limit the amount of instances fetched. That
 -- means more instances could match the query but aren't currently fetched and
 -- won't be updated.
-rmUpdateInstances :: forall a. Record a => Query a -> (a -> a) -> Cob IO [(Ref a, a)]
-rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
-{-# INLINE rmUpdateInstances #-}
+-- rmUpdateInstances :: forall a. Record a => Query a -> (a -> a) -> Cob IO [(Ref a, a)]
+-- rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
+-- {-# INLINE rmUpdateInstances #-}
 
 -- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
-rmUpdateInstancesM :: forall a. Record a => Query a -> (a -> Cob IO a) -> Cob IO [(Ref a, a)]
-rmUpdateInstancesM rmQuery updateRecord = do
-    records <- rmDefinitionSearch rmQuery
-    session <- ask
-    forM records $ \(Ref ref, rec) -> do
-        updatedRecord <- updateRecord rec
-        let request = setRequestBodyJSON
-                      (object
-                          [ "type"      .= definition @a
-                          , "condition" .= ("id:" <> show ref)
-                          , "values"    .= updatedRecord ])
-                      (cobDefaultRequest session)
-                          { method = "PUT"
-                          , path   = "/recordm/recordm/instances/integration" }
-        _ <- httpValidJSON @Value request
-        return (Ref ref, updatedRecord)
+-- rmUpdateInstancesM :: forall a. Record a => Query a -> (a -> Cob IO a) -> Cob IO [(Ref a, a)]
+-- rmUpdateInstancesM rmQuery updateRecord = do
+--     records <- rmDefinitionSearch rmQuery
+--     session <- ask
+--     forM records $ \(Ref ref, rec) -> do
+--         updatedRecord <- updateRecord rec
+--         let request = setRequestBodyJSON
+--                       (object
+--                           [ "type"      .= definition @a
+--                           , "condition" .= ("id:" <> show ref)
+--                           , "values"    .= updatedRecord ])
+--                       (cobDefaultRequest session)
+--                           { method = "PUT"
+--                           , path   = "/recordm/recordm/instances/integration" }
+--         _ <- httpValidJSON @Value request
+--         return (Ref ref, updatedRecord)
 
 -- | The same as 'rmUpdateInstance' but discard the @'Ref' a@ from @('Ref' a, a)@ from the result
-rmUpdateInstances_ :: forall a. Record a => Query a -> (a -> a) -> Cob IO [a]
-rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
-{-# INLINE rmUpdateInstances_ #-}
+-- rmUpdateInstances_ :: forall a. Record a => Query a -> (a -> a) -> Cob IO [a]
+-- rmUpdateInstances_ q = fmap (map snd) . rmUpdateInstances q
+-- {-# INLINE rmUpdateInstances_ #-}
 
 -- | The same as 'rmUpdateInstancesWithMakeQueryM' but the update record function does not return the value within a monad @m@
-rmUpdateInstancesWithMakeQuery :: forall a b. (Record a, Record b) => Query a -> (a -> Query b) -> (b -> b) -> Cob IO [(Ref b, b)]
-rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (return <$> g)
-{-# INLINE rmUpdateInstancesWithMakeQuery #-}
+-- rmUpdateInstancesWithMakeQuery :: forall a b. (Record a, Record b) => Query a -> (a -> Query b) -> (b -> b) -> Cob IO [(Ref b, b)]
+-- rmUpdateInstancesWithMakeQuery q f g = rmUpdateInstancesWithMakeQueryM q f (return <$> g)
+-- {-# INLINE rmUpdateInstancesWithMakeQuery #-}
 
 -- | Run a @'RecordMQuery' q@ and transform all resulting records (@'Record' a@)
 -- into new queries (@'RecordMQuery' r@). Finally, update all resulting records
 -- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
-rmUpdateInstancesWithMakeQueryM :: forall a b. (Record a, Record b) => Query a -> (a -> Query b) -> (b -> Cob IO b) -> Cob IO [(Ref b, b)]
-rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
+-- rmUpdateInstancesWithMakeQueryM :: forall a b. (Record a, Record b) => Query a -> (a -> Query b) -> (b -> Cob IO b) -> Cob IO [(Ref b, b)]
+-- rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)
 
 
 -- | Delete an instance by id, ignoring if it has any references
 --
 -- See /recordm/instances/{id}
 rmDeleteInstance :: forall a. Ref a -> Cob IO ()
-rmDeleteInstance ref = do
-    session <- ask
-    let request = (cobDefaultRequest session)
-                      { method = "DELETE"
-                      , path = "/recordm/recordm/instances/" <> fromString (show ref)
-                      , queryString = renderQuery True $ simpleQueryToQuery [("ignoreRefs", "true")] }
-    httpValidNoBody request
-
-
--- | @Internal@ Render a 'RecordMQuery'.
-renderRMQuery :: forall a. Record a => Query a -> ByteString
-renderRMQuery q =
-        renderQuery True $ simpleQueryToQuery $ catMaybes
-            [ Just ("q"   , encodeUtf8 (_q q))
-            , Just ("from", fromString $ show $ _from q)
-            , Just ("size", fromString $ show $ _size q)
-            ,   (,) "sort"  <$> _sort q
-            ,   (,) "ascending" . fromString . show <$> _ascending q ]
-{-# INLINE renderRMQuery #-}
+rmDeleteInstance (Ref ref) = do
+  performReq $ deleteInstance (fromInteger ref) (Just True)
 
 
 -- | @Internal@ Gets hits.hits from response body, parsed as an array of JSON values
