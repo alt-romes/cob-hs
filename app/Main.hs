@@ -171,11 +171,18 @@ run1 = do
     dog2   <- rmAddInstance (Dog owner1 "dog2")
     rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
 
+run5 :: Cob IO ()
+run5 = do
+    dogs <- rmDefinitionSearch @Dog "*"
+    liftIO $ print dogs
+    return ()
+
 main :: IO ()
 main = do
     cobToken <- init <$> readFile "cob-token.secret"
     session  <- makeSession "mimes8.cultofbits.com" cobToken
-    res      <- runCobTests session run1
+    res      <- runCob session run5
+    -- res      <- runCobTests session run1
     print res
 
 

@@ -20,6 +20,12 @@ module Cob.RecordM where
 
 import System.IO.Unsafe -- This is used solely to generate the lazy list of records
 
+import GHC.Conc
+import Control.Exception
+
+import Cob.RecordM.Servant
+import Servant.Client
+
 import qualified Data.Vector as V ( fromList   )
 
 import Control.Monad              ( forM, join, (>=>)       )
@@ -40,7 +46,7 @@ import Data.String        ( fromString, IsString )
 import Data.Text.Encoding ( encodeUtf8 )
 import Network.URI.Encode ( encode     )
 
-import Network.HTTP.Conduit ( Request(..) )
+import Network.HTTP.Conduit ( Request(..), createCookieJar )
 import Network.HTTP.Types   ( renderQuery, simpleQueryToQuery )
 import Network.HTTP.Simple  ( setRequestBodyJSON )
 
@@ -213,15 +219,20 @@ byStr t = defaultRMQuery { _q = "id:" <> fromString t }
 rmDefinitionSearch :: forall a. Record a => Query a -> Cob IO [(Ref a, a)]
 rmDefinitionSearch rmQuery = do
     session <- ask
-    let request = (cobDefaultRequest session)
-                      { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-                      , queryString = renderRMQuery @a rmQuery }
-    rbody <- httpValidJSON request
-    hits  <- getResponseHitsHits rbody id                 -- Get hits.hits from response body 
-    let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
-    let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
-    records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
-    return (zip ids records)                              -- Return list of (id, record)
+    tvar <- liftIO $ newTVarIO (createCookieJar [cobtoken session])
+    let ce = ClientEnv (tlsmanager session) (BaseUrl Https (serverhost session) 443 "recordm") (Just tvar) defaultMakeClientRequest
+    liftIO (runClientM (searchByName (encode (definition @a)) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing) ce) >>= \case
+      Left e      -> throw e
+      Right rbody -> do
+    -- let request = (cobDefaultRequest session)
+    --                   { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
+    --                   , queryString = renderRMQuery @a rmQuery }
+    -- rbody <- httpValidJSON request
+        hits  <- getResponseHitsHits rbody id                 -- Get hits.hits from response body 
+        let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
+        let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
+        records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
+        return (zip ids records)                              -- Return list of (id, record)
 
 -- TODO: Use streaming cob API + conduit-http sinks for streaming large amounts of data
 
