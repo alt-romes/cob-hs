@@ -21,6 +21,9 @@ import Cob.Testing
 import Streamly.Prelude (Serial)
 import qualified Streamly.Prelude as S
 
+import Cob.RecordM.Free hiding (Cob)
+import qualified Cob.RecordM.Free as Free
+
 data Classificação = Classificação
 
 type Observação = String
@@ -65,11 +68,11 @@ parseArgs = map ((\(x, ':':y) -> (Ref (read x), read y)) . break (== ':'))
 
 -- Demo
 
-newtype Owner = Owner String
+newtype Owner = Owner String deriving (Show, Eq)
 mkRecord ''Owner "Owners" ["Owner"]
 
 data Dog = Dog (Ref Owner) String
-         deriving (Show)
+         deriving (Show, Eq)
 mkRecord ''Dog "Dogs" ["Owner", "Dog"]
 
 test1 :: Cob IO [(Ref Dog, Dog)]
@@ -118,8 +121,29 @@ main :: IO ()
 main = do
     cobToken <- init <$> readFile "cob-token.secret"
     session  <- makeSession "mimes8.cultofbits.com" cobToken
-    res      <- runCob session stream1
+    res      <- cob session freeCob
     print res
+
+
+freeCob :: MonadIO m => Free.CobM m ()
+freeCob = do
+
+  bb <- addSyncM (Owner "Bombásio")
+
+  d1 <- addSyncM (Dog bb "Bombinhas")
+
+  x <- getM d1
+
+  liftCob $ liftIO $ do
+
+    unless (Dog bb "Bombinhas" /= x) $ do
+
+      print "everything went right"
+
+    print "end"
+
+
+
 
 
 
