@@ -22,23 +22,31 @@ module Cob.RecordM
 
 -- import System.IO.Unsafe -- This is used solely to generate the lazy list of records
 
+import Data.Function ((&))
 import Data.Maybe (mapMaybe)
 import Cob.RecordM.Servant
+import Servant.Client.Streaming (withClientM)
 
-import qualified Data.Vector as V ( fromList   )
+import qualified Data.Vector as V (fromList)
 
-import Control.Monad              ((>=>))
-import Control.Monad.Except       ( MonadError, throwError )
-import Control.Monad.Writer       ( tell                    )
+import Control.Monad        ((>=>), (<=<))
+import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Writer (tell)
+import Control.Monad.Reader (ask)
+import Control.Monad.Trans  (lift)
+import Control.Monad.IO.Class (liftIO)
+import Control.Exception (throwIO, SomeException(..), Exception)
 
-import Data.DList ( singleton )
+import Data.DList (singleton)
 
-import Data.Aeson.Types ( ToJSON, FromJSON, parseJSON, Value(..), withObject, (.:), parseEither, parseMaybe )
+import Data.Aeson.Types (ToJSON, FromJSON, parseJSON, Value(..), withObject, (.:), parseEither, parseMaybe)
 
-import Data.Text          ( Text       )
-import Data.ByteString    ( ByteString )
-import Data.String        ( fromString, IsString )
-import Network.URI.Encode ( encode     )
+import Data.Text          (Text)
+import Data.ByteString    (ByteString)
+import Data.String        (fromString, IsString)
+import Network.URI.Encode (encode)
+
+import qualified Streamly.Prelude as Streamly
 
 import Cob.RecordM.Ref
 import Cob
@@ -170,7 +178,27 @@ rmDefinitionSearch rmQuery = do
     records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     return (zip ids records)                              -- Return list of (id, record)
 
--- TODO: Use streaming cob API + conduit-http sinks for streaming large amounts of data
+-- | Stream a definition!
+rmStreamDefinitionSearch :: forall a b. Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> Cob IO b
+rmStreamDefinitionSearch rmQuery f = do
+  CobSession session <- ask
+  let req = streamSearchByName (encode (definition @a)) (Just (_q rmQuery)) Nothing
+  liftIO $ withClientM req session (\case
+    Left e -> throwIO e
+    Right stream ->
+      let 
+        parseRefA = withObject "streaming_search" $ \o -> do
+          src <- o .: "_source"
+          r   <- parseJSON @(Ref a) src
+          a   <- parseJSON @a src
+          pure (r, a)
+      in stream
+      & Streamly.mapM (either (throwIO . SomeException . ParseError) pure . parseEither parseRefA)
+      & f
+                                   )
+
+newtype ParseError = ParseError String deriving Show
+instance Exception ParseError
 
 -- | Like 'rmDefinitionSearch', but returns a lazy list of all
 -- records, rather than a range.

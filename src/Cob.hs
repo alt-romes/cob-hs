@@ -18,7 +18,7 @@ module Cob where
 
 import GHC.Conc
 
-import Data.String                   ( fromString )
+import Data.String ( fromString )
 
 import Data.DList ( DList )
 
@@ -33,7 +33,7 @@ import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
 import Control.Monad.IO.Class ( MonadIO, liftIO                    )
 import Control.Monad.Trans    ( MonadTrans, lift                   )
 
-import Control.Exception as E ( Exception(..), catch, throwIO, throw )
+import Control.Exception as E ( Exception(..), catch, throwIO )
 
 import Data.Bifunctor (first, second, bimap)
 
@@ -204,7 +204,6 @@ instance MonadTrans Cob where
     {-# INLINE lift #-}
     -- [x] lift . return = return
     -- [x] lift (m >>= f) = lift m >>= (lift . f)
-
 
 -- | The inverse of 'Cob'.
 --
@@ -377,6 +376,6 @@ instance Existable [] where
 performReq :: ClientM a -> Cob IO a
 performReq c = do
     CobSession session <- ask
-    liftIO (runClientM c session) >>= \case
-      Left e -> throw e
+    liftIO $ runClientM c session >>= \case
+      Left e -> throwIO e
       Right b -> return b

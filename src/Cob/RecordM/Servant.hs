@@ -1,4 +1,6 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -17,7 +19,23 @@ import qualified Servant.Client as C
 import qualified Servant.Client.Streaming as SC
 import Data.Aeson
 
+import qualified Streamly.Prelude as Streamly
+
+import qualified Servant.Types.SourceT as Servant
+
 import Cob.RecordM.Ref
+
+instance Streamly.IsStream t => FromSourceIO a (t IO a) where
+  fromSourceIO src =
+    Streamly.concatMapM id $ Streamly.fromAhead $ Streamly.fromPure $ Servant.unSourceT src go
+   where
+    go :: Streamly.IsStream t => Servant.StepT IO a -> IO (t IO a)
+    go step = case step of
+      Servant.Stop             -> return Streamly.nil
+      Servant.Error e          -> return $ Streamly.fromEffect $ fail e
+      Servant.Skip  n          -> go n
+      Servant.Yield x nextStep -> Streamly.cons x <$> go nextStep
+      Servant.Effect nextStep  -> nextStep >>= go
 
 type RecordM a = "recordm" :> "recordm" :> a
 
@@ -42,7 +60,7 @@ type StreamSearch = "definitions" :> "search" :> "stream" :> (
 type StreamSearchCommon
   =  QueryParam "q" T.Text
   :> QueryParam "sort" SortParam
-  :> StreamGet NewlineFraming JSON (SourceIO Value)
+  :> StreamGet NewlineFraming JSON (Streamly.Serial Value)
 
 type InstancesGet    = "instances" :> Capture "id" Int :> QueryParam "If-None-Match" String :> Get '[JSON] Value
 type InstancesDelete = "instances" :> Capture "id" Int :> QueryParam "ignoreRefs" Bool :> Servant.API.Delete '[JSON] ()
@@ -55,8 +73,8 @@ searchByName :: String -> Maybe T.Text -> Maybe Int -> Maybe Int -> Maybe SortPa
 searchById   :: Int    -> Maybe T.Text -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
 
-streamSearchByName :: String -> Maybe T.Text -> Maybe SortParam -> SC.ClientM (SourceIO Value)
-streamSearchById   :: Int    -> Maybe T.Text -> Maybe SortParam -> SC.ClientM (SourceIO Value)
+streamSearchByName :: String -> Maybe T.Text -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
+streamSearchById   :: Int    -> Maybe T.Text -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
 (streamSearchByName :<|> streamSearchById) = SC.client (Proxy @(RecordM StreamSearch))
 
 getInstance    :: Int -> Maybe String -> C.ClientM Value
@@ -105,4 +123,5 @@ instance FromJSON OperationsSummary where
       <*> (obj .: "deleted")
       <*> (obj .: "forbidden")
       <*> (obj .: "error")
+
 

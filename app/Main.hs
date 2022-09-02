@@ -18,6 +18,9 @@ import Cob.RecordM
 import Cob.RecordM.TH
 import Cob.Testing
 
+import Streamly.Prelude (Serial)
+import qualified Streamly.Prelude as S
+
 data Classificação = Classificação
 
 type Observação = String
@@ -93,84 +96,6 @@ run1 = do
     dog1   <- rmAddInstance (Dog owner1 "dog1")
     dog2   <- rmAddInstance (Dog owner1 "dog2")
     rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
-    owner1 <- rmAddInstance (Owner "Owner1")
-    dog1   <- rmAddInstance (Dog owner1 "dog1")
-    dog2   <- rmAddInstance (Dog owner1 "dog2")
-    rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
 
 run5 :: Cob IO ()
 run5 = do
@@ -185,12 +110,15 @@ run6 = do
     dog2   <- rmAddInstance (Dog owner1 "Farrusca")
     map snd <$> rmDefinitionSearch @Dog (byStr $ "owner:" <> show owner1)
 
+stream1 :: Cob IO [Dog]
+stream1 = do
+  rmStreamDefinitionSearch "*" (S.toList . S.take 10 . S.map snd)
+
 main :: IO ()
 main = do
     cobToken <- init <$> readFile "cob-token.secret"
     session  <- makeSession "mimes8.cultofbits.com" cobToken
-    res      <- runCob session run6
-    -- res      <- runCobTests session run1
+    res      <- runCob session stream1
     print res
 
 

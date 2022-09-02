@@ -71,6 +71,8 @@ executable main
 
                       mtl,
 
+                      streamly,
+
                       cob
 
 
