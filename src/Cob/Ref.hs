@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Cob.RecordM.Ref where
+module Cob.Ref where
 
 import Data.Aeson
 
@@ -46,7 +46,7 @@ instance ToJSON (Ref a) where
     {-# INLINE toJSON #-}
 
 instance FromJSON (Ref a) where
-    parseJSON = withObject "RecordM Record Id" $ \v -> do
+    parseJSON = withObject "Record Id" $ \v -> do
         ref <- v .: "id"
         return (Ref ref)
     {-# INLINE parseJSON #-}

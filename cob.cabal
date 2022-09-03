@@ -17,15 +17,23 @@ extra-source-files: CHANGELOG.md
 
 library
     exposed-modules:  Cob,
-                      Cob.UserM,
-                      Cob.UserM.Types,
-                      Cob.UserM.Servant,
-                      Cob.RecordM,
-                      Cob.RecordM.Ref,
-                      Cob.RecordM.Free,
+                      Cob.Ref,
+                      Cob.Session,
+                      Cob.RecordM.Query,
+                      Cob.RecordM.Record,
                       Cob.RecordM.TH,
-                      Cob.RecordM.Servant,
-                      Cob.Testing
+                      Cob.UserM.Entities
+                      -- Cob.UserM,
+                      -- Cob.UserM.Servant,
+                      -- Cob.RecordM,
+                      -- Cob.RecordM.Ref,
+                      -- Cob.RecordM.Free,
+                      -- Cob.RecordM.TH,
+                      -- Cob.RecordM.Servant,
+                      -- Cob.RecordM.Query,
+                      -- Cob.RecordM.Interpreter,
+                      -- Cob.RecordM.Record,
+                      -- Cob.Testing
 
     ghc-options:      -Wall -Wtabs -fmax-simplifier-iterations=10
                       -Wmissing-pattern-synonym-signatures -Wno-redundant-constraints
@@ -37,8 +45,8 @@ library
                       bytestring,
                       uri-encode,
 
-                      mtl                       >= 2.2.2,
-                      transformers              >= 0.5.6.2,
+                      mtl,
+                      transformers,
 
                       servant,
                       servant-client,
@@ -46,17 +54,18 @@ library
                       http-client-tls,
 
                       -- JSON
-                      aeson                     >= 1.5.6.0,
+                      aeson,
 
                       -- Util
-                      vector                    >= 0.12.3.1,
-                      time                      >= 1,
-                      dlist                     >= 1.0,
+                      vector,
+                      time,
+                      dlist,
                       streamly
 
 
     hs-source-dirs:   src
     default-language: Haskell2010
+    default-extensions: Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
 
 executable main
     main-is:          Main.hs
@@ -67,9 +76,6 @@ executable main
                       template-haskell,
                       microlens,
                       microlens-th,
-
-                      text,
-                      bytestring,
 
                       mtl,
 
@@ -82,15 +88,15 @@ executable main
     hs-source-dirs:   app
     default-language: Haskell2010
 
-test-suite laws
-    type: exitcode-stdio-1.0
-    main-is: Lawful.hs
-    hs-source-dirs: tests
-    default-language: Haskell2010
-    build-depends:    base >= 4 && <= 5,
-                      QuickCheck,
-                      quickcheck-classes >= 0.6.5,
-                      mtl,
-                      dlist,
-                      cob
+-- test-suite laws
+--     type: exitcode-stdio-1.0
+--     main-is: Lawful.hs
+--     hs-source-dirs: tests
+--     default-language: Haskell2010
+--     build-depends:    base >= 4 && <= 5,
+--                       QuickCheck,
+--                       quickcheck-classes,
+--                       mtl,
+--                       dlist,
+--                       cob
 

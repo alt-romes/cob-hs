@@ -1,381 +1,108 @@
-{-# LANGUAGE ConstraintKinds #-} 
-{-# LANGUAGE InstanceSigs #-} 
-{-# LANGUAGE TypeApplications #-} 
-{-# LANGUAGE UndecidableInstances #-} 
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Cob where
+  -- (
+  --   -- * Operations
+  --   streamSearch
+  -- , search      
+  -- , get         
+  -- , count       
+  -- , add         
+  -- , addSync     
+  -- , delete      
+  -- , liftCob
 
--- TODO: Cob.Simple module
+  -- -- * Types
+  -- , Cob
+  -- , CobM
+  -- , CobF
+  -- ) where
 
-import GHC.Conc
+import Control.Monad.Free
+import Control.Monad.Free.TH
 
-import Data.String ( fromString )
+import qualified Streamly.Prelude as Streamly
 
-import Data.DList ( DList )
+import Cob.Session (CobToken)
+import Cob.RecordM.Query
+import Cob.RecordM.Record
+import Cob.UserM.Entities
+import Cob.Ref
 
-import Data.Maybe ( listToMaybe )
+type Cob    = Free (CobF IO)
+type CobM m = Free (CobF m)
 
-import Control.Applicative ( Alternative, empty, (<|>) )
+-- ROMES:TODO: Perhaps use FoldT instead of Serial a -> m b
+data CobF m next where
+  StreamSearchM :: Record a => Query a -> (Streamly.SerialT m (Ref a, a) -> m b) -> (b -> next) -> CobF m next
+  SearchM       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF m next
+  GetM          :: Record a => Ref a   -> (a -> next) -> CobF m next
+  CountM        :: Record a => Query a -> (Int -> next) -> CobF m next
+  AddM          :: Record a => a       -> (Ref a -> next) -> CobF m next
+  AddSyncM      :: Record a => a       -> (Ref a -> next) -> CobF m next
+  DeleteM       :: Record a => Ref a   -> next -> CobF m next
+  CreateUserM   :: User       -> (Ref User -> next) -> CobF m next
+  DeleteUserM   :: Ref User   -> next -> CobF m next
+  AddToGroupM   :: [Ref User] -> Ref Group -> next -> CobF m next
+  LoginM        :: String     -> String -> (CobToken -> next) -> CobF m next
+  LiftCobM      :: m a -> (a -> next) -> CobF m next
 
-import Control.Monad ((>=>))
-import Control.Monad.Except   ( MonadError, throwError, catchError )
-import Control.Monad.Reader   ( MonadReader, ask, local            )
-import Control.Monad.Writer   ( MonadWriter, tell, listen, pass    )
-import Control.Monad.IO.Class ( MonadIO, liftIO                    )
-import Control.Monad.Trans    ( MonadTrans, lift                   )
+instance Functor (CobF m) where
+  fmap g = \case
+    StreamSearchM q f h -> StreamSearchM q f (g . h)
+    SearchM q f  -> SearchM q (g . f)
+    GetM r f     -> GetM r (g . f)
+    CountM q f   -> CountM q (g . f)
+    AddM q f     -> AddM q (g . f)
+    AddSyncM q f -> AddSyncM q (g . f)
+    DeleteM r n  -> DeleteM r (g n)
+    CreateUserM u f -> CreateUserM u (g . f)
+    DeleteUserM u n -> DeleteUserM u (g n)
+    AddToGroupM us gr n -> AddToGroupM us gr (g n)
+    LoginM u p f -> LoginM u p (g . f)
+    LiftCobM x f -> LiftCobM x (g . f)
 
-import Control.Exception as E ( Exception(..), catch, throwIO )
+makeFree_ ''CobF
 
-import Data.Bifunctor (first, second, bimap)
+streamSearch :: Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> Cob b
+search       :: Record a => Query a -> Cob [(Ref a, a)]
+get          :: Record a => Ref a   -> Cob a
+count        :: Record a => Query a -> Cob Int
+add          :: Record a => a       -> Cob (Ref a)
+addSync      :: Record a => a       -> Cob (Ref a)
+delete       :: Record a => Ref a   -> Cob ()
+createUser   :: User -> Cob (Ref User)
+deleteUser   :: Ref User -> Cob ()
+addToGroup   :: [Ref User] -> Ref Group -> Cob ()
+login        :: String -> String -> Cob CobToken
+liftCob      :: IO a -> Cob a
 
-import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
-import Data.Time.Calendar (Day(..))
+-- * Versions polymorphic over monad
 
-import Network.HTTP.Client (Cookie(..), CookieJar, createCookieJar, newManager)
-import Network.HTTP.Client.TLS  (tlsManagerSettings)
-import Servant.Client      as C (runClientM, ClientEnv(ClientEnv, baseUrl, cookieJar), ClientM, BaseUrl(..), Scheme(..), defaultMakeClientRequest)
-
--- | The 'Cob' monad (transformer).
---
--- A constructed monad made out of an existing monad @m@ such that its
--- computations can be embedded in 'Cob', from which it's also possible to
--- interact with @RecordM@ and @UserM@.
---
-newtype Cob m a = Cob { unCob :: CobSession -> m (a, CobWriters) }
-
--- | A 'Cob' computation will either succeed or return a 'CobError'.
-type CobError = String
-
--- | The 'Cob' modules
-data CobModule = RecordM | UserM
-
--- | CobWriters -- Cob is a MonadWriter whose monoid writer instance is a difference list for each module's specific requirements
-type CobWriters = (DList (CobWriter 'RecordM), DList (CobWriter 'UserM))
-
--- | Define which kind of Monoid writer each module uses
---
--- The full 'Cob' writer is a tuple @(CobWriter 'RecordM, CobWriter 'Userm)@
-type family CobWriter (c :: CobModule)
-
-instance Functor m => Functor (Cob m) where
-    fmap f = Cob . (fmap . fmap) (first f) . unCob
-    {-# INLINE fmap #-}
-    -- [x] fmap id = id
-
-instance Monad m => Applicative (Cob m) where
-    pure = Cob . const . pure . (, mempty)
-    {-# INLINE pure #-}
-    (Cob f') <*> (Cob g) = Cob $ \r ->
-        f' r >>= \case
-            (f, l) -> bimap f (l <>) <$> g r
-    {-# INLINE (<*>) #-}
-    -- [x] pure id <*> v = v
-    -- [x] pure (.) <*> u <*> v <*> w = u <*> (v <*> w)
-    -- [x] pure f <*> pure x = pure (f x)
-    -- [x] u <*> pure y = pure ($ y) <*> u
-
-instance Monad m => Monad (Cob m) where
-    (Cob x') >>= f' = Cob $ \r ->
-        x' r >>= \case
-          (x, l)  -> second (l <>) <$> unCob (f' x) r
-    {-# INLINE (>>=) #-}
-    -- [x] return a >>= k = k a
-    -- [x] m >>= return = m
-    -- [x] m >>= (\x -> k x >>= h) = (m >>= k) >>= h
-
-data CobAltError = FailedWithWriters CobWriters CobError
-instance Show CobAltError where
-  show (FailedWithWriters _ e) = "FailedWithWriters: " <> e
-instance Exception CobAltError
-
-instance Alternative (Cob IO) where
-    empty = liftIO . throwIO $ FailedWithWriters mempty "empty Alternative" -- Cob $ const $ pure (Left "Cob (alternative) empty computation. No error message.", mempty)
-    {-# INLINE empty #-} 
-
-    -- | The Cob alternative instance.
-    --
-    -- The computation to the right of '<|>' will only be executed if the computation to the left fails.
-    --
-    -- This is good to represent idioms like @getOrAddInstance@.
-    --
-    -- For example, the following code can be read \"search a RecordM definition
-    -- with @query@ and extract the first element if it exists. If it doesn't,
-    -- add the @newInstance@ to RecordM\", which is short for \"find a record by
-    -- this query or add this new one\".
-    -- @
-    -- (rmDefinitionSearch query ?!) <|> rmAddInstance newInstance
-    -- @
-    -- Note: The snippet above requires the @PostfixOperators@ extension to be
-    -- enabled
-    --
-    -- This other example reads \"get an instance by id 123 or add a new dog called
-    -- bobby\"
-    -- @
-    -- rmGetInstance (Ref 123) <|> rmAddInstance (Dog "bobby")
-    -- @
-    --
-    -- Note: IO exceptions are not catched, that means that if an IO exception
-    -- is thrown, the computation won't fail cleanly and therefore the added
-    -- instances won't be deleted if running with 'runRecordMTests'
-    (Cob x') <|> (Cob y) = Cob $ \r ->
-        x' r `catch` (\(FailedWithWriters l _) -> second (l <>) <$> y r)
-    {-# INLINE (<|>) #-} 
-
--- Cob doesn't instance MonadPlus because mzero isn't a right zero but rather is
--- mzero + the accumulators from the left computation
--- instance Monad m => MonadPlus (Cob m) where
-    -- ...
-    -- mzero >>= f  =  mzero
-    -- v >> mzero   =  mzero
-
-instance Monad m => MonadReader CobSession (Cob m) where
-    ask = Cob (pure . (, mempty))
-    {-# INLINE ask #-}
-    local f m = Cob (unCob m . f)
-    {-# INLINE local #-}
-
-instance MonadError CobError (Cob IO) where
-    throwError e = liftIO (throwIO (FailedWithWriters mempty e))
-    {-# INLINE throwError #-}
-    (Cob x') `catchError` handler = Cob $ \r ->
-        x' r `catch` (\(FailedWithWriters l e) -> second (l <>) <$> unCob (handler e) r)
-    {-# INLINE catchError #-}
-
--- | Allow Cob computations to fail
---
--- For example, when pattern matching against an expected single value in a
--- list, upon failure, cleanly propagate the error
--- 
--- In the following snippet, if more than one instance was found for the given
--- query, a CobError error will be thrown and propagated
--- @
--- [user1] <- rmDefinitionSearch_ "id:456767*" :: [User]
--- @
-instance MonadFail (Cob IO) where
-    fail = throwError
-    {-# INLINE fail #-}
-    -- [x] fail s >>= f = fail s
-
-instance (w ~ CobWriters, Monad m) => MonadWriter w (Cob m) where
-    tell = Cob . const . pure . ((),)
-    {-# INLINE tell #-}
-    listen a' = Cob (unCob a' >=> \(a, w) -> return ((,w) a, w))
-    {-# INLINE listen #-}
-    pass (Cob a') = Cob $ \r -> do
-        a' r >>= \case
-          ((a, f), w) -> return (a, f w)
-    {-# INLINE pass #-}
-
-instance MonadIO m => MonadIO (Cob m) where
-    liftIO = Cob . const . fmap (, mempty) . liftIO
-    {-# INLINE liftIO #-}
-    -- [x] liftIO . return = return
-    -- [x] liftIO (m >>= f) = liftIO m >>= (liftIO . f)
-
--- | Lift a computation from the argument monad to a constructed 'CobT' monad.
---
--- This can be used to do computations in @m@ from 'CobT'.
---
--- For example: lift an 'IO' computation to a 'Cob' computation.
---
--- This can be used to do 'IO' from 'Cob'.
---
--- ==== __Example__
---
--- @
--- logic :: Cob ()
--- logic = do
---     lift (print "started!")
---     ...
---     ...
---     lift (print "finished!")
--- @
-instance MonadTrans Cob where
-    lift = Cob . const . fmap (, mempty)
-    {-# INLINE lift #-}
-    -- [x] lift . return = return
-    -- [x] lift (m >>= f) = lift m >>= (lift . f)
-
--- | The inverse of 'Cob'.
---
--- Run a 'Cob' computation and get either a 'CobError' or a value
--- in the argument monad @m@, alongside the 'CobWriter's logs
-runCobT :: CobSession -> Cob m a -> m (a, CobWriters)
-runCobT = flip unCob
-{-# INLINE runCobT #-}
-
--- | Run a 'Cob' computation and get either a 'CobError' or a value in @m@.
-runCob :: Functor m => CobSession -> Cob m a -> m a
-runCob session = fmap fst . runCobT session
-{-# INLINE runCob #-}
-
---- Sessions
-
--- | A priviledge granting 'CobToken'
-type CobToken  = String
--- | A cob server host such as \"test.cultofbits.com\".
-type Host      = String
--- | A 'Cob' session, required an argument to run a 'Cob' computation with 'runCob'.
--- It should be created using 'makeSession' unless finer control over the TLS
--- session manager or the cobtoken cookie is needed.
-newtype CobSession = CobSession ClientEnv
-
--- | Make a 'CobSession' with the default @TLS Manager@ given the 'Host' and 'CobToken'.
-makeSession :: Host -> CobToken -> IO CobSession
-makeSession cobhost tok = do
-    manager <- newManager tlsManagerSettings
-    tvar    <- newTVarIO (makeCookieJar cobhost tok)
-    return $ CobSession $ ClientEnv manager (BaseUrl Https cobhost 443 "") (Just tvar) defaultMakeClientRequest
-
--- | Create an empty 'CobSession', i.e. without a token
-emptySession :: Host -> IO CobSession
-emptySession cobhost = do
-  manager <- newManager tlsManagerSettings
-  return $ CobSession $ ClientEnv manager (BaseUrl Https cobhost 443 "") Nothing defaultMakeClientRequest
-
--- | Update the 'CobToken' of a 'CobSession'
-updateSessionToken :: CobSession -> CobToken -> IO CobSession
-updateSessionToken (CobSession clEnv) tok = do
-  tvar    <- newTVarIO (makeCookieJar (baseUrlHost $ baseUrl clEnv) tok)
-  return (CobSession (clEnv { C.cookieJar = Just tvar }))
-
-makeCookieJar :: Host -> CobToken -> CookieJar
-makeCookieJar cobhost tok = createCookieJar
-      [Cookie { cookie_name             = "cobtoken"
-              , cookie_value            = fromString tok
-              , cookie_secure_only      = True
-              , cookie_path             = "/"
-              , cookie_domain           = fromString cobhost
-              , cookie_expiry_time      = future
-              , cookie_creation_time    = past
-              , cookie_last_access_time = past
-              , cookie_persistent       = True
-              , cookie_host_only        = False
-              , cookie_http_only        = False }]
-  where
-    past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
-    future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
+streamSearchM :: Record a => Query a -> (Streamly.SerialT m (Ref a, a) -> m b) -> CobM m b
+searchM       :: Record a => Query a -> CobM m [(Ref a, a)]
+getM          :: Record a => Ref a   -> CobM m a
+countM        :: Record a => Query a -> CobM m Int
+addM          :: Record a => a       -> CobM m (Ref a)
+addSyncM      :: Record a => a       -> CobM m (Ref a)
+deleteM       :: Record a => Ref a   -> CobM m ()
+createUserM   :: User -> CobM m (Ref User)
+deleteUserM   :: Ref User -> CobM m ()
+addToGroupM   :: [Ref User] -> Ref Group -> CobM m ()
+loginM        :: String -> String -> CobM m CobToken
+liftCobM      :: m a -> CobM m a
 
 
--- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
--- to retrieve the element if it exists or return a default value (passed in
--- the second parameter) if it doesn't.
-class Existable e where
-    -- | Return the value from the 'Existable' if it exists, otherwise return the
-    -- default value passed as the second argument
-    (??) :: Monad m => e a -> m a -> m a
-    infix 7 ??
 
-    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists, otherwise return the
-    -- default value passed as the second argument
-    (???) :: Monad m => m (e a) -> m a -> m a
-    mex ??? def = mex >>= flip (??) def
-    infix 7 ???
-    {-# INLINE (???) #-}
-
-    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists,
-    -- otherwise return 'Alternative' 'empty'
-    --
-    -- This is best used with the extension @PostfixOperators@ which allows this
-    -- kind of idioms to be written:
-    --
-    -- @
-    -- (rmDefinitionSearch query ?!) <|> rmAddInstance newInstance
-    -- @
-    (?!) :: (Monad m, Alternative m) => m (e a) -> m a
-    (?!) = (??? empty)
-    {-# INLINE (?!) #-}
-    
-
--- | A 'Maybe' is 'Existable' because it's either 'Just' a value or 'Nothing'.
-instance Existable Maybe where
-    -- | Return the value from the 'Maybe' if it exists, otherwise return the
-    -- default value passed as the second argument
-    mb ?? def = maybe def return mb
-    {-# INLINE (??) #-}
-
--- | A list is 'Existable' because it might have no elements or at least one
--- element. When using '?:', if the list is non-empty, the first element will
--- be returned. This is useful when doing a 'rmDefinitionSearch' and are
--- expecting exactly one result, and want to throw an error in the event that
--- none are returned.
---
--- Example:
--- 
--- @
--- user <- rmDefinitionSearch_ @UsersRecord name ?:: throwError "Couldn't find user!"
--- @
-instance Existable [] where
-    -- | Return the first element of the list if it exists, otherwise return the
-    -- default value passed as the second argument
-    ls ?? def = (maybe def return . listToMaybe) ls
-    {-# INLINE (??) #-}
-
-
--- | @Internal@
---
--- Perform an HTTP request parsing the response body as JSON
--- If the response status code isn't successful an error is thrown.
--- In the event of a JSON parse error, the error is thrown.
--- httpValidJSON :: forall a. (Show a, FromJSON a) => Request -> Cob IO a
--- httpValidJSON = flip httpValidJSON' id
--- {-# INLINE httpValidJSON #-}
-
-
--- | @Internal@
---
--- Perform an HTTP request parsing the response body as JSON
--- If the response status code isn't successful an error created with a function
--- from @(String -> error_type)@ is thrown.
--- In the event of a JSON parse error, the error is thrown.
--- httpValidJSON' :: forall a e m. (MonadIO m, MonadError e m, Show a, FromJSON a) => Request -> (String -> e) -> m a
--- httpValidJSON' request mkError = do
-
---     response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . mkError . show) return -- Handle Http Exceptions
-
---     let status = responseStatus response
---         body   = responseBody @(Either JSONException a) response
-
---     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
---         throwError . mkError
---         $  ("Request failed with a status of "
---             <> show (statusCode status) <> " ("
---             <> BSC8.unpack (statusMessage status) <> ")")
---         <> ("\nResponse body: "
---             <> either prettyBodyFromJSONException show body)
-
---     either (throwError . mkError . prettyErrorFromJSONException) return body
-
---     where prettyBodyFromJSONException  JSONParseException {}             = "()"
---           prettyBodyFromJSONException  (JSONConversionException _ rv _)  = BSC8.unpack . toStrict . encodePretty . responseBody $ rv
---           prettyErrorFromJSONException j = "Error parsing response body: " <> prettyBodyFromJSONException j <> "\nERROR: " <> case j of (JSONParseException _ _ e) -> show e; (JSONConversionException _ _ e) -> e
-
-
----- | @Internal@
-----
----- Perform an HTTP request and ignore the response body
----- If the response status code isn't successful an error is thrown.
---httpValidNoBody :: Request -> Cob IO ()
---httpValidNoBody request = do
---    response <- liftIO ((Right <$> httpNoBody request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
---    let status = responseStatus response
---    unless (statusIsSuccessful status) $
---        throwError ("Request failed with a status of "
---            <> show (statusCode status) <> " ("
---            <> BSC8.unpack (statusMessage status) <> ")")
-
-performReq :: ClientM a -> Cob IO a
-performReq c = do
-    CobSession session <- ask
-    liftIO $ runClientM c session >>= \case
-      Left e -> throwIO e
-      Right b -> return b
+streamSearch = streamSearchM
+search       = searchM
+get          = getM
+count        = countM
+add          = addM
+addSync      = addSyncM
+delete       = deleteM
+createUser   = createUserM
+deleteUser   = deleteUserM
+addToGroup   = addToGroupM
+login        = loginM
+liftCob      = liftCobM
