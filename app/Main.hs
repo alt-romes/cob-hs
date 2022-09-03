@@ -3,6 +3,7 @@
 
 import Control.Monad
 
+import Cob.Simulator
 import Cob.RecordM.TH
 import Cob.Ref
 import Cob
@@ -32,4 +33,11 @@ freeCob = do
     print "end"
 
 
-main = putStrLn "Hello World!"
+freeSim :: Cob Owner
+freeSim = do
+  bb <- addSync (Owner "Bombásio")
+  d1 <- addSync (Dog bb "Bombinhas")
+  Dog o _ <- get d1
+  get o
+
+main = print $ simulate freeSim

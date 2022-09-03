@@ -22,7 +22,8 @@ library
                       Cob.RecordM.Query,
                       Cob.RecordM.Record,
                       Cob.RecordM.TH,
-                      Cob.UserM.Entities
+                      Cob.UserM.Entities,
+                      Cob.Simulator
                       -- Cob.UserM,
                       -- Cob.UserM.Servant,
                       -- Cob.RecordM,
@@ -39,6 +40,7 @@ library
                       -Wmissing-pattern-synonym-signatures -Wno-redundant-constraints
     build-depends:    base >= 4 && <= 5,
                       template-haskell,
+                      containers,
                       free,
 
                       text,

@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Cob where
   -- (
@@ -18,6 +19,7 @@ module Cob where
   -- , CobF
   -- ) where
 
+import Control.Monad.IO.Class
 import Control.Monad.Free
 import Control.Monad.Free.TH
 
@@ -29,38 +31,37 @@ import Cob.RecordM.Record
 import Cob.UserM.Entities
 import Cob.Ref
 
-type Cob    = Free (CobF IO)
-type CobM m = Free (CobF m)
+type Cob    = Free CobF
 
 -- ROMES:TODO: Perhaps use FoldT instead of Serial a -> m b
-data CobF m next where
-  StreamSearchM :: Record a => Query a -> (Streamly.SerialT m (Ref a, a) -> m b) -> (b -> next) -> CobF m next
-  SearchM       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF m next
-  GetM          :: Record a => Ref a   -> (a -> next) -> CobF m next
-  CountM        :: Record a => Query a -> (Int -> next) -> CobF m next
-  AddM          :: Record a => a       -> (Ref a -> next) -> CobF m next
-  AddSyncM      :: Record a => a       -> (Ref a -> next) -> CobF m next
-  DeleteM       :: Record a => Ref a   -> next -> CobF m next
-  CreateUserM   :: User       -> (Ref User -> next) -> CobF m next
-  DeleteUserM   :: Ref User   -> next -> CobF m next
-  AddToGroupM   :: [Ref User] -> Ref Group -> next -> CobF m next
-  LoginM        :: String     -> String -> (CobToken -> next) -> CobF m next
-  LiftCobM      :: m a -> (a -> next) -> CobF m next
+data CobF next where
+  StreamSearch :: Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> (b -> next) -> CobF next
+  Search       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF next
+  Get          :: Record a => Ref a   -> (a -> next) -> CobF next
+  Count        :: Record a => Query a -> (Int -> next) -> CobF next
+  Add          :: Record a => a       -> (Ref a -> next) -> CobF next
+  AddSync      :: Record a => a       -> (Ref a -> next) -> CobF next
+  Delete       :: Record a => Ref a   -> next -> CobF next
+  CreateUser   :: User       -> (Ref User -> next) -> CobF next
+  DeleteUser   :: Ref User   -> next -> CobF next
+  AddToGroup   :: [Ref User] -> Ref Group -> next -> CobF next
+  Login        :: String     -> String -> (CobToken -> next) -> CobF next
+  LiftCob      :: IO a -> (a -> next) -> CobF next
 
-instance Functor (CobF m) where
+instance Functor CobF where
   fmap g = \case
-    StreamSearchM q f h -> StreamSearchM q f (g . h)
-    SearchM q f  -> SearchM q (g . f)
-    GetM r f     -> GetM r (g . f)
-    CountM q f   -> CountM q (g . f)
-    AddM q f     -> AddM q (g . f)
-    AddSyncM q f -> AddSyncM q (g . f)
-    DeleteM r n  -> DeleteM r (g n)
-    CreateUserM u f -> CreateUserM u (g . f)
-    DeleteUserM u n -> DeleteUserM u (g n)
-    AddToGroupM us gr n -> AddToGroupM us gr (g n)
-    LoginM u p f -> LoginM u p (g . f)
-    LiftCobM x f -> LiftCobM x (g . f)
+    StreamSearch q f h -> StreamSearch q f (g . h)
+    Search q f  -> Search q (g . f)
+    Get r f     -> Get r (g . f)
+    Count q f   -> Count q (g . f)
+    Add q f     -> Add q (g . f)
+    AddSync q f -> AddSync q (g . f)
+    Delete r n  -> Delete r (g n)
+    CreateUser u f -> CreateUser u (g . f)
+    DeleteUser u n -> DeleteUser u (g n)
+    AddToGroup us gr n -> AddToGroup us gr (g n)
+    Login u p f -> Login u p (g . f)
+    LiftCob x f -> LiftCob x (g . f)
 
 makeFree_ ''CobF
 
@@ -77,32 +78,8 @@ addToGroup   :: [Ref User] -> Ref Group -> Cob ()
 login        :: String -> String -> Cob CobToken
 liftCob      :: IO a -> Cob a
 
--- * Versions polymorphic over monad
 
-streamSearchM :: Record a => Query a -> (Streamly.SerialT m (Ref a, a) -> m b) -> CobM m b
-searchM       :: Record a => Query a -> CobM m [(Ref a, a)]
-getM          :: Record a => Ref a   -> CobM m a
-countM        :: Record a => Query a -> CobM m Int
-addM          :: Record a => a       -> CobM m (Ref a)
-addSyncM      :: Record a => a       -> CobM m (Ref a)
-deleteM       :: Record a => Ref a   -> CobM m ()
-createUserM   :: User -> CobM m (Ref User)
-deleteUserM   :: Ref User -> CobM m ()
-addToGroupM   :: [Ref User] -> Ref Group -> CobM m ()
-loginM        :: String -> String -> CobM m CobToken
-liftCobM      :: m a -> CobM m a
+instance MonadIO Cob where
+  liftIO = liftCob
 
-
-
-streamSearch = streamSearchM
-search       = searchM
-get          = getM
-count        = countM
-add          = addM
-addSync      = addSyncM
-delete       = deleteM
-createUser   = createUserM
-deleteUser   = deleteUserM
-addToGroup   = addToGroupM
-login        = loginM
-liftCob      = liftCobM
+type f ~> g = forall x. f x -> g x
