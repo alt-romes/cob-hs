@@ -22,8 +22,6 @@ import qualified Data.IntMap as IM
 import Control.Monad.State as State
 import Control.Monad.Free
 
-import Unsafe.Coerce
-
 import Cob.RecordM.Query
 import Cob.Ref
 import Cob
@@ -37,7 +35,7 @@ type SimState = IM.IntMap SomeRecord
 
 simulateNT :: CobF ~> StateT SimState IO
 simulateNT = \case
-    StreamSearch q f h -> error "Stream search simulator not implemented"
+    StreamSearch {} -> error "Stream search simulator not implemented"
     Search q f  -> do
       hits <- gets IM.toList
       pure $ f (runQuery q hits)
@@ -66,6 +64,8 @@ simulateNT = \case
     AddToGroup {} -> error "UserM simulator not implemented"
     Login {} -> error "UserM simulator not implemented"
     LiftCob i f -> f <$> lift i
+    Try _ _ -> error "Try not implemented"
+    Catch {} -> error "Try not implemented"
 
 runQuery :: FromJSON a => Query a -> [(Int, SomeRecord)] -> [(Ref a, a)]
 runQuery q hits = map (\(k, SomeRecord a) -> (Ref (toInteger k), (fromJust . decode) a)) $ filter (\(_, SomeRecord a) -> BSC.isInfixOf (BSC.pack (_q q)) (BSL.toStrict a)) hits

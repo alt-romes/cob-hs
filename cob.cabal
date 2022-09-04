@@ -27,8 +27,8 @@ library
                       Cob.RecordM.TH,
                       Cob.UserM,
                       Cob.UserM.Entities,
-                      Cob.UserM.Servant
-                      -- Cob.Simulator
+                      Cob.UserM.Servant,
+                      Cob.Simulator
 
     ghc-options:      -Wall -Wtabs -fmax-simplifier-iterations=10
                       -Wmissing-pattern-synonym-signatures -Wno-redundant-constraints
@@ -40,9 +40,7 @@ library
                       mtl,
                       free,
 
-                      uri-encode,
-
-
+                      -- Network
                       servant,
                       servant-client,
                       http-client,
@@ -51,11 +49,11 @@ library
                       -- JSON
                       aeson,
 
+                      -- Streaming
+                      streamly,
+
                       -- Util
-                      vector,
-                      time,
-                      dlist,
-                      streamly
+                      time
 
 
     hs-source-dirs:   src
@@ -68,16 +66,11 @@ executable main
     ghc-options:      -threaded -rtsopts
 
     build-depends:    base >= 4 && <= 5,
-                      template-haskell,
+                      cob,
+
                       microlens,
                       microlens-th,
-
-                      mtl,
-
-                      streamly,
-                      free,
-
-                      cob
+                      streamly
 
 
 
