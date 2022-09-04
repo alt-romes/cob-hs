@@ -23,7 +23,7 @@ import qualified Streamly.Prelude as Streamly
 
 import qualified Servant.Types.SourceT as Servant
 
-import Cob.RecordM.Ref
+import Cob.Ref
 
 instance Streamly.IsStream t => FromSourceIO a (t IO a) where
   fromSourceIO src =
@@ -46,7 +46,7 @@ type Search = "definitions" :> "search" :> (
               (QueryParam' '[Required, Strict] "defId" Int :> SearchCommon)
                                            )
 type SearchCommon
-    =  QueryParam "q" T.Text
+    =  QueryParam "q" String
     :> QueryParam "from" Int
     :> QueryParam "size" Int
     :> QueryParam "sort" SortParam
@@ -58,27 +58,27 @@ type StreamSearch = "definitions" :> "search" :> "stream" :> (
               (QueryParam' '[Required, Strict] "defId" Int :> StreamSearchCommon)
                                                              )
 type StreamSearchCommon
-  =  QueryParam "q" T.Text
+  =  QueryParam "q" String
   :> QueryParam "sort" SortParam
   :> StreamGet NewlineFraming JSON (Streamly.Serial Value)
 
-type InstancesGet    = "instances" :> Capture "id" Int :> QueryParam "If-None-Match" String :> Get '[JSON] Value
-type InstancesDelete = "instances" :> Capture "id" Int :> QueryParam "ignoreRefs" Bool :> Servant.API.Delete '[JSON] ()
+type InstancesGet    = "instances" :> Capture "id" Integer :> QueryParam "If-None-Match" String :> Get '[JSON] Value
+type InstancesDelete = "instances" :> Capture "id" Integer :> QueryParam "ignoreRefs" Bool :> Servant.API.Delete '[JSON] NoContent
 
 type IntegrationAdd    a = "instances" :> "integration" :> ReqBody '[JSON] (AddSpec a)    :> Post '[JSON] (Ref a)
 type IntegrationUpdate a = "instances" :> "integration" :> ReqBody '[JSON] (UpdateSpec a) :> Put '[JSON] OperationsSummary
 type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (DeleteSpec a) :> Servant.API.Delete '[JSON] OperationsSummary
 
-searchByName :: String -> Maybe T.Text -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
-searchById   :: Int    -> Maybe T.Text -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
+searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
+searchById   :: Int    -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
 
-streamSearchByName :: String -> Maybe T.Text -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
-streamSearchById   :: Int    -> Maybe T.Text -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
+streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
+streamSearchById   :: Int    -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
 (streamSearchByName :<|> streamSearchById) = SC.client (Proxy @(RecordM StreamSearch))
 
-getInstance    :: Int -> Maybe String -> C.ClientM Value
-deleteInstance :: Int -> Maybe Bool -> C.ClientM ()
+getInstance    :: Integer -> Maybe String -> C.ClientM Value
+deleteInstance :: Integer -> Maybe Bool -> C.ClientM NoContent
 getInstance     = C.client (Proxy @(RecordM InstancesGet))
 deleteInstance  = C.client (Proxy @(RecordM InstancesDelete))
 

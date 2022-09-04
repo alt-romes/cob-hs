@@ -19,36 +19,29 @@ library
     exposed-modules:  Cob,
                       Cob.Ref,
                       Cob.Session,
+                      Cob.Utils,
+                      Cob.RecordM,
                       Cob.RecordM.Query,
                       Cob.RecordM.Record,
+                      Cob.RecordM.Servant,
                       Cob.RecordM.TH,
+                      Cob.UserM,
                       Cob.UserM.Entities,
-                      Cob.Simulator
-                      -- Cob.UserM,
-                      -- Cob.UserM.Servant,
-                      -- Cob.RecordM,
-                      -- Cob.RecordM.Ref,
-                      -- Cob.RecordM.Free,
-                      -- Cob.RecordM.TH,
-                      -- Cob.RecordM.Servant,
-                      -- Cob.RecordM.Query,
-                      -- Cob.RecordM.Interpreter,
-                      -- Cob.RecordM.Record,
-                      -- Cob.Testing
+                      Cob.UserM.Servant
+                      -- Cob.Simulator
 
     ghc-options:      -Wall -Wtabs -fmax-simplifier-iterations=10
                       -Wmissing-pattern-synonym-signatures -Wno-redundant-constraints
     build-depends:    base >= 4 && <= 5,
                       template-haskell,
                       containers,
-                      free,
-
                       text,
                       bytestring,
+                      mtl,
+                      free,
+
                       uri-encode,
 
-                      mtl,
-                      transformers,
 
                       servant,
                       servant-client,
@@ -82,6 +75,7 @@ executable main
                       mtl,
 
                       streamly,
+                      free,
 
                       cob
 

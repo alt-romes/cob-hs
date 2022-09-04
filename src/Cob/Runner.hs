@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-} 
 {-# LANGUAGE InstanceSigs #-} 
-{-# LANGUAGE TypeApplications #-} 
 {-# LANGUAGE UndecidableInstances #-} 
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
@@ -14,14 +13,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Cob where
 
--- TODO: Cob.Simple module
-
 import Cob.Session
 
-
 import Data.DList ( DList )
-
-import Data.Maybe ( listToMaybe )
 
 import Control.Applicative ( Alternative, empty, (<|>) )
 
@@ -35,8 +29,6 @@ import Control.Monad.Trans    ( MonadTrans, lift                   )
 import Control.Exception as E ( Exception(..), catch, throwIO )
 
 import Data.Bifunctor (first, second, bimap)
-
-import Servant.Client      as C (runClientM, ClientEnv(ClientEnv, baseUrl, cookieJar), ClientM, BaseUrl(..), Scheme(..), defaultMakeClientRequest)
 
 -- | The 'Cob' monad (transformer).
 --
@@ -199,132 +191,3 @@ instance MonadTrans Cob where
     -- [x] lift . return = return
     -- [x] lift (m >>= f) = lift m >>= (lift . f)
 
--- | The inverse of 'Cob'.
---
--- Run a 'Cob' computation and get either a 'CobError' or a value
--- in the argument monad @m@, alongside the 'CobWriter's logs
-runCobT :: CobSession -> Cob m a -> m (a, CobWriters)
-runCobT = flip unCob
-{-# INLINE runCobT #-}
-
--- | Run a 'Cob' computation and get either a 'CobError' or a value in @m@.
-runCob :: Functor m => CobSession -> Cob m a -> m a
-runCob session = fmap fst . runCobT session
-{-# INLINE runCob #-}
-
---- Sessions
-
-
--- | An 'Existable' @e@ possibly wraps a value and provides an operation '?:'
--- to retrieve the element if it exists or return a default value (passed in
--- the second parameter) if it doesn't.
-class Existable e where
-    -- | Return the value from the 'Existable' if it exists, otherwise return the
-    -- default value passed as the second argument
-    (??) :: Monad m => e a -> m a -> m a
-    infix 7 ??
-
-    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists, otherwise return the
-    -- default value passed as the second argument
-    (???) :: Monad m => m (e a) -> m a -> m a
-    mex ??? def = mex >>= flip (??) def
-    infix 7 ???
-    {-# INLINE (???) #-}
-
-    -- | Return the value from an 'Existable' in @'Monad' m@ if it exists,
-    -- otherwise return 'Alternative' 'empty'
-    --
-    -- This is best used with the extension @PostfixOperators@ which allows this
-    -- kind of idioms to be written:
-    --
-    -- @
-    -- (rmDefinitionSearch query ?!) <|> rmAddInstance newInstance
-    -- @
-    (?!) :: (Monad m, Alternative m) => m (e a) -> m a
-    (?!) = (??? empty)
-    {-# INLINE (?!) #-}
-    
-
--- | A 'Maybe' is 'Existable' because it's either 'Just' a value or 'Nothing'.
-instance Existable Maybe where
-    -- | Return the value from the 'Maybe' if it exists, otherwise return the
-    -- default value passed as the second argument
-    mb ?? def = maybe def return mb
-    {-# INLINE (??) #-}
-
--- | A list is 'Existable' because it might have no elements or at least one
--- element. When using '?:', if the list is non-empty, the first element will
--- be returned. This is useful when doing a 'rmDefinitionSearch' and are
--- expecting exactly one result, and want to throw an error in the event that
--- none are returned.
---
--- Example:
--- 
--- @
--- user <- rmDefinitionSearch_ @UsersRecord name ?:: throwError "Couldn't find user!"
--- @
-instance Existable [] where
-    -- | Return the first element of the list if it exists, otherwise return the
-    -- default value passed as the second argument
-    ls ?? def = (maybe def return . listToMaybe) ls
-    {-# INLINE (??) #-}
-
-
--- | @Internal@
---
--- Perform an HTTP request parsing the response body as JSON
--- If the response status code isn't successful an error is thrown.
--- In the event of a JSON parse error, the error is thrown.
--- httpValidJSON :: forall a. (Show a, FromJSON a) => Request -> Cob IO a
--- httpValidJSON = flip httpValidJSON' id
--- {-# INLINE httpValidJSON #-}
-
-
--- | @Internal@
---
--- Perform an HTTP request parsing the response body as JSON
--- If the response status code isn't successful an error created with a function
--- from @(String -> error_type)@ is thrown.
--- In the event of a JSON parse error, the error is thrown.
--- httpValidJSON' :: forall a e m. (MonadIO m, MonadError e m, Show a, FromJSON a) => Request -> (String -> e) -> m a
--- httpValidJSON' request mkError = do
-
---     response <- liftIO ((Right <$> httpJSONEither request) `E.catch` (return . Left @HttpException)) >>= either (throwError . mkError . show) return -- Handle Http Exceptions
-
---     let status = responseStatus response
---         body   = responseBody @(Either JSONException a) response
-
---     unless (statusIsSuccessful status) $ -- When the status code isn't successful, fail with the status and body as error string
---         throwError . mkError
---         $  ("Request failed with a status of "
---             <> show (statusCode status) <> " ("
---             <> BSC8.unpack (statusMessage status) <> ")")
---         <> ("\nResponse body: "
---             <> either prettyBodyFromJSONException show body)
-
---     either (throwError . mkError . prettyErrorFromJSONException) return body
-
---     where prettyBodyFromJSONException  JSONParseException {}             = "()"
---           prettyBodyFromJSONException  (JSONConversionException _ rv _)  = BSC8.unpack . toStrict . encodePretty . responseBody $ rv
---           prettyErrorFromJSONException j = "Error parsing response body: " <> prettyBodyFromJSONException j <> "\nERROR: " <> case j of (JSONParseException _ _ e) -> show e; (JSONConversionException _ _ e) -> e
-
-
----- | @Internal@
-----
----- Perform an HTTP request and ignore the response body
----- If the response status code isn't successful an error is thrown.
---httpValidNoBody :: Request -> Cob IO ()
---httpValidNoBody request = do
---    response <- liftIO ((Right <$> httpNoBody request) `E.catch` (return . Left @HttpException)) >>= either (throwError . show) return -- Handle Http Exceptions
---    let status = responseStatus response
---    unless (statusIsSuccessful status) $
---        throwError ("Request failed with a status of "
---            <> show (statusCode status) <> " ("
---            <> BSC8.unpack (statusMessage status) <> ")")
-
-performReq :: ClientM a -> Cob IO a
-performReq c = do
-    CobSession session <- ask
-    liftIO $ runClientM c session >>= \case
-      Left e -> throwIO e
-      Right b -> return b

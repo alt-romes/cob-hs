@@ -1,11 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 import Control.Monad
 
-import Cob.Simulator
+import Control.Exception hiding (try, catch)
+
 import Cob.RecordM.TH
 import Cob.Ref
+import Cob.Session
 import Cob
 
 newtype Owner = Owner String deriving (Show, Eq)
@@ -22,22 +26,18 @@ freeCob = do
 
   d1 <- addSync (Dog bb "Bombinhas")
 
-  x <- get d1
+  x  <- get bb
 
-  liftCob $ do
+  delete bb
 
-    unless (Dog bb "Bombinhas" /= x) $ do
+  unless (Owner "Bombásio" /= x) $ do
+    liftCob (putStrLn "everything went right")
 
-      print "everything went right"
+  liftCob (print "end")
 
-    print "end"
+main :: IO ()
+main = do
+  cobToken <- init <$> readFile "cob-token.secret"
+  session  <- makeSession "mimes8.cultofbits.com" cobToken
+  mockCob session freeCob
 
-
-freeSim :: Cob Owner
-freeSim = do
-  bb <- addSync (Owner "Bombásio")
-  d1 <- addSync (Dog bb "Bombinhas")
-  Dog o _ <- get d1
-  get o
-
-main = print $ simulate freeSim

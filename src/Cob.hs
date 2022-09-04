@@ -19,23 +19,34 @@ module Cob where
   -- , CobF
   -- ) where
 
+import Data.Bifunctor
+
+import qualified Data.List as L
+
 import Control.Monad.IO.Class
+import Control.Monad.Reader
+import Control.Monad.RWS.Strict
 import Control.Monad.Free
 import Control.Monad.Free.TH
 
-import qualified Streamly.Prelude as Streamly
+import Control.Exception
 
-import Cob.Session (CobToken)
+import qualified Streamly.Data.Fold as Fold
+import qualified Streamly.Data.Unfold as Unfold
+
+import qualified Cob.RecordM as RM
+import qualified Cob.UserM   as UM
+
+import Cob.Session
 import Cob.RecordM.Query
 import Cob.RecordM.Record
 import Cob.UserM.Entities
 import Cob.Ref
 
-type Cob    = Free CobF
+type Cob = Free CobF
 
--- ROMES:TODO: Perhaps use FoldT instead of Serial a -> m b
 data CobF next where
-  StreamSearch :: Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> (b -> next) -> CobF next
+  StreamSearch :: Record a => Query a -> Fold.Fold IO (Ref a, a) b -> (b -> next) -> CobF next
   Search       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF next
   Get          :: Record a => Ref a   -> (a -> next) -> CobF next
   Count        :: Record a => Query a -> (Int -> next) -> CobF next
@@ -47,6 +58,8 @@ data CobF next where
   AddToGroup   :: [Ref User] -> Ref Group -> next -> CobF next
   Login        :: String     -> String -> (CobToken -> next) -> CobF next
   LiftCob      :: IO a -> (a -> next) -> CobF next
+  Try          :: Exception e => Cob a -> (Either e a -> next) -> CobF next
+  Catch        :: Exception e => Cob a -> (e -> Cob a) -> (a -> next) -> CobF next
 
 instance Functor CobF where
   fmap g = \case
@@ -62,10 +75,12 @@ instance Functor CobF where
     AddToGroup us gr n -> AddToGroup us gr (g n)
     Login u p f -> Login u p (g . f)
     LiftCob x f -> LiftCob x (g . f)
+    Try c f -> Try c (g . f)
+    Catch c h f -> Catch c h (g . f)
 
 makeFree_ ''CobF
 
-streamSearch :: Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> Cob b
+streamSearch :: Record a => Query a -> Fold.Fold IO (Ref a, a) b -> Cob b
 search       :: Record a => Query a -> Cob [(Ref a, a)]
 get          :: Record a => Ref a   -> Cob a
 count        :: Record a => Query a -> Cob Int
@@ -77,9 +92,92 @@ deleteUser   :: Ref User -> Cob ()
 addToGroup   :: [Ref User] -> Ref Group -> Cob ()
 login        :: String -> String -> Cob CobToken
 liftCob      :: IO a -> Cob a
+try          :: Exception e => Cob a -> Cob (Either e a)
+catch        :: Exception e => Cob a -> (e -> Cob a) -> Cob a
+
+
+-- ROMES:TODO: retry ?
 
 
 instance MonadIO Cob where
   liftIO = liftCob
 
 type f ~> g = forall x. f x -> g x
+infixr 0 ~>
+
+-- | TODO Catch before returning?
+runCob :: CobSession -> Cob a -> IO a
+runCob cs = (`runReaderT` cs) . foldFree cobRIO
+  where
+    cobRIO :: (MonadReader CobSession m, MonadIO m) => CobF ~> m
+    cobRIO = \case
+        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q f
+        Search q f  -> f <$> RM.definitionSearch q
+        Get r f     -> f <$> RM.getInstance r
+        Count q f   -> f <$> RM.definitionCount q
+        Add x f     -> f <$> RM.addInstance x
+        AddSync x f -> f <$> RM.addInstanceSync x
+        Delete r n  -> n <$  RM.deleteInstance r
+        CreateUser u f -> f <$> UM.createUser u
+        DeleteUser u n -> n <$  UM.deleteUser u
+        AddToGroup us gr n -> n <$ UM.addToGroup us gr
+        Login u p f -> f <$> UM.umLogin u p
+        LiftCob x f -> f <$> liftIO x
+        Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ runCob s c)
+        Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (runCob s c) (runCob s . h))
+
+-- | Run a 'Cob' computation but all RecordM instances added and all UserM users added during the computation are removed at the end.
+--
+-- This is useful in testing purposes: do tests adding test data to RecordM and
+-- user data to UserM ensuring all added instances and users are deleted when
+-- the test finishes running.
+--
+-- Note: updates to already existing instances will NOT be undone (for now, could somewhat easily be done).
+mockCob :: CobSession -> Cob a -> IO a
+-- TODO: Could add mock. to host (mock.example.com)?
+mockCob cs cobf = do
+  -- also catch errors when exceptions are thrown in computation...
+  (a, (rmRefs, umRefs), ()) <- runRWST (foldFree nt cobf) cs mempty
+  (`runReaderT` cs) $ do
+    mapM_ (\r -> (RM.deleteInstance (Ref r))) rmRefs
+    mapM_ (UM.deleteUser . Ref) umRefs
+  pure a
+  -- return deletion errors instead of always the result?
+
+  where
+    nt :: (MonadState ([Integer], [Integer]) m, MonadReader CobSession m, MonadIO m) => CobF ~> m
+    nt = \case
+        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q f
+        Search q f  -> f <$> RM.definitionSearch q
+        Get r f     -> f <$> RM.getInstance r
+        Count q f   -> f <$> RM.definitionCount q
+        Add x f     -> f <$> do
+            r <- RM.addInstance x
+            modify' (first (ref_id r:))
+            pure r
+        AddSync x f -> f <$> do
+            r <- RM.addInstanceSync x
+            modify' (first (ref_id r:))
+            pure r
+        Delete r n ->
+          -- ROMES:TODO:For-the-others-too: Should I get the instance I'm going to delete first so that I can restore it after?
+          n <$ do
+            RM.deleteInstance r
+            modify' (first (L.delete (ref_id r)))
+            pure ()
+
+        CreateUser u f -> f <$> do
+            ur <- UM.createUser u
+            modify' (second (ref_id ur:))
+            pure ur
+        DeleteUser u n ->
+          n <$ do
+            UM.deleteUser u
+            modify' (second (L.delete (ref_id u)))
+            pure ()
+
+        AddToGroup us gr n -> n <$ UM.addToGroup us gr
+        Login u p f -> f <$> UM.umLogin u p
+        LiftCob x f -> f <$> liftIO x
+        Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ mockCob s c)
+        Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (mockCob s c) (mockCob s . h))

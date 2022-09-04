@@ -3,47 +3,48 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
-module Cob.UserM
-  ( module Cob.UserM
-  , module Cob.UserM.Types ) where
+module Cob.UserM where
 
-import Control.Monad.Except (throwError)
-import Control.Monad.Writer (tell)
-
-import Data.DList  (singleton)
+import Control.Monad.IO.Class
+import Control.Monad.Reader
 
 import Data.Aeson (withObject, (.:))
-import Data.Aeson.Types (parseMaybe)
 
-import Cob.UserM.Types
 import qualified Cob.UserM.Servant as Servant
-import Cob
+import Cob.UserM.Entities
+import Cob.Utils
+import Cob.Session
+import Cob.Ref
 
 -- | UserM writes the added users thorought the Cob computation.
 -- This allows it to undo (delete) all added users in a computation (particularly in a testing environment)
 --
 -- This list of added instances is **unused** when the computation is run with 'runCob'.
 -- However, when the computation is run with 'runUserMTests', all added instances will be deleted
-type instance CobWriter 'UserM = UMRef UMUser
+-- type instance CobWriter 'UserM = Ref User
 
 -- | Create an UserM user
-umCreateUser :: UMUser -> Cob IO (UMRef UMUser)
-umCreateUser user = do
-  ref <- performReq $ Servant.createUser user
-  tell (mempty, singleton ref)
-  return ref
+createUser :: (MonadReader CobSession m, MonadIO m) => User -> m (Ref User)
+createUser user = performReq $ Servant.createUser user
+
+-- | Delete an UserM user
+deleteUser :: (MonadReader CobSession m, MonadIO m) => Ref User -> m ()
+deleteUser (Ref ref) = do
+  _ <- performReq $ Servant.deleteUser ref
+  pure ()
 
 -- | Add users to a group given their ids
-umAddUsersToGroup :: [UMRef UMUser] -> UMRef UMGroup -> Cob IO ()
-umAddUsersToGroup users (UMRef group) =
-  performReq $ Servant.addUsersToGroup group users
+addToGroup :: (MonadReader CobSession m, MonadIO m) => [Ref User] -> Ref Group -> m ()
+addToGroup users (Ref group) = do
+  _ <- performReq $ Servant.addUsersToGroup group users
+  pure ()
 
 -- | Log-in to UserM using a username and password.
 -- Returns a temporary auth token for the logged in user
-umLogin :: String -> String -> Cob IO String
+umLogin :: (MonadReader CobSession m, MonadIO m) => String -> String -> m String
 umLogin username pass = do
   body <- performReq $ Servant.login (Servant.LoginData username pass)
-  parseMaybe (withObject "wO" (.: "securityToken")) body ?? throwError "UserM login response body didn't have securityToken"
+  parseOrThrowIO (withObject "um_login" (.: "securityToken")) body
 
 -- | Log-in to UserM using a username and password.
 -- Returns a temporary 'CobSession' for the logged in user
@@ -55,10 +56,6 @@ umSession :: Host
           -> IO CobSession
 umSession hostname username pass = do
     session <- emptySession hostname
-    tok     <- runCob session (umLogin username pass)
+    tok     <- runReaderT (umLogin username pass) session
     updateSessionToken session tok
 
-
-umDeleteUser :: UMRef UMUser -> Cob IO ()
-umDeleteUser (UMRef ref) =
-  performReq $ Servant.deleteUser ref
