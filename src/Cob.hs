@@ -19,6 +19,8 @@ module Cob where
   -- , CobF
   -- ) where
 
+--  romes: add documentation explaining to what functions throw what kind of errors (performRequest throws that servant client error)
+
 import Data.Bifunctor
 
 import qualified Data.List as L
