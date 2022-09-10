@@ -6,4 +6,6 @@ source-repository-package
 
 packages: ./cob.cabal
 
+constraints: cryptonite -use_target_attributes
+
 tests: True
