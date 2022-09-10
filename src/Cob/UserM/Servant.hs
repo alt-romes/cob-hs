@@ -26,7 +26,7 @@ type UserM = "userm" :>
               )
   :<|>
 
-  "security" :> "auth" :> ReqBody '[JSON] LoginData :> Post '[JSON] Value
+  "userm" :> "security" :> "auth" :> ReqBody '[JSON] LoginData :> Post '[JSON] Value
 
 createUser :: User -> ClientM (Ref User)
 deleteUser :: Integer -> ClientM NoContent

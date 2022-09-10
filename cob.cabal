@@ -23,6 +23,7 @@ library
                       Cob.RecordM,
                       Cob.RecordM.Query,
                       Cob.RecordM.Record,
+                      Cob.RecordM.DateTime,
                       Cob.RecordM.Servant,
                       Cob.RecordM.TH,
                       Cob.UserM,
@@ -38,6 +39,7 @@ library
                       text,
                       bytestring,
                       mtl,
+                      async,
                       free,
 
                       -- Network

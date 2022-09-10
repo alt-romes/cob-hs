@@ -31,11 +31,15 @@
 -- mkRecord ''Dog \"Dogs\" ["Owner Name", "Dog Name"]
 -- @
 --
-module Cob.RecordM.TH (mkRecord) where
+-- Check 'SupportedRecordType' for which primitive types are supported. All
+-- JSON enabled types are supported as well.
+--
+module Cob.RecordM.TH (mkRecord, SupportedRecordType) where
 
+import Data.Time
 
 import Data.Char (toLower)
-import Data.Maybe (catMaybes, listToMaybe)
+import Data.Maybe (fromJust, catMaybes, listToMaybe)
 
 import Control.Monad (zipWithM, foldM)
 
@@ -50,6 +54,7 @@ import Cob.Ref (Ref(..))
 
 import Language.Haskell.TH
 
+-- | All other types use the default ToJSON implementation
 data SupportedRecordType = StringT
                          | TextT
                          | ByteStringT
@@ -57,9 +62,9 @@ data SupportedRecordType = StringT
                          | IntT
                          | FloatT
                          | DoubleT
+                         | DateTimeT
                          | MaybeT SupportedRecordType
                          | OtherT Name
-                         -- Unsupported types use the default ToJSON implementation
 
 mkToJSON :: [SupportedRecordType] -> [Field] -> Q Exp
 mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem tys fields)) |]
@@ -71,6 +76,7 @@ mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem ty
                 mods IntT        = [e| (show <$>)            |]
                 mods FloatT      = [e| (show <$>)            |]
                 mods DoubleT     = [e| (show <$>)            |]
+                mods DateTimeT   = [e| (formatTime undefined "%s" <$>) |]
                 mods (MaybeT mt) = [e| $(mods mt)            |]
                 mods _           = [e| id                    |]
 
@@ -99,7 +105,8 @@ mkParseJSON tyConName tys fields = do
         mods ty = case ty of
               RefT       -> [e| Ref . read                            |]
               IntT       -> [e| read                                  |]
-              DoubleT    -> [e| read                                  |]
+              DoubleT    -> [e| read                                  |] -- TODO: Is this right? how to account for commas etc
+              DateTimeT  -> [e| fromJust . parseTimeM False undefined "%s" |]
               MaybeT ty2 -> [e| ($(mods ty2) <$>) . (listToMaybe =<<) |]
               _          -> [e| id                                    |]
               
@@ -122,6 +129,7 @@ mkRecordPat tyConName tyConArgList fields = do
             FloatT      -> defaultRet
             DoubleT     -> defaultRet
             MaybeT _    -> defaultRet
+            DateTimeT   -> defaultRet
             OtherT _    -> defaultRet
             where
                 defaultRet :: Q Pat
@@ -139,6 +147,7 @@ parseTyConArgList = mapM parseTyConArg
               | conTy == ''Int        -> return IntT
               | conTy == ''Float      -> return FloatT
               | conTy == ''Double     -> return DoubleT
+              | conTy == ''UTCTime    -> return DateTimeT
               | otherwise             -> do
                   tyInfo <- reify conTy
                   case tyInfo of

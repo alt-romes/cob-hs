@@ -65,7 +65,8 @@ simulateNT = \case
     Login {} -> error "UserM simulator not implemented"
     LiftCob i f -> f <$> lift i
     Try _ _ -> error "Try not implemented"
-    Catch {} -> error "Try not implemented"
+    Catch {} -> error "Catch not implemented"
+    MapConcurrently {} -> error "MapConcurrently not implemented"
 
 runQuery :: FromJSON a => Query a -> [(Int, SomeRecord)] -> [(Ref a, a)]
 runQuery q hits = map (\(k, SomeRecord a) -> (Ref (toInteger k), (fromJust . decode) a)) $ filter (\(_, SomeRecord a) -> BSC.isInfixOf (BSC.pack (_q q)) (BSL.toStrict a)) hits

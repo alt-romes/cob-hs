@@ -21,6 +21,8 @@ module Cob where
 
 --  romes: add documentation explaining to what functions throw what kind of errors (performRequest throws that servant client error)
 
+import Control.Concurrent
+
 import Data.Bifunctor
 
 import qualified Data.List as L
@@ -33,8 +35,10 @@ import Control.Monad.Free.TH
 
 import Control.Exception
 
+import qualified Control.Concurrent.Async as A
+
 import qualified Streamly.Data.Fold as Fold
-import qualified Streamly.Data.Unfold as Unfold
+-- import qualified Streamly.Data.Unfold as Unfold
 
 import qualified Cob.RecordM as RM
 import qualified Cob.UserM   as UM
@@ -62,6 +66,7 @@ data CobF next where
   LiftCob      :: IO a -> (a -> next) -> CobF next
   Try          :: Exception e => Cob a -> (Either e a -> next) -> CobF next
   Catch        :: Exception e => Cob a -> (e -> Cob a) -> (a -> next) -> CobF next
+  MapConcurrently :: Traversable t => (a -> Cob b) -> t a -> (t b -> next) -> CobF next
 
 instance Functor CobF where
   fmap g = \case
@@ -79,6 +84,7 @@ instance Functor CobF where
     LiftCob x f -> LiftCob x (g . f)
     Try c f -> Try c (g . f)
     Catch c h f -> Catch c h (g . f)
+    MapConcurrently h t f -> MapConcurrently h t (g . f)
 
 makeFree_ ''CobF
 
@@ -96,6 +102,7 @@ login        :: String -> String -> Cob CobToken
 liftCob      :: IO a -> Cob a
 try          :: Exception e => Cob a -> Cob (Either e a)
 catch        :: Exception e => Cob a -> (e -> Cob a) -> Cob a
+mapConcurrently :: Traversable t => (a -> Cob b) -> t a -> Cob (t b)
 
 
 -- ROMES:TODO: retry ?
@@ -103,6 +110,9 @@ catch        :: Exception e => Cob a -> (e -> Cob a) -> Cob a
 
 instance MonadIO Cob where
   liftIO = liftCob
+
+instance MonadFail Cob where
+  fail = liftIO . fail
 
 type f ~> g = forall x. f x -> g x
 infixr 0 ~>
@@ -127,6 +137,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
         LiftCob x f -> f <$> liftIO x
         Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ runCob s c)
         Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (runCob s c) (runCob s . h))
+        MapConcurrently h t f -> ask >>= \s -> f <$> liftIO (A.mapConcurrently (runCob s . h) t)
 
 -- | Run a 'Cob' computation but all RecordM instances added and all UserM users added during the computation are removed at the end.
 --
@@ -134,16 +145,25 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 -- user data to UserM ensuring all added instances and users are deleted when
 -- the test finishes running.
 --
--- Note: updates to already existing instances will NOT be undone (for now, could somewhat easily be done).
+-- Note: updates to already existing instances will NOT be undone (for now... could be done with a getRaw and pushRaw of sorts).
+--
+-- TODO: Could mock to host (mock.example.com)?
 mockCob :: CobSession -> Cob a -> IO a
--- TODO: Could add mock. to host (mock.example.com)?
 mockCob cs cobf = do
-  -- also catch errors when exceptions are thrown in computation...
+
+  -- todo: also catch errors when exceptions are thrown in computation... I'll
+  -- have to try every individual computation and throw errors with the list?
+
   (a, (rmRefs, umRefs), ()) <- runRWST (foldFree nt cobf) cs mempty
+
+  threadDelay 2000000
+
   (`runReaderT` cs) $ do
     mapM_ (\r -> (RM.deleteInstance (Ref r))) rmRefs
     mapM_ (UM.deleteUser . Ref) umRefs
+
   pure a
+
   -- return deletion errors instead of always the result?
 
   where
@@ -183,3 +203,5 @@ mockCob cs cobf = do
         LiftCob x f -> f <$> liftIO x
         Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ mockCob s c)
         Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (mockCob s c) (mockCob s . h))
+        MapConcurrently h t f -> ask >>= \s -> f <$> liftIO (A.mapConcurrently (mockCob s . h) t)
+
