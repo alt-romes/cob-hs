@@ -70,10 +70,12 @@ s =: t
   | Just HRefl <- typeOf t `eqTypeRep` typeRep @DateTime = fromString $ s <> ":" <> formatTime undefined "%s" t
   | Just HRefl <- typeOf t `eqTypeRep` typeRep @String   = fromString $ s <> ":\"" <> t <> "\""
   | Just HRefl <- typeOf t `eqTypeRep` typeRep @T.Text   = fromString $ s <> ":\"" <> T.unpack t <> "\""
-  -- | Just HRefl <- typeOf t `eqTypeRep` typeRep @Int      = fromString $ s <> ":\"" <> show t <> "\""
-  -- | Just HRefl <- typeOf t `eqTypeRep` typeRep @Float    = fromString $ s <> ":\"" <> show t <> "\""
-  -- | Just HRefl <- typeOf t `eqTypeRep` typeRep @Double   = fromString $ s <> ":\"" <> show t <> "\""
-  -- | Just HRefl <- typeOf t `eqTypeRep` typeRep @(Ref a)  = fromString $ s <> ":" <> show t
+{-
+| Just HRefl <- typeOf t `eqTypeRep` typeRep @Int      = fromString $ s <> ":\"" <> show t <> "\""
+| Just HRefl <- typeOf t `eqTypeRep` typeRep @Float    = fromString $ s <> ":\"" <> show t <> "\""
+| Just HRefl <- typeOf t `eqTypeRep` typeRep @Double   = fromString $ s <> ":\"" <> show t <> "\""
+| Just HRefl <- typeOf t `eqTypeRep` typeRep @(Ref a)  = fromString $ s <> ":" <> show t
+-}
   | otherwise = fromString $ s <> ":\"" <> show t <> "\""
 infix 7 =:
 
