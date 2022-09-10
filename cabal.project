@@ -1,3 +1,11 @@
-packages: cob.cabal
-          ./tmp/servant/servant-client/servant-client.cabal
+source-repository-package
+    type: git
+    location: git@github.com:alt-romes/servant.git
+    tag: bc2008be82d1dbcf51faa6c61ceeaa66f3d5e8c5
+    subdir: servant-client
+
+packages: ./cob.cabal
+
+-- ./tmp/servant/servant-client/servant-client.cabal
+
 tests: True
