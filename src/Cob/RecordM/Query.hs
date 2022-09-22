@@ -87,6 +87,12 @@ infix 7 =:
 byStr :: String -> Query a
 byStr = fromString
 
+-- | 'Query' by 'Text'
+--
+-- It's a synonym for @Data.String.fromString@
+byText :: T.Text -> Query a
+byText = fromString . T.unpack
+
 -- | 'Query' by 'Ref'
 byRef :: Ref a -> Query a
 byRef ref = defaultQuery { _q = "id:" <> show ref }
