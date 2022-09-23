@@ -59,6 +59,7 @@ data CobF next where
   Add          :: Record a => a       -> (Ref a -> next) -> CobF next
   AddSync      :: Record a => a       -> (Ref a -> next) -> CobF next
   Delete       :: Record a => Ref a   -> next -> CobF next
+  UpdateInstances :: Record a => Query a -> (a -> a) -> ([(Ref a, a)] -> next) -> CobF next
   CreateUser   :: User       -> (Ref User -> next) -> CobF next
   DeleteUser   :: Ref User   -> next -> CobF next
   AddToGroup   :: [Ref User] -> Ref Group -> next -> CobF next
@@ -78,6 +79,7 @@ instance Functor CobF where
     Add q f     -> Add q (g . f)
     AddSync q f -> AddSync q (g . f)
     Delete r n  -> Delete r (g n)
+    UpdateInstances q f h -> UpdateInstances q f (g . h)
     CreateUser u f -> CreateUser u (g . f)
     DeleteUser u n -> DeleteUser u (g n)
     AddToGroup us gr n -> AddToGroup us gr (g n)
@@ -115,6 +117,7 @@ count        :: Record a => Query a -> Cob Int
 add          :: Record a => a       -> Cob (Ref a)
 addSync      :: Record a => a       -> Cob (Ref a)
 delete       :: Record a => Ref a   -> Cob ()
+updateInstances :: Record a => Query a -> (a -> a) -> Cob [(Ref a, a)]
 createUser   :: User -> Cob (Ref User)
 deleteUser   :: Ref User -> Cob ()
 addToGroup   :: [Ref User] -> Ref Group -> Cob ()
@@ -151,6 +154,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
         Add x f     -> f <$> RM.addInstance x
         AddSync x f -> f <$> RM.addInstanceSync x
         Delete r n  -> n <$  RM.deleteInstance r
+        UpdateInstances q f h -> h <$> RM.updateInstances q f
         CreateUser u f -> f <$> UM.createUser u
         DeleteUser u n -> n <$  UM.deleteUser u
         AddToGroup us gr n -> n <$ UM.addToGroup us gr
@@ -208,6 +212,7 @@ mockCob cs cobf = do
             RM.deleteInstance r
             modify' (first (L.delete (ref_id r)))
             pure ()
+        UpdateInstances q f h -> h <$> RM.updateInstances q f
 
         CreateUser u f -> f <$> do
             ur <- UM.createUser u
