@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 module Cob.RecordM.Servant where
 
 import qualified Data.Text as T
@@ -94,28 +95,29 @@ newtype SortParam = SortParam [(String, String)]
 instance ToHttpApiData SortParam where
   toQueryParam (SortParam ls) = T.pack $ L.intercalate "," $ map (\(f,d) -> f <> (':' : d)) ls
 
-data AddSpec a = AddSpec { _atype :: String, _avalues :: a, _waitForSearchAvailability :: Bool }
+data AddSpec a = AddSpec { _atype :: !String, _avalues :: !a, _waitForSearchAvailability :: !Bool }
 instance ToJSON a => ToJSON (AddSpec a) where
   toJSON (AddSpec t v w) = object [ "type" .= t
                                   , "values" .= v
                                   , "waitForSearchAvailability" .= w
                                   ]
 
-data DeleteSpec a = DeleteSpec { _rtype :: String, _rcondition :: String, _ignoreRefs :: Bool }
+data DeleteSpec a = DeleteSpec { _rtype :: !String, _rcondition :: !String, _ignoreRefs :: !Bool }
 instance ToJSON (DeleteSpec a) where
   toJSON (DeleteSpec a b c) = object [ "type" .= a
                                      , "condition" .= b
                                      , "ignoreRefs" .= c
                                      ]
 
-data UpdateSpec a = UpdateSpec { _utype :: String, _ucondition :: String, _uvalues :: a }
+data UpdateSpec a = UpdateSpec { _utype :: !String, _ucondition :: !String, _uvalues :: !a, _version :: !(Maybe Integer) }
 instance ToJSON a => ToJSON (UpdateSpec a) where
-  toJSON (UpdateSpec a b c) = object [ "type" .= a
-                                     , "condition" .= b
-                                     , "values" .= c
-                                     ]
+  toJSON (UpdateSpec a b c d) = object [ "type"      .= a
+                                       , "condition" .= b
+                                       , "values"    .= c
+                                       , "version"   .= d
+                                       ]
 
-data OperationsSummary = OperationsSummary { updatedOS :: Int, deletedOS :: Int, forbiddenOS :: Int, errorOS :: Int }
+data OperationsSummary = OperationsSummary { updatedOS :: {-# UNPACK #-} !Int, deletedOS :: {-# UNPACK #-} !Int, forbiddenOS :: {-# UNPACK #-} !Int, errorOS :: {-# UNPACK #-} !Int }
 instance FromJSON OperationsSummary where
   parseJSON = withObject "OperationsSummary" $ \obj ->
     OperationsSummary

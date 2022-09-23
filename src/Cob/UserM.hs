@@ -29,13 +29,13 @@ createUser user = performReq $ Servant.createUser user
 
 -- | Delete an UserM user
 deleteUser :: (MonadReader CobSession m, MonadIO m) => Ref User -> m ()
-deleteUser (Ref ref) = do
+deleteUser (Ref _ ref) = do
   _ <- performReq $ Servant.deleteUser ref
   pure ()
 
 -- | Add users to a group given their ids
 addToGroup :: (MonadReader CobSession m, MonadIO m) => [Ref User] -> Ref Group -> m ()
-addToGroup users (Ref group) = do
+addToGroup users (Ref _ group) = do
   _ <- performReq $ Servant.addUsersToGroup group users
   pure ()
 

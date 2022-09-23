@@ -39,7 +39,7 @@ simulateNT = \case
     Search q f  -> do
       hits <- gets IM.toList
       pure $ f (runQuery q hits)
-    Get (Ref r) f -> do
+    Get (Ref _ r) f -> do
       SomeRecord x <- gets (IM.! fromInteger r)
       lift $ print x
       case eitherDecode x of
@@ -51,12 +51,12 @@ simulateNT = \case
     Add x f     -> do
       r <- State.gets IM.size
       modify (IM.insert r (SomeRecord (BSL.fromStrict . BSC.pack . map C.toLower . BSC.unpack . BSL.toStrict $ encode x)))
-      pure (f (Ref . toInteger $ r))
+      pure (f (Ref Nothing . toInteger $ r))
     AddSync x f -> do
       r <- State.gets IM.size
       modify (IM.insert r (SomeRecord (BSL.fromStrict . BSC.pack . map C.toLower . BSC.unpack . BSL.toStrict $ encode x)))
-      pure (f (Ref . toInteger $ r))
-    Delete (Ref (fromInteger -> r)) n  -> do
+      pure (f (Ref Nothing . toInteger $ r))
+    Delete (Ref _ (fromInteger -> r)) n  -> do
       modify' (IM.delete r)
       pure n
     CreateUser _ _ -> error "UserM simulator not implemented"
@@ -69,4 +69,4 @@ simulateNT = \case
     MapConcurrently {} -> error "MapConcurrently not implemented"
 
 runQuery :: FromJSON a => Query a -> [(Int, SomeRecord)] -> [(Ref a, a)]
-runQuery q hits = map (\(k, SomeRecord a) -> (Ref (toInteger k), (fromJust . decode) a)) $ filter (\(_, SomeRecord a) -> BSC.isInfixOf (BSC.pack (_q q)) (BSL.toStrict a)) hits
+runQuery q hits = map (\(k, SomeRecord a) -> (Ref Nothing (toInteger k), (fromJust . decode) a)) $ filter (\(_, SomeRecord a) -> BSC.isInfixOf (BSC.pack (_q q)) (BSL.toStrict a)) hits

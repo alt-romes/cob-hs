@@ -30,6 +30,7 @@ import qualified Data.List as L
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Control.Monad.RWS.Strict
+-- import Control.Monad.Free.Ap
 import Control.Monad.Free
 import Control.Monad.Free.TH
 
@@ -37,8 +38,7 @@ import Control.Exception
 
 import qualified Control.Concurrent.Async as A
 
-import qualified Streamly.Data.Fold as Fold
--- import qualified Streamly.Data.Unfold as Unfold
+import qualified Streamly.Prelude as Streamly
 
 import qualified Cob.RecordM as RM
 import qualified Cob.UserM   as UM
@@ -52,7 +52,7 @@ import Cob.Ref
 type Cob = Free CobF
 
 data CobF next where
-  StreamSearch :: Record a => Query a -> Fold.Fold IO (Ref a, a) b -> (b -> next) -> CobF next
+  StreamSearch :: Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> (b -> next) -> CobF next
   Search       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF next
   Get          :: Record a => Ref a   -> (a -> next) -> CobF next
   Count        :: Record a => Query a -> (Int -> next) -> CobF next
@@ -67,6 +67,7 @@ data CobF next where
   Try          :: Exception e => Cob a -> (Either e a -> next) -> CobF next
   Catch        :: Exception e => Cob a -> (e -> Cob a) -> (a -> next) -> CobF next
   MapConcurrently :: Traversable t => (a -> Cob b) -> t a -> (t b -> next) -> CobF next
+  -- NoOp :: next -> CobF next
 
 instance Functor CobF where
   fmap g = \case
@@ -86,9 +87,28 @@ instance Functor CobF where
     Catch c h f -> Catch c h (g . f)
     MapConcurrently h t f -> MapConcurrently h t (g . f)
 
+-- instance Applicative CobF where
+--   pure x = NoOp x
+--   f <*> g = undefined -- \case
+    -- StreamSearch q f h -> StreamSearch q f (g . h)
+    -- Search q f  -> Search q (g . f)
+    -- Get r f     -> Get r (g . f)
+    -- Count q f   -> Count q (g . f)
+    -- Add q f     -> Add q (g . f)
+    -- AddSync q f -> AddSync q (g . f)
+    -- Delete r n  -> Delete r (g n)
+    -- CreateUser u f -> CreateUser u (g . f)
+    -- DeleteUser u n -> DeleteUser u (g n)
+    -- AddToGroup us gr n -> AddToGroup us gr (g n)
+    -- Login u p f -> Login u p (g . f)
+    -- LiftCob x f -> LiftCob x (g . f)
+    -- Try c f -> Try c (g . f)
+    -- Catch c h f -> Catch c h (g . f)
+    -- MapConcurrently h t f -> MapConcurrently h t (g . f)
+
 makeFree_ ''CobF
 
-streamSearch :: Record a => Query a -> Fold.Fold IO (Ref a, a) b -> Cob b
+streamSearch :: Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> Cob b
 search       :: Record a => Query a -> Cob [(Ref a, a)]
 get          :: Record a => Ref a   -> Cob a
 count        :: Record a => Query a -> Cob Int
@@ -103,6 +123,7 @@ liftCob      :: IO a -> Cob a
 try          :: Exception e => Cob a -> Cob (Either e a)
 catch        :: Exception e => Cob a -> (e -> Cob a) -> Cob a
 mapConcurrently :: Traversable t => (a -> Cob b) -> t a -> Cob (t b)
+-- noOp         :: Cob ()
 
 
 -- ROMES:TODO: retry ?
@@ -159,8 +180,8 @@ mockCob cs cobf = do
   threadDelay 2000000
 
   (`runReaderT` cs) $ do
-    mapM_ (\r -> (RM.deleteInstance (Ref r))) rmRefs
-    mapM_ (UM.deleteUser . Ref) umRefs
+    mapM_ (RM.deleteInstance . Ref Nothing) rmRefs
+    mapM_ (UM.deleteUser . Ref Nothing) umRefs
 
   pure a
 

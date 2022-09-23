@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE BangPatterns #-}
 
 -- | Automatically derive 'Record' given its fields and definition name
 -- A definition called \"Dogs\" with fields ["Owner Name", "Dog Name"], and type that will instance 'Record',
@@ -63,8 +64,8 @@ data SupportedRecordType = StringT
                          | FloatT
                          | DoubleT
                          | DateTimeT
-                         | MaybeT SupportedRecordType
-                         | OtherT Name
+                         | MaybeT !SupportedRecordType
+                         | OtherT !Name
 
 mkToJSON :: [SupportedRecordType] -> [Field] -> Q Exp
 mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem tys fields)) |]
@@ -103,7 +104,7 @@ mkParseJSON tyConName tys fields = do
 
         mods :: SupportedRecordType -> Q Exp
         mods ty = case ty of
-              RefT       -> [e| Ref . read                            |]
+              RefT       -> [e| Ref Nothing . read                    |]
               IntT       -> [e| read                                  |]
               DoubleT    -> [e| read                                  |] -- TODO: Is this right? how to account for commas etc
               DateTimeT  -> [e| fromJust . parseTimeM False undefined "%s" |]
@@ -205,7 +206,7 @@ mkRecord ty definitionName fields = do
             toJSON $(mkRecordPat tyConName tyConArgList fields) = $(mkToJSON tyConArgList fields)
 
         instance FromJSON $(mkTy tyName) where
-            parseJSON = withObject $(mkString $ show tyName) $
+            parseJSON = withObject $(mkString $ show tyName)
                 $(mkParseJSON tyConName tyConArgList fields)
 
         instance Record $(mkTy tyName) where

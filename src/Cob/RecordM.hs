@@ -1,4 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE Rank2Types #-}
 module Cob.RecordM where
 
 import Data.Aeson
@@ -8,9 +12,9 @@ import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 
-import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Prelude as Streamly
 
+import qualified Servant.Client
 import qualified Servant.Client.Streaming
 
 import Cob.RecordM.Servant as Servant
@@ -20,7 +24,9 @@ import Cob.Utils
 import Cob.Session
 import Cob.Ref
 
--- TODO: Make Async versions of functions that receive a callback or return an async token??
+-- TODO: Nested fields! # Creating an instance with duplicate fields https://learning.cultofbits.com/docs/cob-platform/developers/recordm-integration-resource/#creating-an-instance-with-duplicate-fields
+
+-- TODO: Make Async versions of functions that receive a callback or return an async token???
 
 -- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
 -- an instance of Record to find them or make body of search conditional on
@@ -84,7 +90,7 @@ definitionSearch rmQuery = do
 
 
 -- | Stream a definition!
-streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> Fold.Fold IO (Ref a, a) b -> m b
+streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> m b
 streamDefinitionSearch rmQuery f = do
   CobSession session <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
@@ -98,7 +104,7 @@ streamDefinitionSearch rmQuery f = do
           a   <- parseJSON @a src
           pure (r, a)
       in
-        Streamly.fold f (Streamly.mapM (parseOrThrowIO parseRefA) stream))
+        f (Streamly.mapM (parseOrThrowIO parseRefA) stream))
 
 
 -- | Get an instance by id and fail if the instance isn't found
@@ -168,7 +174,7 @@ addInstanceWith waitForSearchAvailability record =
 --
 -- See /recordm/instances/{id}
 deleteInstance :: forall a m. (MonadReader CobSession m, MonadIO m) => Ref a -> m ()
-deleteInstance (Ref ref) = do
+deleteInstance (Ref _ ref) = do
   _ <- performReq $ Servant.deleteInstance ref (Just True)
   pure ()
 
@@ -245,6 +251,31 @@ deleteInstance (Ref ref) = do
     --         let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
     --         records <- (either (throwError . userError) return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
     --         return (zip ids records)                              -- Return list of (id, record)
+
+
+-- | Update all instances matching a query and return the updated records.
+--
+-- This update is atomic! TODO: Should we retry instead of failing?
+-- If the record is changed while the function is running, the record won't be updated and 'OutdatedVersion' will be thrown
+--
+-- This function might throw: TODO
+--
+-- The resulting list of updated values doesn't necessarily reflect the order of the query results, I think
+updateInstances :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
+updateInstances query f = do
+  CobSession session <- ask
+  streamDefinitionSearch query $ Streamly.toList . Streamly.fromAsync . Streamly.mapM (updateInstance' session). Streamly.fromSerial -- do
+    where
+      updateInstance' :: Servant.Client.ClientEnv -> (Ref a, a) -> IO (Ref a, a)
+      updateInstance' session (Ref version ref, a) =
+        let
+            updatedRecord = f a
+            req = Servant.updateInstances (Servant.UpdateSpec (definition @a) (_q query) updatedRecord version)
+         in
+            Servant.Client.runClientM req session >>= \case
+              Left e -> throwIO e
+              Right _ -> pure (Ref (fmap (+1) version) ref, updatedRecord)
+
 
 
 -- | Update an instance with an id and return the updated record.

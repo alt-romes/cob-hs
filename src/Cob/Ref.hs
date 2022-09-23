@@ -27,10 +27,10 @@ import Data.Aeson
 --         [age] <- v .: "age"
 --         return (DogsRecord name (Ref (read ownerId)) (read age))
 -- @
-newtype Ref a = Ref { ref_id :: Integer } deriving (Eq)
+data Ref a = Ref { ref_version :: !(Maybe Integer), ref_id :: !Integer } deriving (Eq)
 
 instance Num (Ref a) where
-  fromInteger = Ref
+  fromInteger = Ref Nothing
   (+) _ _ = error "Don't (+) Refs"
   (*) _ _ = error "Don't (*) Refs"
   (-) _ _ = error "Don't (-) Refs"
@@ -48,7 +48,8 @@ instance ToJSON (Ref a) where
 instance FromJSON (Ref a) where
     parseJSON = withObject "Record Id" $ \v -> do
         ref <- v .: "id"
-        return (Ref ref)
+        version <- v .: "version"
+        return (Ref version ref)
     {-# INLINE parseJSON #-}
 
 
