@@ -2,6 +2,7 @@
 module Cob.Session
   ( CobToken, Host, CobSession(..)
   , makeSession, emptySession, updateSessionToken
+  , tlsManagerFrom
   ) where
 
 import GHC.Conc (newTVarIO)
@@ -12,7 +13,7 @@ import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
 import Data.Time.Calendar (Day(..))
 
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Network.HTTP.Client (Cookie(..), CookieJar, createCookieJar, newManager)
+import Network.HTTP.Client (Cookie(..), CookieJar, createCookieJar, newManager, Manager)
 import Servant.Client as C (ClientEnv(ClientEnv, baseUrl, cookieJar), BaseUrl(..), Scheme(..), defaultMakeClientRequest)
 
 
@@ -64,3 +65,6 @@ makeCookieJar cobhost tok = createCookieJar
     past   = UTCTime (ModifiedJulianDay 56200) (secondsToDiffTime 0)
     future = UTCTime (ModifiedJulianDay 562000) (secondsToDiffTime 0)
 
+-- | Get the TLS 'Manager' from a 'CobSession'
+tlsManagerFrom :: CobSession -> Manager
+tlsManagerFrom (CobSession (ClientEnv manager _ _ _)) = manager
