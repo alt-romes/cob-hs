@@ -129,6 +129,9 @@ mapConcurrently :: Traversable t => (a -> Cob b) -> t a -> Cob (t b)
 -- noOp         :: Cob ()
 
 
+search_ :: Record a => Query a -> Cob [a]
+search_ = fmap (map snd) . search
+
 -- ROMES:TODO: retry ?
 
 
