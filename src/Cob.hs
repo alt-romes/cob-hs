@@ -1,7 +1,14 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Cob where
+module Cob
+  ( module Cob
+  , module Cob.Session
+  , module Cob.Ref
+  , module Cob.RecordM.Record
+  , module Cob.RecordM.Query
+  , module Cob.UserM.Entities
+  ) where
   -- (
   --   -- * Operations
   --   streamSearch
