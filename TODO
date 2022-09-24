@@ -1,2 +1,3 @@
+[ ] how to consume a definition stream lazily
 [x] patch servant upstream
 [ ] rename liftCob to lift?

@@ -6,6 +6,4 @@ source-repository-package
 
 packages: ./cob.cabal
 
--- ./tmp/servant/servant-client/servant-client.cabal
-
 tests: True
