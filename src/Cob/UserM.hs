@@ -1,14 +1,23 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 module Cob.UserM where
 
+import Control.Exception
+
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BS
+import Data.Aeson (withObject, (.:))
+
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 
-import Data.Aeson (withObject, (.:))
+import Servant.Client
+
+import Cob.Exception
 
 import qualified Cob.UserM.Servant as Servant
 import Cob.UserM.Entities
@@ -24,8 +33,19 @@ import Cob.Ref
 -- type instance CobWriter 'UserM = Ref User
 
 -- | Create an UserM user
+--
+-- Throws the 'NonUniqueUser' 'CobException' if the created user is non unique
+-- (a user with the same username already exists).
 createUser :: (MonadReader CobSession m, MonadIO m) => User -> m (Ref User)
-createUser user = performReq $ Servant.createUser user
+createUser user = do
+  CobSession session <- ask
+  liftIO $ Servant.Client.runClientM (Servant.createUser user) session >>= \case
+    Left e@(FailureResponse _ (responseBody -> resp)) ->
+      if "\"errorType\":\"NON_UNIQUE\"" `BS.isInfixOf` (BS.toStrict resp)
+         then throwIO (NonUniqueUser (uusername user))
+         else throwIO e
+    Left e -> throwIO e
+    Right b -> pure b
 
 -- | Delete an UserM user
 deleteUser :: (MonadReader CobSession m, MonadIO m) => Ref User -> m ()

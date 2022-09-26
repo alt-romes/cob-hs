@@ -4,6 +4,7 @@
 module Cob
   ( module Cob
   , module Cob.Session
+  , module Cob.Exception
   , module Cob.Ref
   , module Cob.RecordM.Record
   , module Cob.RecordM.Query
@@ -42,6 +43,7 @@ import Control.Monad.Free
 import Control.Monad.Free.TH
 
 import Control.Exception
+import Cob.Exception
 
 import qualified Control.Concurrent.Async as A
 

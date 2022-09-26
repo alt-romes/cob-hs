@@ -19,6 +19,7 @@ library
     exposed-modules:  Cob,
                       Cob.Ref,
                       Cob.Session,
+                      Cob.Exception,
                       Cob.Utils,
                       Cob.RecordM,
                       Cob.RecordM.Query,

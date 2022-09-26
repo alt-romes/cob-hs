@@ -1,3 +1,4 @@
+[x] Catch NON_UNIQUE and throw as CobException in createUser
 [ ] how to consume a definition stream lazily
 [x] patch servant upstream
 [ ] rename liftCob to lift?
