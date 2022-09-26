@@ -109,15 +109,15 @@ instance ToJSON (DeleteSpec a) where
                                      , "ignoreRefs" .= c
                                      ]
 
-data UpdateSpec a = UpdateSpec { _utype :: !String, _ucondition :: !String, _uvalues :: !a, _version :: !(Maybe Integer) }
+data UpdateSpec a = UpdateSpec { _utype :: !String, _ucondition :: !String, _uvalues :: !a }
 instance ToJSON a => ToJSON (UpdateSpec a) where
-  toJSON (UpdateSpec a b c d) = object [ "type"      .= a
+  toJSON (UpdateSpec a b c) = object [ "type"      .= a
                                        , "condition" .= b
                                        , "values"    .= c
-                                       , "version"   .= d
+                                       -- , "version"   .= d -- is done through the condition or could be done through the other (non-integration) api
                                        ]
 
-data OperationsSummary = OperationsSummary { updatedOS :: {-# UNPACK #-} !Int, deletedOS :: {-# UNPACK #-} !Int, forbiddenOS :: {-# UNPACK #-} !Int, errorOS :: {-# UNPACK #-} !Int }
+data OperationsSummary = OperationsSummary { updatedOS :: {-# UNPACK #-} !Int, deletedOS :: {-# UNPACK #-} !Int, forbiddenOS :: {-# UNPACK #-} !Int, errorOS :: {-# UNPACK #-} !Int } deriving Show
 instance FromJSON OperationsSummary where
   parseJSON = withObject "OperationsSummary" $ \obj ->
     OperationsSummary

@@ -8,6 +8,7 @@ module Cob.RecordM where
 import Data.Aeson
 
 import Control.Exception
+import Cob.Exception
 
 import Control.Monad.IO.Class
 import Control.Monad.Reader
@@ -256,25 +257,30 @@ deleteInstance (Ref _ ref) = do
 -- | Update all instances matching a query and return the updated records.
 --
 -- This update is atomic! TODO: Should we retry instead of failing?
--- If the record is changed while the function is running, the record won't be updated and 'OutdatedVersion' will be thrown
+-- If the record is changed while the function is running, the record won't be updated and (ideally 'OutdatedVersion', but really) 'UnknownUpdateError' will be thrown
 --
--- This function might throw: TODO
+-- This function might throw the following 'CobException's:
+--  'UnknownUpdateError'
 --
 -- The resulting list of updated values doesn't necessarily reflect the order of the query results, I think
+-- TODO: Consider not returning updated records?
 updateInstances :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
 updateInstances query f = do
   CobSession session <- ask
-  streamDefinitionSearch query $ Streamly.toList . Streamly.fromAsync . Streamly.mapM (updateInstance' session). Streamly.fromSerial -- do
+  streamDefinitionSearch query $ Streamly.toList . Streamly.fromAsync . Streamly.mapM (updateInstance' session). Streamly.fromSerial
     where
       updateInstance' :: Servant.Client.ClientEnv -> (Ref a, a) -> IO (Ref a, a)
       updateInstance' session (Ref version ref, a) =
         let
             updatedRecord = f a
-            req = Servant.updateInstances (Servant.UpdateSpec (definition @a) (_q query) updatedRecord version)
+            req = Servant.updateInstances (Servant.UpdateSpec (definition @a) ("recordmInstanceId:" <> show ref <> maybe "" (('@':) . show) version) updatedRecord)
          in
             Servant.Client.runClientM req session >>= \case
               Left e -> throwIO e
-              Right _ -> pure (Ref (fmap (+1) version) ref, updatedRecord)
+              Right u
+                -- TODO: We could have more precise errors using the other API, and possibly even automatically retry until successful.
+                | errorOS u > 0 -> throwIO (UnknownUpdateError $ Ref version ref)
+                | otherwise     -> pure (Ref (fmap (+1) version) ref, updatedRecord)
 
 
 
