@@ -1,4 +1,4 @@
-cabal-version:      2.4
+cabal-version:      3.4
 name:               cob
 version:            0.1.0.0
 synopsis:           Cult of Bits haskell interface
@@ -64,23 +64,6 @@ library
     default-language: Haskell2010
     default-extensions: Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
 
-executable main
-    main-is:          Main.hs
-
-    ghc-options:      -threaded -rtsopts
-
-    build-depends:    base >= 4 && <= 5,
-                      cob,
-
-                      microlens,
-                      microlens-th,
-                      streamly
-
-
-
-    hs-source-dirs:   app
-    default-language: Haskell2010
-
 -- test-suite laws
 --     type: exitcode-stdio-1.0
 --     main-is: Lawful.hs
@@ -93,3 +76,34 @@ executable main
 --                       dlist,
 --                       cob
 
+executable mocker
+    main-is:          Main.hs
+
+    -- If not invoked with +RTS -N<num capabilities> then only one thread is used
+    ghc-options:      -threaded -rtsopts
+
+    build-depends:    base >= 4 && <= 5,
+                      cob,
+
+                      microlens,
+                      microlens-th,
+                      streamly
+
+    hs-source-dirs:   examples/mocker
+    default-language: Haskell2010
+
+executable examinator9000
+    main-is:          Main.hs
+
+    -- If not invoked with +RTS -N<num capabilities> then only one thread is used
+    ghc-options:      -threaded -rtsopts
+
+    build-depends:    base >= 4 && <= 5,
+                      cob,
+                      microlens,
+                      microlens-th,
+                      streamly,
+                      brick
+
+    hs-source-dirs:   examples/examinator9000
+    default-language: Haskell2010
