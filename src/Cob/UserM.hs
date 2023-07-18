@@ -9,7 +9,7 @@ module Cob.UserM where
 import Control.Exception
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BS
+-- import qualified Data.ByteString.Lazy as BS
 import Data.Aeson (withObject, (.:))
 
 import Control.Monad.IO.Class

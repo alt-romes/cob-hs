@@ -20,17 +20,16 @@ import qualified Servant.Client as C
 import qualified Servant.Client.Streaming as SC
 import Data.Aeson
 
-import qualified Streamly.Prelude as Streamly
+import qualified Streamly.Data.Stream as Streamly
 
 import qualified Servant.Types.SourceT as Servant
 
 import Cob.Ref
 
-instance Streamly.IsStream t => FromSourceIO a (t IO a) where
-  fromSourceIO src =
-    Streamly.concatMapM id $ Streamly.fromAhead $ Streamly.fromPure $ Servant.unSourceT src go
+instance FromSourceIO a (Streamly.Stream IO a) where
+  fromSourceIO src = Servant.unSourceT src go
    where
-    go :: Streamly.IsStream t => Servant.StepT IO a -> IO (t IO a)
+    go :: Servant.StepT IO a -> IO (Streamly.Stream IO a)
     go step = case step of
       Servant.Stop             -> return Streamly.nil
       Servant.Error e          -> return $ Streamly.fromEffect $ fail e
@@ -61,7 +60,7 @@ type StreamSearch = "definitions" :> "search" :> "stream" :> (
 type StreamSearchCommon
   =  QueryParam "q" String
   :> QueryParam "sort" SortParam
-  :> StreamGet NewlineFraming JSON (Streamly.Serial Value)
+  :> StreamGet NewlineFraming JSON (Streamly.Stream IO Value)
 
 type InstancesGet    = "instances" :> Capture "id" Integer :> QueryParam "If-None-Match" String :> Get '[JSON] Value
 type InstancesDelete = "instances" :> Capture "id" Integer :> QueryParam "ignoreRefs" Bool :> Servant.API.Delete '[JSON] NoContent
@@ -74,8 +73,8 @@ searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortPa
 searchById   :: Int    -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
 
-streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
-streamSearchById   :: Int    -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Serial Value)
+streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
+streamSearchById   :: Int    -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
 (streamSearchByName :<|> streamSearchById) = SC.client (Proxy @(RecordM StreamSearch))
 
 getInstance    :: Integer -> Maybe String -> C.ClientM Value

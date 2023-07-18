@@ -13,7 +13,8 @@ import Cob.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 
-import qualified Streamly.Prelude as Streamly
+import qualified Streamly.Data.Stream as Streamly
+import qualified Streamly.Data.Stream.Prelude as Streamly
 
 import qualified Servant.Client
 import qualified Servant.Client.Streaming
@@ -91,7 +92,7 @@ definitionSearch rmQuery = do
 
 
 -- | Stream a definition!
-streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (Streamly.Serial (Ref a, a) -> IO b) -> m b
+streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
 streamDefinitionSearch rmQuery f = do
   CobSession session <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
@@ -267,7 +268,7 @@ deleteInstance (Ref _ ref) = do
 updateInstances :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
 updateInstances query f = do
   CobSession session <- ask
-  streamDefinitionSearch query $ Streamly.toList . Streamly.fromAsync . Streamly.mapM (updateInstance' session). Streamly.fromSerial
+  streamDefinitionSearch query $ Streamly.toList . Streamly.parEval id . Streamly.mapM (updateInstance' session)
     where
       updateInstance' :: Servant.Client.ClientEnv -> (Ref a, a) -> IO (Ref a, a)
       updateInstance' session (Ref version ref, a) =

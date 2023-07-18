@@ -45,7 +45,7 @@ library
 
                       -- Network
                       servant,
-                      servant-client,
+                      servant-client >= 0.20,
                       http-client,
                       http-client-tls,
 
@@ -53,7 +53,8 @@ library
                       aeson,
 
                       -- Streaming
-                      streamly,
+                      streamly-core >= 0.1,
+                      streamly >= 0.9,
 
                       -- Util
                       time
