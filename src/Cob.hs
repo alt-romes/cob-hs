@@ -153,8 +153,19 @@ instance MonadFail Cob where
 type f ~> g = forall x. f x -> g x
 infixr 0 ~>
 
--- | TODO Catch before returning?
-runCob :: CobSession -> Cob a -> IO a
+-- | Run a cob computation
+--
+-- === Example
+--
+-- @
+-- cobAction :: Cob ()
+-- cobAction = ...
+--
+-- main = do
+--    session <- UM.umSession ...
+--    runCob session cobAction
+-- @
+runCob :: CobSession -> Cob ~> IO
 runCob cs = (`runReaderT` cs) . foldFree cobRIO
   where
     cobRIO :: (MonadReader CobSession m, MonadIO m) => CobF ~> m
@@ -185,7 +196,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 -- Note: updates to already existing instances will NOT be undone (for now... could be done with a getRaw and pushRaw of sorts).
 --
 -- TODO: Could mock to host (mock.example.com)?
-mockCob :: CobSession -> Cob a -> IO a
+mockCob :: CobSession -> Cob ~> IO
 mockCob cs cobf = do
 
   -- todo: also catch errors when exceptions are thrown in computation... I'll
