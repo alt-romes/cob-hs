@@ -196,15 +196,17 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 -- Note: updates to already existing instances will NOT be undone (for now... could be done with a getRaw and pushRaw of sorts).
 --
 -- TODO: Could mock to host (mock.example.com)?
-mockCob :: CobSession -> Cob ~> IO
-mockCob cs cobf = do
+--
+mockCob :: Int -- ^ Delay in seconds
+        -> CobSession -> Cob ~> IO
+mockCob delayInSeconds cs cobf = do
 
   -- todo: also catch errors when exceptions are thrown in computation... I'll
   -- have to try every individual computation and throw errors with the list?
 
   (a, (rmRefs, umRefs), ()) <- runRWST (foldFree nt cobf) cs mempty
 
-  threadDelay 2000000
+  threadDelay (delayInSeconds * 1000000)
 
   (`runReaderT` cs) $ do
     mapM_ (RM.deleteInstance . Ref Nothing) rmRefs
@@ -250,7 +252,7 @@ mockCob cs cobf = do
         AddToGroup us gr n -> n <$ UM.addToGroup us gr
         Login u p f -> f <$> UM.umLogin u p
         LiftCob x f -> f <$> liftIO x
-        Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ mockCob s c)
-        Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (mockCob s c) (mockCob s . h))
-        MapConcurrently h t f -> ask >>= \s -> f <$> liftIO (A.mapConcurrently (mockCob s . h) t)
+        Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ mockCob delayInSeconds s c)
+        Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (mockCob delayInSeconds s c) (mockCob delayInSeconds s . h))
+        MapConcurrently h t f -> ask >>= \s -> f <$> liftIO (A.mapConcurrently (mockCob delayInSeconds s . h) t)
 
