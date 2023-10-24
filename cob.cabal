@@ -54,6 +54,9 @@ library
                       http-client,
                       http-client-tls,
 
+                      -- Deriving
+                      generics-sop, sop-core,
+
                       -- JSON
                       aeson,
 
