@@ -72,6 +72,14 @@ library
     default-language: Haskell2010
     default-extensions: Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
 
+test-suite cob-tests
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson
+    hs-source-dirs: tests
+    default-language: GHC2021
+
+
 -- test-suite laws
 --     type: exitcode-stdio-1.0
 --     main-is: Lawful.hs
