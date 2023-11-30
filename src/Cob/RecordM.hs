@@ -168,14 +168,20 @@ addInstanceSync = addInstanceWith True
 -- rmUpdateInstance ref (property .~ newValue)
 -- @
 addInstanceWith :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Bool -> a -> m (Ref a)
-addInstanceWith waitForSearchAvailability record =
-  performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)
+addInstanceWith waitForSearchAvailability record = do
+  -- Last I checked (Nov. 2023), instance creation doesn't return a version
+  -- alongside the newly created ID, so we give it the initial version (which is 0).
+  Ref no_version refid <- performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)
+  assert (no_version == Nothing) $
+    return (Ref (Just 0) refid)
 
 -- * Deleting instances
 
 -- | Delete an instance by id, ignoring if it has any references
 --
 -- See /recordm/instances/{id}
+--
+-- We don't do version checking! This will really delete the instance regardless of whether you were the last to update it.
 deleteInstance :: forall a m. (MonadReader CobSession m, MonadIO m) => Ref a -> m ()
 deleteInstance (Ref _ ref) = do
   _ <- performReq $ Servant.deleteInstance ref (Just True)
@@ -275,7 +281,7 @@ updateInstances query f = do
       updateInstance' session (Ref version ref, a) =
         let
             updatedRecord = f a
-            req = Servant.updateInstances (Servant.UpdateSpec (definition @a) ("recordmInstanceId:" <> show ref <> maybe "" (('@':) . show) version) updatedRecord)
+            req = Servant.updateInstances (Servant.UpdateSpec (definition @a) ("recordmInstanceId:" <> show ref <> maybe (error "updateInstances: All records streamed from a definition should have a version together with the instance id") (('@':) . show) version) updatedRecord)
          in
             Servant.Client.runClientM req session >>= \case
               Left e -> throwIO e

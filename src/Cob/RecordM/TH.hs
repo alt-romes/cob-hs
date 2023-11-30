@@ -34,7 +34,7 @@
 --
 -- Check 'SupportedRecordType' for which primitive types are supported. All
 -- JSON enabled types are supported as well.
---
+-- The ID field will be treated specially as a field that contains a self reference to the record
 module Cob.RecordM.TH (mkRecord, SupportedRecordType) where
 
 import Data.Time
@@ -73,6 +73,8 @@ mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem ty
         mkToJSONItem :: SupportedRecordType -> Field -> Q Exp
         mkToJSONItem ty field = [e| (fromString $(mkString field) .=) <$> $(mods ty) ($(toMaybe ty) $(mkVarE $ fieldNormalizeVar field)) |]
             where
+                -- There is no special case for serializing the ID of a record
+                -- differently, so we serialize ID as we do all other refs.
                 mods RefT        = [e| ((show . ref_id) <$>) |]
                 mods IntT        = [e| (show <$>)            |]
                 mods FloatT      = [e| (show <$>)            |]
@@ -96,6 +98,11 @@ mkParseJSON tyConName tys fields = do
         mkParseJSONItem :: SupportedRecordType -> Field -> Q Stmt
         mkParseJSONItem (MaybeT _) field =
             BindS <$> [p|  $(mkVarP $ fieldNormalizeVar field)  |] <*> [e| v .:? fromString $(mkString $ fieldNormalize field) |]
+        mkParseJSONItem t field
+          -- The special case for parsing the ID of a record differently from
+          -- how we parse references to other records in fields of a record
+          | field == "ID", RefT <- t =
+            BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| parseJSON v |] -- parse the Ref directly, not under a field
         mkParseJSONItem _ field =
             BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| v .: fromString $(mkString $ fieldNormalize field) |]
 
@@ -191,6 +198,18 @@ recordTypeInfo ty = do
 -- 'Maybe' will represent an optional @RecordM@ field, that may or may not exist for a given record.
 --
 -- 'Ref' will automatically parse a reference to another table
+--
+--      The exception to 'Ref' is the field "ID" which identifies the reference to the record itself.
+--      This specific 'id :: Ref RecordType' field is parsed and serialized specially:
+--        * When parsing, the self reference is found in the body _source rather than a layer deeper as happens for other references
+--        * When serializing, the self reference field is serialized as expected ("ID" = integer_value_of_id)
+--      This is only mostly useful to fetch the record ID directly into the
+--      record structure, without having to construct it from the returned
+--      reference posteriorly. TODO: An alternative design for most RecordM
+--      methods would be to require every data type to have a self reference
+--      field, instead of always returning the reference to the record in a pair.
+--
+--      TODO: What happens if you update a record whose datatype includes the ID? You basically send a "set ID" upstream...?
 -- 
 -- 'Int' will automatically parse an Int
 -- 'Double' will automatically parse a Double
