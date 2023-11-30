@@ -102,11 +102,14 @@ mkParseJSON tyConName tys fields = do
           -- The special case for parsing the ID of a record differently from
           -- how we parse references to other records in fields of a record
           | field == "ID", RefT <- t =
-            BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| parseJSON v |] -- parse the Ref directly, not under a field
+            BindS <$> [p| $(mkVarP $ fieldNormalizeVar field) |] <*> [e| parseJSON (Object v) |] -- parse the Ref directly, not under a field
         mkParseJSONItem _ field =
             BindS <$> [p| [$(mkVarP $ fieldNormalizeVar field)] |] <*> [e| v .: fromString $(mkString $ fieldNormalize field) |]
 
         foldConArgs :: Exp -> (SupportedRecordType, Field) -> Q Exp
+        expr `foldConArgs` (ty, field)
+          -- Special ID case
+          | field == "ID", RefT <- ty  = AppE expr <$> [e| $(mkVarE $ fieldNormalizeVar field) |]
         expr `foldConArgs` (ty, field) = AppE expr <$> [e| $(mods ty) $(mkVarE $ fieldNormalizeVar field) |]
 
         mods :: SupportedRecordType -> Q Exp
