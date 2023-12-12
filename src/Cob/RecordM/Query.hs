@@ -24,7 +24,6 @@ import Type.Reflection
 
 import Data.String
 import qualified Data.Text as T
-import Control.Applicative
 
 import Cob.RecordM.DateTime
 import Cob.Ref

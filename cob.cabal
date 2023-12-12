@@ -73,6 +73,24 @@ library
     default-language: Haskell2010
     default-extensions: Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
 
+-- A library for Cob Servant utilities
+library cob-servant
+    visibility: public
+    exposed-modules:  Cob.Servant
+
+    -- Modules included in this library but not exported.
+    -- other-modules:
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base >=4.14.3.0,
+                      mtl,
+                      cob,
+                      servant-server
+
+    hs-source-dirs:   cob-servant
+    default-language: Haskell2010
+
 test-suite cob-tests
     type: exitcode-stdio-1.0
     main-is: Main.hs
