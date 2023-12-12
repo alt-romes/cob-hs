@@ -27,6 +27,7 @@ library
                       Cob.Exception,
                       Cob.Utils,
                       Cob.RecordM,
+                      Cob.RecordM.Definition,
                       Cob.RecordM.Query,
                       Cob.RecordM.Record,
                       Cob.RecordM.DateTime,

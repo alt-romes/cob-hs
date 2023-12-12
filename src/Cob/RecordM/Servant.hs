@@ -1,6 +1,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -10,6 +12,7 @@
 module Cob.RecordM.Servant where
 
 import qualified Data.Text as T
+import qualified Data.Map as M
 
 import Data.Proxy
 import qualified Data.List as L (intercalate)
@@ -25,6 +28,8 @@ import qualified Streamly.Data.Stream as Streamly
 import qualified Servant.Types.SourceT as Servant
 
 import Cob.Ref
+import Cob.RecordM.Definition
+import Data.Maybe
 
 instance FromSourceIO a (Streamly.Stream IO a) where
   fromSourceIO src = Servant.unSourceT src go
@@ -69,6 +74,8 @@ type IntegrationAdd    a = "instances" :> "integration" :> ReqBody '[JSON] (AddS
 type IntegrationUpdate a = "instances" :> "integration" :> ReqBody '[JSON] (UpdateSpec a) :> Put '[JSON] OperationsSummary
 type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (DeleteSpec a) :> Servant.API.Delete '[JSON] OperationsSummary
 
+type DefinitionNew = "definitions" :> ReqBody '[JSON] Definition :> Post '[JSON] Value
+
 searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 searchById   :: Int    -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
@@ -88,6 +95,9 @@ deleteInstances :: forall a. DeleteSpec a -> C.ClientM OperationsSummary
 addInstance     = C.client (Proxy @(RecordM (IntegrationAdd a)))
 updateInstances = C.client (Proxy @(RecordM (IntegrationUpdate a)))
 deleteInstances = C.client (Proxy @(RecordM (IntegrationDelete a)))
+
+newDefinition :: Definition -> C.ClientM Value
+newDefinition = C.client (Proxy @(RecordM DefinitionNew))
 
 -- Sort given a list of pairs @(<field>, <direction>)@
 newtype SortParam = SortParam [(String, String)]
@@ -125,4 +135,35 @@ instance FromJSON OperationsSummary where
       <*> (obj .: "forbidden")
       <*> (obj .: "error")
 
+instance ToJSON Definition where
+  toJSON Definition{..} =
+    object
+      [ "name" .= defName
+      , "description" .= defDescription
+      , "fieldDefinitions" .= map snd (M.toList defFieldDefinitions)
+      , "state" .= defState
+      ]
+
+instance ToJSON Field where
+  toJSON (Field{..}) =
+    object
+      [ "name" .= fieldName
+      , "description" .= fieldDescription
+      , "duplicable" .= fieldDuplicable
+      , "required" .= fieldRequired
+      , "fields" .= fmap (map snd . M.toList) fieldFields
+      , "condition" .= fieldCondition
+      , "order" .= getFieldOrder fieldId
+      , "id" .= getFieldId fieldId
+      ]
+
+instance ToJSON Condition where
+  toJSON Equals{lhs, rhs} = String (lhs <> "=" <> rhs)
+
+instance ToJSON FieldRequired where
+  toJSON MandatoryField = "mandatory"
+  toJSON FieldNotRequired = ""
+
+instance ToJSON DefinitionState where
+  toJSON EnabledDefinition = "enabled"
 
