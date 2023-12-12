@@ -16,6 +16,7 @@ module Cob.RecordM.Definition
   , _testBuild
   ) where
 
+import Control.Monad
 import Data.Functor.Identity
 import Control.Monad.State
 import Control.Monad.Reader
@@ -112,7 +113,7 @@ getFieldOrder (UnsafeFieldName i) = i
 getFieldId :: FieldName -> String
 getFieldId (UnsafeFieldName i) = show (-100000000 - i)
 
-newtype DefinitionQ = DQ (Free DefinitionQF ())
+type DefinitionQ = DefinitionQM ()
 type DefinitionQM = Free DefinitionQF
 
 data DefinitionQF next
@@ -194,6 +195,8 @@ infixr 0 ?
 -- $ Modifiers
 --------------------------------------------------------------------------------
 
+-- ROMES:TODO: Type synonym for these `Text` dollar fields
+
 dollar :: Text -> Text
 dollar = ("$" <>)
 
@@ -214,7 +217,7 @@ fromDSL :: Text
         -- ^ Definition quote (DSL building a definition)
         -> Definition
         -- ^ The resulting definition
-fromDSL defName defDescription (DQ defQ) =
+fromDSL defName defDescription defQ =
   snd $ runIdentity $ runFresh $
     runStateT
       (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
@@ -234,10 +237,13 @@ algebra = \case
     lift . lift $
       modify (addField path field_data)
     f fname
-  AddSubs field subs f -> do
+  AddSubs field subs next -> do
     -- Concat is fine, we never have that many nested fields
-    local (++ [field]) $
-      interpret subs >>= f
+    subsNames <-
+      local (++ [field]) $
+        interpret subs
+    next subsNames
+
   Mandatory field f -> do
     paths <- lift $ gets fst
     lift . lift $ modify $
@@ -368,16 +374,25 @@ done :: Monad m => m [a]
 done = return []
 
 
-
-
-_testBuild :: Definition
-_testBuild = fromDSL "Nome da Def" "Descr da Def" $ DQ do
-
-  nome <- "Nome" |= instanceLabel
-
+aux :: DefinitionQM ()
+aux = do
   "Teste2"    |=  ""
   "Mandatory" |=! (readOnly |+| instanceLabel)
   "Dupable"   |=* instanceDescription
+  return ()
+
+_testBuild :: Bool -> Definition
+_testBuild b = fromDSL "Nome da Def" "Descr da Def" $ do
+
+  nome <- "Nome" |= instanceLabel
+
+  when b $ do
+    "Only if true" |= "OK"
+    pure ()
+
+  forM_ [1..15 :: Int] $ \i ->
+    ("Field " <> pack (show i)) |= readOnly
+
   "Sub Field" |=  "Descrip.." |+ do
 
       "Its SubField" |= "..." |+ do
@@ -400,6 +415,8 @@ _testBuild = fromDSL "Nome da Def" "Descr da Def" $ DQ do
         "NomeIsTeste 1" |=* ""
         "Nome Is Teste 2" |= ""
         done
+
+  aux
 
   return ()
 

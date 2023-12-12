@@ -29,7 +29,6 @@ import qualified Servant.Types.SourceT as Servant
 
 import Cob.Ref
 import Cob.RecordM.Definition
-import Data.Maybe
 
 instance FromSourceIO a (Streamly.Stream IO a) where
   fromSourceIO src = Servant.unSourceT src go
