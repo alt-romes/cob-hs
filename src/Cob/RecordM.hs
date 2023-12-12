@@ -23,9 +23,11 @@ import qualified Servant.Client.Streaming
 import Cob.RecordM.Servant as Servant
 import Cob.RecordM.Record
 import Cob.RecordM.Query
+import Cob.RecordM.Definition
 import Cob.Utils
 import Cob.Session
 import Cob.Ref
+import Data.Maybe
 
 -- TODO: Nested fields! # Creating an instance with duplicate fields https://learning.cultofbits.com/docs/cob-platform/developers/recordm-integration-resource/#creating-an-instance-with-duplicate-fields
 
@@ -42,7 +44,9 @@ import Cob.Ref
 
 -- ROMES:TODO: I removed `encode`, did I break encoding or will servant take care of it?
 
+--------------------------------------------------------------------------------
 -- * Querying definitions
+--------------------------------------------------------------------------------
 
 -- | Search a @RecordM@ 'Definition' given a 'Query, and return a list of references ('Ref') of a record and the corresponding records ('Record').
 --
@@ -78,19 +82,6 @@ definitionSearch rmQuery = do
           a <- parseJSON @a src
           pure (r, a)
     parseOrThrowIO parser rbody
-    -- hits  <- getResponseHitsHits rbody id                 -- Get hits.hits from response body 
-    -- let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
-    -- let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
-    -- records <- (either throwError return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
-    -- return (zip ids records)                              -- Return list of (id, record)
-      -- where
-        -- Gets hits.hits from response body, parsed as an array of JSON values
-        -- getResponseHitsHits :: Value -> (String -> e) -> m [Value]
-        -- getResponseHitsHits responseBody mkError = maybe
-        --         (throwError . mkError $ "Couldn't find hits.hits in response body!")  -- Error message for when hits.hits doesn't exist
-        --         (either (throwError . mkError) return . parseEither parseJSON)                      -- Parse [Value] when JSON hits.hits exists
-        --         (parseMaybe (withObject "wO" ((.: "hits") >=> (.: "hits"))) responseBody) -- Find hits.hits in response body
-
 
 -- | Stream a definition!
 streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
@@ -129,7 +120,10 @@ definitionCount rmQuery = do
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just 0) (Just 0) Nothing
     parseOrThrowIO (withObject "definition_count" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody
 
+
+--------------------------------------------------------------------------------
 -- * Creating instances
+--------------------------------------------------------------------------------
 
 -- | Add to @RecordM@ a new instance given a 'Record', and return the 'Ref' of the newly created instance.
 --
@@ -148,7 +142,7 @@ addInstance :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => 
 addInstance = addInstanceWith False
 {-# INLINE addInstance #-}
 
--- Same as 'rmAddInstance' but only continue when added record is searchable.
+-- | Same as 'rmAddInstance' but only continue when added record is searchable.
 --
 -- The difference is the query parameter waitForSearchAvailability=true
 -- Related to documentation on POST /recordm/instances/integration.
@@ -172,10 +166,13 @@ addInstanceWith waitForSearchAvailability record = do
   -- Last I checked (Nov. 2023), instance creation doesn't return a version
   -- alongside the newly created ID, so we give it the initial version (which is 0).
   Ref no_version refid <- performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)
-  assert (no_version == Nothing) $
+  assert (isNothing no_version) $
     return (Ref (Just 0) refid)
 
+
+--------------------------------------------------------------------------------
 -- * Deleting instances
+--------------------------------------------------------------------------------
 
 -- | Delete an instance by id, ignoring if it has any references
 --
@@ -189,6 +186,8 @@ deleteInstance (Ref _ ref) = do
 
 -- | Like 'rmDefinitionSearch', but returns a lazy list of all
 -- records, rather than a range.
+--
+-- ROMES:TODO: I think this is superseded by streamDefinition, right?
 --
 -- The search starts from the `from` field in the query, but ignores the `size` field
 --
@@ -262,6 +261,10 @@ deleteInstance (Ref _ ref) = do
     --         return (zip ids records)                              -- Return list of (id, record)
 
 
+--------------------------------------------------------------------------------
+-- * Updating instances
+--------------------------------------------------------------------------------
+
 -- | Update all instances matching a query and return the updated records.
 --
 -- This update is atomic! TODO: Should we retry instead of failing?
@@ -291,56 +294,14 @@ updateInstances query f = do
                 | otherwise     -> pure (Ref (fmap (+1) version) ref, updatedRecord)
 
 
+--------------------------------------------------------------------------------
+-- * Creating Definitions
+--------------------------------------------------------------------------------
 
--- | Update an instance with an id and return the updated record.
--- An error will be thrown if no record is successfully updated.
--- rmUpdateInstance :: forall a. Record a => Ref a -> (a -> a) -> Cob IO a
--- rmUpdateInstance ref f = rmUpdateInstances_ (byId ref) f ??? throwError ("Updating instance " <> show ref <> " was not successful!")
--- {-# INLINE rmUpdateInstance #-}
+-- | Create a RecordM 'Definition', typically where 'Definition' is created
+-- using 'fromDSL' and 'DefinitionQ'.
+newDefinition :: forall m. (MonadReader CobSession m, MonadIO m) => Definition -> m ()
+newDefinition def = do
+  _ <- performReq $ Servant.newDefinition def
+  pure ()
 
--- | Update in @RecordM@ all instances matching a query given a function that
--- transforms records, and return the list of updated records Warning: This
--- update is not atomic (yet? :TODO:). This means that in between applying the
--- function to the value and sending the update, it might have been updated
--- somewhere else, and this update will overwrite the record with the modified
--- previous record. This also means that if more than one record matches the
--- query, the list of records will NOT be updated in batch -- on an error
--- message, if the error occured in between updating one of the records in the
--- middle of the list, the first updates might have occurred despite the error
---
--- If the need ever arises, an atomic implementation could possibly set the
--- correct version:x on the query and check for number of successful updates,
--- though this doesn't solve the list batch update
---
--- Another note: The query will limit the amount of instances fetched. That
--- means more instances could match the query but aren't currently fetched and
--- won't be updated.
--- rmUpdateInstances :: forall a. Record a => Query a -> (a -> a) -> Cob IO [(Ref a, a)]
--- rmUpdateInstances q f = rmUpdateInstancesM q (return <$> f)
--- {-# INLINE rmUpdateInstances #-}
-
--- | The same as 'rmUpdateInstance', but the function to update the record returns a 'CobT'
--- rmUpdateInstancesM :: forall a. Record a => Query a -> (a -> Cob IO a) -> Cob IO [(Ref a, a)]
--- rmUpdateInstancesM rmQuery updateRecord = do
---     records <- rmDefinitionSearch rmQuery
---     session <- ask
---     forM records $ \(Ref ref, rec) -> do
---         updatedRecord <- updateRecord rec
---         let request = setRequestBodyJSON
---                       (object
---                           [ "type"      .= definition @a
---                           , "condition" .= ("id:" <> show ref)
---                           , "values"    .= updatedRecord ])
---                       (cobDefaultRequest session)
---                           { method = "PUT"
---                           , path   = "/recordm/recordm/instances/integration" }
---         _ <- httpValidJSON @Value request
---         return (Ref ref, updatedRecord)
-
-
-
--- | Run a @'RecordMQuery' q@ and transform all resulting records (@'Record' a@)
--- into new queries (@'RecordMQuery' r@). Finally, update all resulting records
--- (@'Record' b@) with the third argument, the function (@b -> 'CobT' m b@).
--- rmUpdateInstancesWithMakeQueryM :: forall a b. (Record a, Record b) => Query a -> (a -> Query b) -> (b -> Cob IO b) -> Cob IO [(Ref b, b)]
--- rmUpdateInstancesWithMakeQueryM rmQuery getRef updateRecord = rmDefinitionSearch_ rmQuery >>= fmap join . mapM (flip rmUpdateInstancesM updateRecord . getRef)

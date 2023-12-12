@@ -118,13 +118,13 @@ type DefinitionQM = Free DefinitionQF
 data DefinitionQF next
   = Declare Text Text (FieldName -> next)
   -- ^ A field
-  | AddSubs FieldName (Free DefinitionQF [FieldName]) ([FieldName] -> next)
+  | AddSubs FieldName (DefinitionQM [FieldName]) ([FieldName] -> next)
   -- ^ A field with sub-fields
   | Mandatory FieldName next
   -- ^ Make a field mandatory
   | Duplicable FieldName next
   -- ^ Make a field duplicable
-  | IfCondition UnresolvedCondition (Free DefinitionQF [FieldName]) ([FieldName] -> next)
+  | IfCondition UnresolvedCondition (DefinitionQM [FieldName]) ([FieldName] -> next)
   deriving Functor
 
 $(makeFree ''DefinitionQF)
@@ -189,6 +189,18 @@ infixr 0 ?
 -- Generated:
 -- mandatory   :: FieldName -> DefinitionQ
 -- duplicable  :: FieldName -> DefinitionQ
+
+--------------------------------------------------------------------------------
+-- $ Modifiers
+--------------------------------------------------------------------------------
+
+dollar :: Text -> Text
+dollar = ("$" <>)
+
+instanceLabel, instanceDescription, readOnly :: Text
+instanceLabel = dollar "instanceLabel"
+instanceDescription = dollar "instanceDescription"
+readOnly = dollar "readonly"
 
 --------------------------------------------------------------------------------
 -- Interpreter
@@ -355,34 +367,41 @@ runFresh (Fresh f) = evalStateT f 1
 done :: Monad m => m [a]
 done = return []
 
+
+
+
 _testBuild :: Definition
 _testBuild = fromDSL "Nome da Def" "Descr da Def" $ DQ do
 
-  nomeField <- "Nome" |= "$instanceLabel"
+  nome <- "Nome" |= instanceLabel
 
-  "Teste2"     |= ""
-  "Mandatory"  |=! "$readonly"
-  "Dupable"    |=* "$instanceField"
-  "Sub Field" |= "Descrip.." |+ do
+  "Teste2"    |=  ""
+  "Mandatory" |=! (readOnly |+| instanceLabel)
+  "Dupable"   |=* instanceDescription
+  "Sub Field" |=  "Descrip.." |+ do
 
-    "Its SubField" |= "..." |+ do
+      "Its SubField" |= "..." |+ do
 
-      "Sub Sub" |= ""
-      "Sibling Sub Sub" |= ""
+          "Sub Sub" |= ""
+          "Sibling Sub Sub" |= ""
+          done
+
+      "Sibling Sub" |= ""
       done
-
-    "Sibling Sub" |= ""
-    done
 
   "Conditional" |= "" |+ do
 
-    nomeField === "RODRIGO" ? do
+    nome === "RODRIGO" ? do
         "Condition True" |= ""
         "Condition True 2" |= ""
         done
-    nomeField === "TESTE" ? do
+
+    nome === "TESTE" ? do
         "NomeIsTeste 1" |=* ""
         "Nome Is Teste 2" |= ""
         done
 
   return ()
+
+(|+|) :: Text -> Text -> Text
+(|+|) d1 d2 = d1 <> " " <> d2

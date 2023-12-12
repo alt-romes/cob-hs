@@ -140,22 +140,31 @@ instance ToJSON Definition where
     object
       [ "name" .= defName
       , "description" .= defDescription
-      , "fieldDefinitions" .= map snd (M.toList defFieldDefinitions)
+      , "fieldDefinitions" .= (map snd . M.toList) defFieldDefinitions
       , "state" .= defState
+      -- ROMES:TODO: Should this be set to html encoded things or just nothing?
+      , "htmlEncodedName" .= ("" :: T.Text)
+      , "htmlEncodedDescription" .= ("" :: T.Text)
       ]
 
 instance ToJSON Field where
   toJSON (Field{..}) =
-    object
+    object $
       [ "name" .= fieldName
       , "description" .= fieldDescription
       , "duplicable" .= fieldDuplicable
       , "required" .= fieldRequired
-      , "fields" .= fmap (map snd . M.toList) fieldFields
-      , "condition" .= fieldCondition
       , "order" .= getFieldOrder fieldId
       , "id" .= getFieldId fieldId
       ]
+      ++ case fieldFields of
+           Nothing -> []
+           Just fields ->
+             [ "fields" .= (map snd . M.toList) fields ]
+      ++ case fieldCondition of
+           Nothing -> []
+           Just cond ->
+             [ "condition" .= cond ]
 
 instance ToJSON Condition where
   toJSON Equals{lhs, rhs} = String (lhs <> "=" <> rhs)
