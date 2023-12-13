@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -6,6 +7,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Cob.RecordM.Definition.Xlsx where
 
+import Control.Concurrent.Async hiding (Default(..), def)
+import Control.Concurrent.Async.Pool hiding (Default(..), def)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Maybe
 import Codec.Xlsx
@@ -29,35 +32,41 @@ import Cob.RecordM.Servant as Servant hiding (newDefinition)
 import Cob.RecordM (newDefinition)
 import Cob.Session
 import Cob.Utils
+import qualified Servant.Client
+import Data.Semigroup
+
+data OptionsXlsxImporter = OptionsXlsxImporter
+  { maxListSize :: Int
+  , maxRefSize  :: Int
+  , worksheetName :: Text
+    -- ^ Name of the worksheet from which to parse definition
+  , startCoord :: (RowIndex, ColumnIndex)
+    -- ^ The (Row, Column) from which to start parsing the
+    -- to-be-definition table
+  , concurrently :: Bool
+    -- ^ Whether to create auxiliary definitions and insert values in them concurrently
+  }
 
 -- | Create a t'Definition' from an Excel Spreadsheet file (t'FilePath')
 xlsxFileToDef :: FilePath
               -- ^ The path to the Excel spreadsheet
-              -> Text
-              -- ^ Name of the worksheet from which to parse definition
-              -> (RowIndex, ColumnIndex)
-              -- ^ The (Row, Column) from which to start parsing the
-              -- to-be-definition table
+              -> OptionsXlsxImporter
               -> IO (Map Text [Text], Definition)
               -- ^ The resulting definition, and a map from definition names to
               -- values to be included in those definitions as records. The
               -- resulting definition might use $ref to refer to definitions that
               -- don't exist and are only specified as key-element pairs in this
               -- map.
-xlsxFileToDef fp t coords = do
+xlsxFileToDef fp opts = do
   bs <- BSL.readFile fp
-  return $ xlsxToDef t coords (toXlsxFast bs)
+  return $ xlsxToDef opts (toXlsxFast bs)
 
 -- ROMES:TODO: Sacar automaticamente $[] e $link tb (e.g. ao encontrar um link nas cells)?
 
 -- ROMES:TODO: $date vs $datetime vs $time, see which formats map to which (kind of easy).
 
 -- | Create a t'Definition' from an Excel Spreadsheet (t'Xlsx')
-xlsxToDef :: Text
-          -- ^ Name of the worksheet from which to parse definition
-          -> (RowIndex, ColumnIndex)
-          -- ^ The (Row, Column) from which to start parsing the
-          -- to-be-definition table
+xlsxToDef :: OptionsXlsxImporter
           -> Xlsx
           -- ^ The spreadsheet
           -> (Map Text [Text], Definition)
@@ -66,11 +75,17 @@ xlsxToDef :: Text
           -- resulting definition might use $ref to refer to definitions that
           -- don't exist and are only specified as key-element pairs in this
           -- map.
-xlsxToDef wsName (start_r,start_c) spreadsheet = 
+xlsxToDef
+  OptionsXlsxImporter
+    { worksheetName
+    , startCoord=(start_r,start_c)
+    , maxListSize
+    , maxRefSize
+    } spreadsheet = 
   let
-    allCells = case spreadsheet ^? ixSheet wsName . wsCells of
+    allCells = case spreadsheet ^? ixSheet worksheetName . wsCells of
                  Nothing -> error $ "Worksheet "
-                                     ++ show wsName
+                                     ++ show worksheetName
                                      ++ " not found in the spreadsheet"
                  Just cells -> cells
     headerCells :: [(Cell, [Cell])]
@@ -83,23 +98,23 @@ xlsxToDef wsName (start_r,start_c) spreadsheet =
                   = M.elems $
                     M.filterWithKey (\(rc,cc) _ -> rc > rh && cc == ch) allCells
         ]
-   in runDSL wsName "@AUTOGENXLSX" do
+   in runDSL worksheetName "@AUTOGENXLSX" do
      M.unionsWith (<>) <$>
        forM headerCells \(headerCell, columnCells) -> do
          case headerCell ^. cellValue of
-           Just (CellText txt) -> do
+           Just (CellText headerContent) -> do
              let nonEmptyCells = filter (isJust . _cellValue) columnCells
              -- Determine the description from the style of the cell below
-             case descFromCells txt nonEmptyCells of
+             case descFromCells headerContent nonEmptyCells of
                (fieldDesc, recordsToAdd) -> do
-                  txt |= fieldDesc
+                  headerContent |= fieldDesc
                   pure recordsToAdd
            _ -> pure mempty
 
   where
 
     descFromCells :: Text
-                  -- ^ Name of this column
+                  -- ^ Name of this column to name a new definition
                   -> [Cell]
                   -- ^ The cells below the header in this column
                   -> (Text, Map Text [Text])
@@ -107,24 +122,29 @@ xlsxToDef wsName (start_r,start_c) spreadsheet =
                   -- if the field is a $ref, returns a non-empty map from the
                   -- name of the field to the value of the records that should
                   -- be added to a new definition with that name.
-    descFromCells colName []          = ("", mempty)
-    descFromCells colName (cell:cells) = first T.unwords
-      case cellType spreadsheet cell of
+    descFromCells _ [] = ("", mempty)
+    descFromCells rawColName (cell:cells) = first T.unwords
+      let
+        normalizedDefName
+          = T.take 20 $ -- Definition name length limit
+            T.filter (\c -> c /= '(' && c /= ')' && c /= ',') $
+            T.replace "\n" " " rawColName
+       in case sconcat $ NE.map (cellType spreadsheet) (cell NE.:| take 4 cells) of
         CellDateT -> ([datetime], mempty)
         CellNumberT -> ([number], mempty)
         CellTextT
           -- If any textual cell has length > 255, we make this $text.
-          | any (maybe False ((> 255) . T.length) . (^? cellValue._Just._CellText)) (cell:cells)
+          | any (maybe False ((> 255) . T.length) . (^? cellValue . _Just . _CellText)) (cell:cells)
           -> ([text], mempty)
           -- Otherwise, we heuristically determine whether the field should be
           -- a $[], $ref, or just plain.
           | otherwise
-          -> determineListOrRef colName (cell:cells)
+          -> determineListOrRef normalizedDefName (cell:cells)
 
     determineListOrRef :: Text -> [Cell] -> ([Text], Map Text [Text])
-    determineListOrRef colName cells
+    determineListOrRef defName cells
         | let groups
-                = NE.groupAllWith T.toLower $
+                = NE.group $ sort $
                   mapMaybe ((\case
                     CellText ""  -> Nothing
                     CellText txt -> Just txt
@@ -135,24 +155,27 @@ xlsxToDef wsName (start_r,start_c) spreadsheet =
           -- than once, and if there are many amongst these that are used
           -- more than once, we likely want to create a list or ref, even if
           -- some of the options are only used once.
-        , let ngroups = length $
-                          filter ((> 1) . NE.length) groups
-        , ngroups > 1 && ngroups < 30
+        , let n = length (take (maxRefSize+1) groups)
+        , n > 1 && n < maxRefSize
           -- Extract the first of the equal modulo capitalization group values
         , let canonGroups = map NE.head groups
-        = if ngroups < 10
+        = if n < maxListSize
               then ([list canonGroups], mempty)
               else
                 -- ngroups > 5 && < 20, make a new definition with these values
-                (["$ref(" <> colName <> ",*)"], M.singleton colName canonGroups)
+                (["$ref(" <> defName <> ",*)"], M.singleton defName canonGroups)
         | otherwise
         = mempty
-
 
 data CellType
   = CellNumberT
   | CellDateT
   | CellTextT
+
+instance Semigroup CellType where
+  CellTextT <> _ = CellTextT
+  _ <> CellTextT = CellTextT
+  _a <> b = b
 
 cellType :: Xlsx -> Cell -> CellType
 cellType xlsx cell = fromMaybe CellTextT do
@@ -234,23 +257,32 @@ instance FromJSON NameRecord where
         [value] <- v .: "value"
         return (NameRecord value)
 
+-- | Create a CoB 'D
 createDefFromXlsx :: (MonadReader CobSession m, MonadIO m)
                   => FilePath
-                  -> Text
-                  -> (RowIndex, ColumnIndex)
+                  -> OptionsXlsxImporter
                   -> m ()
-createDefFromXlsx fp t coords = do
+createDefFromXlsx fp opts = do
+  CobSession session <- ask
 
-  (refs, def) <- liftIO $ xlsxFileToDef fp t coords
+  (refs, definition) <- liftIO $ xlsxFileToDef fp opts
 
-  forM_ (M.toList refs) \(defName, values) -> do
-    liftIO $ putStrLn $ "Creating auxiliary definition: " <> T.unpack defName
-    newDefinition (fromDSL defName "@AUTOGENAUX" (void $ "Value" |= ""))
-    performReq $ 
-      forM_ values \rawValue -> do
-        liftIO $ putStrLn $ "Adding instance: " <> T.unpack rawValue
-        Servant.addInstance (AddSpec (T.unpack defName) (NameRecord rawValue) True)
+  liftIO $ do
 
-  liftIO $ putStrLn $ "Creating main definition: " <> T.unpack t
-  newDefinition def
+    let forHow_ = if opts.concurrently then forConcurrently_ else forM_
+
+    -- ROMES:TODO: Flag to enable or disable concurrency (for log readability)
+    forHow_ (M.toList refs) \(defName, values) -> do
+
+      putStrLn $ "Creating auxiliary definition: " <> T.unpack defName
+      runReaderT (newDefinition (fromDSL defName "@AUTOGENAUX" (void $ "Value" |= "$instanceLabel"))) (CobSession session)
+
+      forHow_ values \rawValue -> do
+        putStrLn $ "Adding instance: " <> T.unpack rawValue
+        Servant.Client.runClientM
+          (Servant.addInstance (AddSpec (T.unpack defName) (NameRecord rawValue) False)) session
+
+    putStrLn $ "Creating main definition: " <> T.unpack opts.worksheetName
+
+  newDefinition definition
 
