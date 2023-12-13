@@ -1,7 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Cob.RecordM.Definition.Xlsx where
 
+import qualified Data.ByteString.Lazy as BSL
 import Data.Maybe
 import Codec.Xlsx
 import Data.Text (Text)
@@ -13,9 +18,39 @@ import qualified Data.Map as M
 import Cob.RecordM.Definition
 import Control.Monad
 import Control.Exception
+import Data.List (find, sort)
+import Data.Bifunctor
+import qualified Data.List.NonEmpty as NE
+
+import Control.Monad.Reader
+import Control.Monad.IO.Class
+import Data.Aeson
+import Cob.RecordM.Servant as Servant hiding (newDefinition)
+import Cob.RecordM (newDefinition)
+import Cob.Session
+import Cob.Utils
+
+-- | Create a t'Definition' from an Excel Spreadsheet file (t'FilePath')
+xlsxFileToDef :: FilePath
+              -- ^ The path to the Excel spreadsheet
+              -> Text
+              -- ^ Name of the worksheet from which to parse definition
+              -> (RowIndex, ColumnIndex)
+              -- ^ The (Row, Column) from which to start parsing the
+              -- to-be-definition table
+              -> IO (Map Text [Text], Definition)
+              -- ^ The resulting definition, and a map from definition names to
+              -- values to be included in those definitions as records. The
+              -- resulting definition might use $ref to refer to definitions that
+              -- don't exist and are only specified as key-element pairs in this
+              -- map.
+xlsxFileToDef fp t coords = do
+  bs <- BSL.readFile fp
+  return $ xlsxToDef t coords (toXlsxFast bs)
 
 -- ROMES:TODO: Sacar automaticamente $[] e $link tb (e.g. ao encontrar um link nas cells)?
 
+-- ROMES:TODO: $date vs $datetime vs $time, see which formats map to which (kind of easy).
 
 -- | Create a t'Definition' from an Excel Spreadsheet (t'Xlsx')
 xlsxToDef :: Text
@@ -25,8 +60,12 @@ xlsxToDef :: Text
           -- to-be-definition table
           -> Xlsx
           -- ^ The spreadsheet
-          -> Definition
-          -- ^ The resulting definition
+          -> (Map Text [Text], Definition)
+          -- ^ The resulting definition, and a map from definition names to
+          -- values to be included in those definitions as records. The
+          -- resulting definition might use $ref to refer to definitions that
+          -- don't exist and are only specified as key-element pairs in this
+          -- map.
 xlsxToDef wsName (start_r,start_c) spreadsheet = 
   let
     allCells = case spreadsheet ^? ixSheet wsName . wsCells of
@@ -34,41 +73,105 @@ xlsxToDef wsName (start_r,start_c) spreadsheet =
                                      ++ show wsName
                                      ++ " not found in the spreadsheet"
                  Just cells -> cells
+    headerCells :: [(Cell, [Cell])]
     headerCells
-      = [ ((r,c), cell)
-            | ((r,c), cell) <- M.toAscList allCells
-            , r == start_r
-            , c >= start_c ]
-   in fromDSL wsName "" do
+      = [ (cellHeader, columnCells)
+          | ((rh,ch), cellHeader) <- M.toAscList allCells
+          , rh == start_r
+          , ch >= start_c
+          , let columnCells
+                  = M.elems $
+                    M.filterWithKey (\(rc,cc) _ -> rc > rh && cc == ch) allCells
+        ]
+   in runDSL wsName "@AUTOGENXLSX" do
+     M.unionsWith (<>) <$>
+       forM headerCells \(headerCell, columnCells) -> do
+         case headerCell ^. cellValue of
+           Just (CellText txt) -> do
+             let nonEmptyCells = filter (isJust . _cellValue) columnCells
+             -- Determine the description from the style of the cell below
+             case descFromCells txt nonEmptyCells of
+               (fieldDesc, recordsToAdd) -> do
+                  txt |= fieldDesc
+                  pure recordsToAdd
+           _ -> pure mempty
 
-     forM_ headerCells \((r,c),cell) -> do
-
-       case cell ^. cellValue of
-         Just (CellText txt) -> do
-           -- Determine the description from the style of the cell below
-           txt |= descFromCell (allCells ^? ix (r+1,c))
-           pure ()
-         _ -> pure ()
   where
-    descFromCell :: Maybe Cell -> Text
-    descFromCell Nothing     = mempty
-    descFromCell (Just cell) = fromMaybe mempty do
-      -- No keywords in any other case
-      (CellDouble double) <- cell ^. cellValue
-      styleXfId <- cell ^. cellStyle
 
-      let cellXf = fromMaybe (error $ show styleXfId ++ " CellXf Id not found in " ++ show (stylesheet ^? styleSheetCellXfs)) $
-                    stylesheet ^? styleSheetCellXfs . ix styleXfId
-          numFmt = fromMaybe (-1) $ cellXf ^. cellXfNumFmtId
+    descFromCells :: Text
+                  -- ^ Name of this column
+                  -> [Cell]
+                  -- ^ The cells below the header in this column
+                  -> (Text, Map Text [Text])
+                  -- ^ Returns the description of this definition field, and,
+                  -- if the field is a $ref, returns a non-empty map from the
+                  -- name of the field to the value of the records that should
+                  -- be added to a new definition with that name.
+    descFromCells colName []          = ("", mempty)
+    descFromCells colName (cell:cells) = first T.unwords
+      case cellType spreadsheet cell of
+        CellDateT -> ([datetime], mempty)
+        CellNumberT -> ([number], mempty)
+        CellTextT
+          -- If any textual cell has length > 255, we make this $text.
+          | any (maybe False ((> 255) . T.length) . (^? cellValue._Just._CellText)) (cell:cells)
+          -> ([text], mempty)
+          -- Otherwise, we heuristically determine whether the field should be
+          -- a $[], $ref, or just plain.
+          | otherwise
+          -> determineListOrRef colName (cell:cells)
 
-      -- Check if CellDouble is formatted as a date,
-      -- to determine if field is $number or $datetime
-      if isDateTime numFmt []
-         then return datetime
-         else return number
+    determineListOrRef :: Text -> [Cell] -> ([Text], Map Text [Text])
+    determineListOrRef colName cells
+        | let groups
+                = NE.groupAllWith T.toLower $
+                  mapMaybe ((\case
+                    CellText ""  -> Nothing
+                    CellText txt -> Just txt
+                    _ -> Nothing)
+                             <=< (^.cellValue))
+                           cells
+          -- We only want to count the amount of names that are used more
+          -- than once, and if there are many amongst these that are used
+          -- more than once, we likely want to create a list or ref, even if
+          -- some of the options are only used once.
+        , let ngroups = length $
+                          filter ((> 1) . NE.length) groups
+        , ngroups > 1 && ngroups < 30
+          -- Extract the first of the equal modulo capitalization group values
+        , let canonGroups = map NE.head groups
+        = if ngroups < 10
+              then ([list canonGroups], mempty)
+              else
+                -- ngroups > 5 && < 20, make a new definition with these values
+                (["$ref(" <> colName <> ",*)"], M.singleton colName canonGroups)
+        | otherwise
+        = mempty
 
-    stylesheet :: StyleSheet
-    stylesheet = either throw id $ parseStyleSheet $ spreadsheet ^. xlStyles
+
+data CellType
+  = CellNumberT
+  | CellDateT
+  | CellTextT
+
+cellType :: Xlsx -> Cell -> CellType
+cellType xlsx cell = fromMaybe CellTextT do
+  -- No keywords in any other case
+  (CellDouble double) <- cell ^. cellValue
+  styleXfId <- cell ^. cellStyle
+
+  let cellXf = fromMaybe (error $ show styleXfId ++ " CellXf Id not found in " ++ show (getStylesheet xlsx ^? styleSheetCellXfs)) $
+                getStylesheet xlsx ^? styleSheetCellXfs . ix styleXfId
+      numFmt = fromMaybe (-1) $ cellXf ^. cellXfNumFmtId
+
+  -- Check if CellDouble is formatted as a date,
+  -- to determine if field is $number or $datetime
+  if isDateTime numFmt []
+     then return CellDateT
+     else return CellNumberT
+
+getStylesheet :: Xlsx -> StyleSheet
+getStylesheet xlsx = either throw id $ parseStyleSheet $ xlsx ^. xlStyles
 
 -- See https://github.com/tidyverse/readxl/blob/866eff6e1a73226598fbcd5510607706402fd0ab/src/ColSpec.h#L111
 -- TODO: Upstream
@@ -117,3 +220,37 @@ isDateTime id custom
 
   | otherwise
   = id `elem` custom
+
+--------------------------------------------------------------------------------
+
+newtype NameRecord = NameRecord { value :: Text }
+instance ToJSON NameRecord where
+    toJSON (NameRecord value) =
+      object
+        [ "Value" Data.Aeson..= value
+        ]
+instance FromJSON NameRecord where
+    parseJSON = withObject "NameRecord" $ \v -> do
+        [value] <- v .: "value"
+        return (NameRecord value)
+
+createDefFromXlsx :: (MonadReader CobSession m, MonadIO m)
+                  => FilePath
+                  -> Text
+                  -> (RowIndex, ColumnIndex)
+                  -> m ()
+createDefFromXlsx fp t coords = do
+
+  (refs, def) <- liftIO $ xlsxFileToDef fp t coords
+
+  forM_ (M.toList refs) \(defName, values) -> do
+    liftIO $ putStrLn $ "Creating auxiliary definition: " <> T.unpack defName
+    newDefinition (fromDSL defName "@AUTOGENAUX" (void $ "Value" |= ""))
+    performReq $ 
+      forM_ values \rawValue -> do
+        liftIO $ putStrLn $ "Adding instance: " <> T.unpack rawValue
+        Servant.addInstance (AddSpec (T.unpack defName) (NameRecord rawValue) True)
+
+  liftIO $ putStrLn $ "Creating main definition: " <> T.unpack t
+  newDefinition def
+

@@ -9,11 +9,12 @@ module Cob.RecordM.Definition
   ( -- * Static Definition
     Definition(..), Field(..), Condition(..), DefinitionState(..), FieldRequired(..)
     -- * Definition Quoting (DSL)
-  , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL
+  , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL
   , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
   , (===), (?)
     -- ** Keywords
-  , Keyword, keyword, instanceLabel, instanceDescription, readOnly, number, datetime, date
+  , Keyword, keyword, instanceLabel, instanceDescription, readOnly, number
+  , datetime, date, text, list
     -- ** Debugging
   , _testBuild
   ) where
@@ -29,6 +30,7 @@ import Control.Monad.Free
 import Control.Monad.Free.TH
 import Data.Bifunctor
 import Data.Maybe
+import qualified Data.Text as T
 
 data Definition
   = Definition
@@ -202,13 +204,17 @@ type Keyword = Text
 keyword :: Text -> Keyword
 keyword = ("$" <>)
 
-instanceLabel, instanceDescription, readOnly, number, datetime, date :: Keyword
+instanceLabel, instanceDescription, readOnly, number, datetime, date, text :: Keyword
 instanceLabel       = keyword "instanceLabel"
 instanceDescription = keyword "instanceDescription"
 readOnly            = keyword "readonly"
 number              = keyword "number"
 datetime            = keyword "datetime"
 date                = keyword "date"
+text                = keyword "text"
+
+list :: [Text] -> Keyword
+list labels = keyword ("[" <> T.intercalate "," labels <> "]")
 
 --------------------------------------------------------------------------------
 -- Interpreter
@@ -222,8 +228,20 @@ fromDSL :: Text
         -- ^ Definition quote (DSL building a definition)
         -> Definition
         -- ^ The resulting definition
-fromDSL defName defDescription defQ =
-  snd $ runIdentity $ runFresh $
+fromDSL defName defDescription defQ
+  = snd $ runDSL defName defDescription defQ
+
+runDSL :: Text
+        -- ^ Definition Name
+        -> Text
+        -- ^ Definition Description
+        -> DefinitionQM a
+        -- ^ Definition quote (DSL building a definition)
+        -> (a, Definition)
+        -- ^ The resulting definition and computation result
+runDSL defName defDescription defQ
+  = runIdentity $
+    runFresh $
     runStateT
       (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
       (simpleDefinition defName defDescription)
