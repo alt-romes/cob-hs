@@ -12,6 +12,8 @@ module Cob.RecordM.Definition
   , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL
   , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
   , (===), (?)
+    -- ** Keywords
+  , Keyword, keyword, instanceLabel, instanceDescription, readOnly, number, datetime, date
     -- ** Debugging
   , _testBuild
   ) where
@@ -192,18 +194,21 @@ infixr 0 ?
 -- duplicable  :: FieldName -> DefinitionQ
 
 --------------------------------------------------------------------------------
--- $ Modifiers
+-- $ Keywords
 --------------------------------------------------------------------------------
 
--- ROMES:TODO: Type synonym for these `Text` dollar fields
+type Keyword = Text
 
-dollar :: Text -> Text
-dollar = ("$" <>)
+keyword :: Text -> Keyword
+keyword = ("$" <>)
 
-instanceLabel, instanceDescription, readOnly :: Text
-instanceLabel = dollar "instanceLabel"
-instanceDescription = dollar "instanceDescription"
-readOnly = dollar "readonly"
+instanceLabel, instanceDescription, readOnly, number, datetime, date :: Keyword
+instanceLabel       = keyword "instanceLabel"
+instanceDescription = keyword "instanceDescription"
+readOnly            = keyword "readonly"
+number              = keyword "number"
+datetime            = keyword "datetime"
+date                = keyword "date"
 
 --------------------------------------------------------------------------------
 -- Interpreter
