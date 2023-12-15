@@ -2,10 +2,13 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE NamedFieldPuns #-}
-module Cob.RecordM.Definition.Xlsx where
+module Cob.RecordM.Definition.Xlsx
+  ( module Cob.RecordM.Definition.Xlsx
+    -- ** Re-exports
+  , RowIndex(..), ColumnIndex(..)
+  ) where
 
 import Control.Concurrent.Async hiding (Default(..), def)
 import Control.Concurrent.Async.Pool hiding (Default(..), def)
@@ -17,6 +20,8 @@ import qualified Data.Text as T
 import Control.Lens
 import Data.Map (Map)
 import qualified Data.Map as M
+import Prettyprinter (pretty)
+import qualified Prettyprinter as PP
 
 import Cob.RecordM.Definition
 import Control.Monad
@@ -175,6 +180,8 @@ data CellType
 instance Semigroup CellType where
   CellTextT <> _ = CellTextT
   _ <> CellTextT = CellTextT
+  CellDateT <> CellNumberT = CellDateT
+  CellNumberT <> CellDateT = CellDateT
   a <> _b = a
 
 cellType :: Xlsx -> Cell -> CellType
@@ -257,7 +264,8 @@ instance FromJSON NameRecord where
         [value] <- v .: "value"
         return (NameRecord value)
 
--- | Create a CoB 'D
+-- | Create a CoB 'Definition' and auxiliary definitions for $ref fields from
+-- the given .xlsx file. Tries to be smart.
 createDefFromXlsx :: MonadCob m
                   => FilePath
                   -> OptionsXlsxImporter
@@ -286,3 +294,18 @@ createDefFromXlsx fp opts = do
 
   newDefinition definition
 
+--------------------------------------------------------------------------------
+-- * Dry Run
+--------------------------------------------------------------------------------
+
+dryRunDefFromXlsx :: FilePath -> OptionsXlsxImporter -> IO ()
+dryRunDefFromXlsx fp opts = do
+  (refs, definition) <- liftIO $ xlsxFileToDef fp opts
+  print $
+    PP.vsep
+      (map (\(name, instances) ->
+             pretty name <>
+               PP.nest 4 (PP.vsep (map pretty instances))
+           )
+           (M.toList refs)) <>
+    pretty definition

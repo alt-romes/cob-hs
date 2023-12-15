@@ -116,7 +116,8 @@ library cob-xlsx
                       -- We get lens because xlsx already depends on them
                       lens,
                       servant-client,
-                      text, bytestring, containers, aeson, async-pool
+                      text, bytestring, containers, aeson, async-pool,
+                      prettyprinter
 
     hs-source-dirs:   cob-xlsx
     default-language: Haskell2010

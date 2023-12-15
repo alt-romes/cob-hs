@@ -1,4 +1,5 @@
 {-# LANGUAGE GHC2021 #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE DuplicateRecordFields #-}
@@ -23,7 +24,7 @@ import Control.Monad
 import Data.Functor.Identity
 import Control.Monad.State
 import Control.Monad.Reader
-import Data.Text
+import Data.Text (Text, pack)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Control.Monad.Free
@@ -31,6 +32,7 @@ import Control.Monad.Free.TH
 import Data.Bifunctor
 import Data.Maybe
 import qualified Data.Text as T
+import Prettyprinter hiding (list)
 
 data Definition
   = Definition
@@ -74,7 +76,7 @@ data DefinitionState
 data FieldRequired
   = MandatoryField
   | FieldNotRequired
-  deriving Show
+  deriving (Eq, Show)
 
 
 -- * The Definition Builder DSL / Monad
@@ -388,6 +390,28 @@ newtype Fresh m a = Fresh (StateT Int m a)
 
 runFresh :: Monad m => Fresh m a -> m a
 runFresh (Fresh f) = evalStateT f 1
+
+--------------------------------------------------------------------------------
+-- Pretty printing
+--------------------------------------------------------------------------------
+
+instance Pretty Definition where
+  pretty Definition{..} =
+    pretty defName <> ":" <+> pretty defDescription <>
+      nest 4
+        (vsep (map pretty (M.elems defFieldDefinitions)))
+      
+instance Pretty Field where
+  pretty Field{..} =
+    (case fieldCondition of
+       Nothing -> mempty
+       Just cond -> viaShow cond <> space
+    ) <>
+    pretty fieldName <> ":" <+> pretty fieldDescription <>
+      (if fieldRequired == MandatoryField then space <> "(mandatory)" else mempty) <>
+        (if fieldDuplicable then space <> "(duplicable)" else mempty) <>
+          nest 4
+            (vsep (map pretty (M.elems $ fromMaybe mempty fieldFields)))
 
 --------------------------------------------------------------------------------
 -- Small test to compile a Definition
