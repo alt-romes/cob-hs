@@ -28,6 +28,7 @@ import Cob.UserM.Entities
 import Cob.Utils
 import Cob.Session
 import Cob.Ref
+import Cob.Log
 
 -- | UserM writes the added users thorought the Cob computation.
 -- This allows it to undo (delete) all added users in a computation (particularly in a testing environment)
@@ -42,10 +43,11 @@ import Cob.Ref
 -- (a user with the same username already exists).
 createUser :: MonadCob m => User -> m (Ref User)
 createUser user = do
+  logInfo $ "Creating new user with username " <> toLogStr (uusername user)
   CobSession{clientEnv} <- ask
   liftIO $ Servant.Client.runClientM (Servant.createUser user) clientEnv >>= \case
     Left e@(FailureResponse _ (responseBody -> resp)) ->
-      if "\"errorType\":\"NON_UNIQUE\"" `BS.isInfixOf` (BS.toStrict resp)
+      if "\"errorType\":\"NON_UNIQUE\"" `BS.isInfixOf` BS.toStrict resp
          then throwIO (NonUniqueUser (uusername user))
          else throwIO e
     Left e -> throwIO e
@@ -53,13 +55,15 @@ createUser user = do
 
 -- | Delete an UserM user
 deleteUser :: MonadCob m => Ref User -> m ()
-deleteUser (Ref _ ref) = do
+deleteUser r@(Ref _ ref) = do
+  logInfo $ "Deleting user " <> toLogStr (show r)
   _ <- performReq $ Servant.deleteUser ref
   pure ()
 
 -- | Add users to a group given their ids
 addToGroup :: MonadCob m => [Ref User] -> Ref Group -> m ()
-addToGroup users (Ref _ group) = do
+addToGroup users r@(Ref _ group) = do
+  logInfo $ "Adding users " <> toLogStr (show users) <> " to group " <> toLogStr (show r)
   _ <- performReq $ Servant.addUsersToGroup group users
   pure ()
 
@@ -67,6 +71,7 @@ addToGroup users (Ref _ group) = do
 -- Returns a temporary auth token for the logged in user
 umLogin :: MonadCob m => String -> String -> m String
 umLogin username pass = do
+  logInfo $ "Logging in as " <> toLogStr username
   body <- performReq $ Servant.login (Servant.LoginData username pass)
   parseOrThrowIO (withObject "um_login" (.: "securityToken")) body
 

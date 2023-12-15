@@ -31,6 +31,7 @@ import Cob.RecordM.Definition
 import Cob.Utils
 import Cob.Session
 import Cob.Ref
+import Cob.Log
 import Data.Maybe
 
 -- TODO: Nested fields! # Creating an instance with duplicate fields https://learning.cultofbits.com/docs/cob-platform/developers/recordm-integration-resource/#creating-an-instance-with-duplicate-fields
@@ -75,6 +76,7 @@ import Data.Maybe
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
 definitionSearch :: forall a m. MonadCob m => Record a => Query a -> m [(Ref a, a)]
 definitionSearch rmQuery = do
+    logInfo $ "Searching definition " <> toLogStr (definition @a) <> " with " <> toLogStr (_q rmQuery)
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing
     let
       parser = withObject "definition_search" $ \o -> do
@@ -90,6 +92,7 @@ definitionSearch rmQuery = do
 -- | Stream a definition!
 streamDefinitionSearch :: forall a b m. MonadCob m => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
 streamDefinitionSearch rmQuery f = do
+  logInfo $ "Streaming search definition " <> toLogStr (definition @a) <> " with " <> toLogStr (_q rmQuery)
   CobSession{clientEnv} <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
   liftIO $ Servant.Client.Streaming.withClientM req clientEnv (\case
@@ -113,6 +116,7 @@ streamDefinitionSearch rmQuery f = do
 -- rbody <- performReq (getInstance (fromInteger ref) Nothing) `catchError` throwError ("Couldn't find instance with id " <> show ref)
 getInstance :: forall a m. MonadCob m => Record a => Ref a -> m a
 getInstance ref = do
+  logInfo $ "Fetching instance " <> toLogStr (show ref)
   definitionSearch (defaultQuery { _q = "id:" <> show ref, _size = 1 }) >>= \case
     [] -> liftIO $ fail ("Couldn't find instance with id " <> show ref)
     (_,x):_ -> pure x
@@ -121,6 +125,7 @@ getInstance ref = do
 -- | Count the number of records matching a query in a definition
 definitionCount :: forall a m. MonadCob m => Record a => Query a -> m Int
 definitionCount rmQuery = do
+    logInfo $ "Fetching definition count for " <> toLogStr (_q rmQuery)
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just 0) (Just 0) Nothing
     parseOrThrowIO (withObject "definition_count" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody
 
@@ -167,6 +172,7 @@ addInstanceSync = addInstanceWith True
 -- @
 addInstanceWith :: forall a m. MonadCob m => Record a => Bool -> a -> m (Ref a)
 addInstanceWith waitForSearchAvailability record = do
+  logInfo $ "Creating instance in " <> toLogStr (definition @a) <> " for " <> toLogStr (encode record)
   -- Last I checked (Nov. 2023), instance creation doesn't return a version
   -- alongside the newly created ID, so we give it the initial version (which is 0).
   Ref no_version refid <- performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)
@@ -184,7 +190,8 @@ addInstanceWith waitForSearchAvailability record = do
 --
 -- We don't do version checking! This will really delete the instance regardless of whether you were the last to update it.
 deleteInstance :: forall a m. MonadCob m => Ref a -> m ()
-deleteInstance (Ref _ ref) = do
+deleteInstance r@(Ref _ ref) = do
+  logInfo $ "Deleting instance " <> toLogStr (show r)
   _ <- performReq $ Servant.deleteInstance ref (Just True)
   pure ()
 
@@ -281,6 +288,7 @@ deleteInstance (Ref _ ref) = do
 -- TODO: Consider not returning updated records?
 updateInstances :: forall a m. MonadCob m => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
 updateInstances query f = do
+  logInfo $ "Updating instances of " <> toLogStr (definition @a) <> " matching " <> toLogStr (_q query)
   CobSession{clientEnv} <- ask
   streamDefinitionSearch query $ Streamly.toList . Streamly.parEval id . Streamly.mapM (updateInstance' clientEnv)
     where
@@ -306,6 +314,7 @@ updateInstances query f = do
 -- using 'fromDSL' and 'DefinitionQ'.
 newDefinition :: forall m. MonadCob m => Definition -> m ()
 newDefinition def = do
+  logInfo $ "Creating new definition with name " <> toLogStr (defName def)
   _ <- performReq $ Servant.newDefinition def
   pure ()
 
