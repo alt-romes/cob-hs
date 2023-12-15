@@ -307,5 +307,5 @@ dryRunDefFromXlsx fp opts = do
              pretty name <>
                PP.nest 4 (PP.vsep (map pretty instances))
            )
-           (M.toList refs)) <>
+           (M.toList refs)) <> PP.line <>
     pretty definition

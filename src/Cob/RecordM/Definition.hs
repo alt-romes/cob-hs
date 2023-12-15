@@ -399,7 +399,7 @@ instance Pretty Definition where
   pretty Definition{..} =
     pretty defName <> ":" <+> pretty defDescription <>
       nest 4
-        (vsep (map pretty (M.elems defFieldDefinitions)))
+        (line <> vsep (map pretty (M.elems defFieldDefinitions)))
       
 instance Pretty Field where
   pretty Field{..} =
@@ -411,7 +411,7 @@ instance Pretty Field where
       (if fieldRequired == MandatoryField then space <> "(mandatory)" else mempty) <>
         (if fieldDuplicable then space <> "(duplicable)" else mempty) <>
           nest 4
-            (vsep (map pretty (M.elems $ fromMaybe mempty fieldFields)))
+            (line <> vsep (map pretty (M.elems $ fromMaybe mempty fieldFields)))
 
 --------------------------------------------------------------------------------
 -- Small test to compile a Definition
