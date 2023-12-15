@@ -14,8 +14,9 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Cob.Session
 import System.Log.FastLogger
+import Cob.Utils
 
-logError, logWarn, logInfo, logDebug :: (MonadIO m, MonadReader CobSession m) => LogStr -> m ()
+logError, logWarn, logInfo, logDebug :: MonadCob m => LogStr -> m ()
 logError = log ERROR
 logWarn  = log WARN
 logInfo  = log INFO
@@ -25,7 +26,7 @@ logDebug = log DEBUG
 logDebug = pure . const ()
 #endif
 
-log :: (MonadIO m, MonadReader CobSession m)
+log :: MonadCob m
     => Verbosity -> LogStr -> m ()
 log logVerbosity str = do
   CobSession{logger, verbosity} <- ask

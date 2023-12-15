@@ -258,7 +258,7 @@ instance FromJSON NameRecord where
         return (NameRecord value)
 
 -- | Create a CoB 'D
-createDefFromXlsx :: (MonadReader CobSession m, MonadIO m)
+createDefFromXlsx :: MonadCob m
                   => FilePath
                   -> OptionsXlsxImporter
                   -> m ()

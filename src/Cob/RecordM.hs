@@ -3,7 +3,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE Rank2Types #-}
-module Cob.RecordM where
+module Cob.RecordM
+  ( module Cob.RecordM
+  -- ** Re-exports
+  , MonadCob
+  ) where
 
 import Data.Aeson
 
@@ -69,7 +73,7 @@ import Data.Maybe
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
-definitionSearch :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> m [(Ref a, a)]
+definitionSearch :: forall a m. MonadCob m => Record a => Query a -> m [(Ref a, a)]
 definitionSearch rmQuery = do
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing
     let
@@ -84,7 +88,7 @@ definitionSearch rmQuery = do
     parseOrThrowIO parser rbody
 
 -- | Stream a definition!
-streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
+streamDefinitionSearch :: forall a b m. MonadCob m => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
 streamDefinitionSearch rmQuery f = do
   CobSession{clientEnv} <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
@@ -107,7 +111,7 @@ streamDefinitionSearch rmQuery f = do
 -- Difficulty of ^ is parsing
 -- Otherwise:
 -- rbody <- performReq (getInstance (fromInteger ref) Nothing) `catchError` throwError ("Couldn't find instance with id " <> show ref)
-getInstance :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Ref a -> m a
+getInstance :: forall a m. MonadCob m => Record a => Ref a -> m a
 getInstance ref = do
   definitionSearch (defaultQuery { _q = "id:" <> show ref, _size = 1 }) >>= \case
     [] -> liftIO $ fail ("Couldn't find instance with id " <> show ref)
@@ -115,7 +119,7 @@ getInstance ref = do
 {-# INLINE getInstance #-}
 
 -- | Count the number of records matching a query in a definition
-definitionCount :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> m Int
+definitionCount :: forall a m. MonadCob m => Record a => Query a -> m Int
 definitionCount rmQuery = do
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just 0) (Just 0) Nothing
     parseOrThrowIO (withObject "definition_count" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody
@@ -138,7 +142,7 @@ definitionCount rmQuery = do
 -- addDog name ownerName = do
 --      rmAddInstance (DogsRecord name ownerName 0)
 -- @
-addInstance :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => a -> m (Ref a)
+addInstance :: forall a m. MonadCob m => Record a => a -> m (Ref a)
 addInstance = addInstanceWith False
 {-# INLINE addInstance #-}
 
@@ -146,7 +150,7 @@ addInstance = addInstanceWith False
 --
 -- The difference is the query parameter waitForSearchAvailability=true
 -- Related to documentation on POST /recordm/instances/integration.
-addInstanceSync :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => a -> m (Ref a)
+addInstanceSync :: forall a m. MonadCob m => Record a => a -> m (Ref a)
 addInstanceSync = addInstanceWith True
 {-# INLINE addInstanceSync #-}
 
@@ -161,7 +165,7 @@ addInstanceSync = addInstanceWith True
 -- -- find the added instance and update it
 -- rmUpdateInstance ref (property .~ newValue)
 -- @
-addInstanceWith :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Bool -> a -> m (Ref a)
+addInstanceWith :: forall a m. MonadCob m => Record a => Bool -> a -> m (Ref a)
 addInstanceWith waitForSearchAvailability record = do
   -- Last I checked (Nov. 2023), instance creation doesn't return a version
   -- alongside the newly created ID, so we give it the initial version (which is 0).
@@ -179,7 +183,7 @@ addInstanceWith waitForSearchAvailability record = do
 -- See /recordm/instances/{id}
 --
 -- We don't do version checking! This will really delete the instance regardless of whether you were the last to update it.
-deleteInstance :: forall a m. (MonadReader CobSession m, MonadIO m) => Ref a -> m ()
+deleteInstance :: forall a m. MonadCob m => Ref a -> m ()
 deleteInstance (Ref _ ref) = do
   _ <- performReq $ Servant.deleteInstance ref (Just True)
   pure ()
@@ -275,7 +279,7 @@ deleteInstance (Ref _ ref) = do
 --
 -- The resulting list of updated values doesn't necessarily reflect the order of the query results, I think
 -- TODO: Consider not returning updated records?
-updateInstances :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
+updateInstances :: forall a m. MonadCob m => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
 updateInstances query f = do
   CobSession{clientEnv} <- ask
   streamDefinitionSearch query $ Streamly.toList . Streamly.parEval id . Streamly.mapM (updateInstance' clientEnv)
@@ -300,7 +304,7 @@ updateInstances query f = do
 
 -- | Create a RecordM 'Definition', typically where 'Definition' is created
 -- using 'fromDSL' and 'DefinitionQ'.
-newDefinition :: forall m. (MonadReader CobSession m, MonadIO m) => Definition -> m ()
+newDefinition :: forall m. MonadCob m => Definition -> m ()
 newDefinition def = do
   _ <- performReq $ Servant.newDefinition def
   pure ()

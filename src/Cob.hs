@@ -44,6 +44,7 @@ import Control.Monad.Free.TH
 
 import Control.Exception
 import Cob.Exception
+import Cob.Utils (MonadCob)
 
 import qualified Control.Concurrent.Async as A
 
@@ -168,7 +169,7 @@ infixr 0 ~>
 runCob :: CobSession -> Cob ~> IO
 runCob cs = (`runReaderT` cs) . foldFree cobRIO
   where
-    cobRIO :: (MonadReader CobSession m, MonadIO m) => CobF ~> m
+    cobRIO :: MonadCob m => CobF ~> m
     cobRIO = \case
         StreamSearch q f h -> h <$> RM.streamDefinitionSearch q f
         Search q f  -> f <$> RM.definitionSearch q
@@ -217,7 +218,7 @@ mockCob delayInSeconds cs cobf = do
   -- return deletion errors instead of always the result?
 
   where
-    nt :: (MonadState ([Integer], [Integer]) m, MonadReader CobSession m, MonadIO m) => CobF ~> m
+    nt :: (MonadState ([Integer], [Integer]) m, MonadCob m) => CobF ~> m
     nt = \case
         StreamSearch q f h -> h <$> RM.streamDefinitionSearch q f
         Search q f  -> f <$> RM.definitionSearch q

@@ -4,7 +4,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
-module Cob.UserM where
+module Cob.UserM
+  ( module Cob.UserM
+    -- ** Re-exports
+  , MonadCob
+  ) where
 
 import Control.Exception
 
@@ -36,7 +40,7 @@ import Cob.Ref
 --
 -- Throws the 'NonUniqueUser' 'CobException' if the created user is non unique
 -- (a user with the same username already exists).
-createUser :: (MonadReader CobSession m, MonadIO m) => User -> m (Ref User)
+createUser :: MonadCob m => User -> m (Ref User)
 createUser user = do
   CobSession{clientEnv} <- ask
   liftIO $ Servant.Client.runClientM (Servant.createUser user) clientEnv >>= \case
@@ -48,20 +52,20 @@ createUser user = do
     Right b -> pure b
 
 -- | Delete an UserM user
-deleteUser :: (MonadReader CobSession m, MonadIO m) => Ref User -> m ()
+deleteUser :: MonadCob m => Ref User -> m ()
 deleteUser (Ref _ ref) = do
   _ <- performReq $ Servant.deleteUser ref
   pure ()
 
 -- | Add users to a group given their ids
-addToGroup :: (MonadReader CobSession m, MonadIO m) => [Ref User] -> Ref Group -> m ()
+addToGroup :: MonadCob m => [Ref User] -> Ref Group -> m ()
 addToGroup users (Ref _ group) = do
   _ <- performReq $ Servant.addUsersToGroup group users
   pure ()
 
 -- | Log-in to UserM using a username and password.
 -- Returns a temporary auth token for the logged in user
-umLogin :: (MonadReader CobSession m, MonadIO m) => String -> String -> m String
+umLogin :: MonadCob m => String -> String -> m String
 umLogin username pass = do
   body <- performReq $ Servant.login (Servant.LoginData username pass)
   parseOrThrowIO (withObject "um_login" (.: "securityToken")) body
