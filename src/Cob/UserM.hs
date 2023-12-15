@@ -38,8 +38,8 @@ import Cob.Ref
 -- (a user with the same username already exists).
 createUser :: (MonadReader CobSession m, MonadIO m) => User -> m (Ref User)
 createUser user = do
-  CobSession session <- ask
-  liftIO $ Servant.Client.runClientM (Servant.createUser user) session >>= \case
+  CobSession{clientEnv} <- ask
+  liftIO $ Servant.Client.runClientM (Servant.createUser user) clientEnv >>= \case
     Left e@(FailureResponse _ (responseBody -> resp)) ->
       if "\"errorType\":\"NON_UNIQUE\"" `BS.isInfixOf` (BS.toStrict resp)
          then throwIO (NonUniqueUser (uusername user))
@@ -70,12 +70,13 @@ umLogin username pass = do
 -- Returns a temporary 'CobSession' for the logged in user
 --
 -- Useful for interactive sessions e.g. with GHCi
-umSession :: Host
+withUMSession :: Host
           -> String -- ^ Username
           -> String -- ^ Password
-          -> IO CobSession
-umSession hostname username pass = do
-    session <- emptySession hostname
-    tok     <- runReaderT (umLogin username pass) session
-    updateSessionToken session tok
+          -> (CobSession -> IO a)
+          -> IO a
+withUMSession hostname username pass run =
+    withEmptySession hostname $ \session -> do
+      tok     <- runReaderT (umLogin username pass) session
+      run =<< updateSessionToken session tok
 

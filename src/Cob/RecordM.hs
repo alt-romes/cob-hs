@@ -86,9 +86,9 @@ definitionSearch rmQuery = do
 -- | Stream a definition!
 streamDefinitionSearch :: forall a b m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
 streamDefinitionSearch rmQuery f = do
-  CobSession session <- ask
+  CobSession{clientEnv} <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
-  liftIO $ Servant.Client.Streaming.withClientM req session (\case
+  liftIO $ Servant.Client.Streaming.withClientM req clientEnv (\case
     Left e -> throwIO e
     Right stream ->
       let
@@ -277,8 +277,8 @@ deleteInstance (Ref _ ref) = do
 -- TODO: Consider not returning updated records?
 updateInstances :: forall a m. (MonadReader CobSession m, MonadIO m) => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
 updateInstances query f = do
-  CobSession session <- ask
-  streamDefinitionSearch query $ Streamly.toList . Streamly.parEval id . Streamly.mapM (updateInstance' session)
+  CobSession{clientEnv} <- ask
+  streamDefinitionSearch query $ Streamly.toList . Streamly.parEval id . Streamly.mapM (updateInstance' clientEnv)
     where
       updateInstance' :: Servant.Client.ClientEnv -> (Ref a, a) -> IO (Ref a, a)
       updateInstance' session (Ref version ref, a) =

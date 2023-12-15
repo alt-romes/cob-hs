@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Cob.Session
-  ( CobToken, Host, CobSession(..)
-  , makeSession, emptySession, updateSessionToken
+  ( CobToken, Host, CobSession(..), Verbosity(..)
+  , withSession, withEmptySession, updateSessionToken
   , tlsManagerFrom
   ) where
 
 import GHC.Conc (newTVarIO)
+import System.Log.FastLogger
 
 import Data.String (fromString)
 
@@ -15,6 +17,7 @@ import Data.Time.Calendar (Day(..))
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Client (Cookie(..), CookieJar, createCookieJar, newManager, Manager)
 import Servant.Client as C (ClientEnv(ClientEnv, baseUrl, cookieJar), BaseUrl(..), Scheme(..), defaultMakeClientRequest)
+import Control.Monad
 
 
 -- | A priviledge granting 'CobToken'
@@ -26,27 +29,42 @@ type Host      = String
 -- | A 'Cob' session, required as an argument to run a 'Cob' computation. It
 -- should be created using 'makeSession' unless finer control over the TLS
 -- session manager or the cobtoken cookie is needed.
-newtype CobSession = CobSession ClientEnv
+data CobSession
+  = CobSession
+    { clientEnv :: {-# UNPACK #-} !ClientEnv
+    , logger    :: FastLogger
+    , verbosity :: Verbosity
+    }
+
+-- | The verbosity of logs for the CoB computation using this t'CobSession'.
+--
+-- To set the verbosity use record update syntax on an existing session,
+-- created with a function such as 'withSession'.
+--
+-- By default, verbosity 'INFO' is used.
+data Verbosity
+  = ERROR
+  | WARN
+  | INFO
+  | DEBUG
 
 -- | Make a 'CobSession' with the default TLS Manager given the 'Host' and a
 -- 'CobToken'.
-makeSession :: Host -> CobToken -> IO CobSession
-makeSession cobhost tok = do
-    manager <- newManager tlsManagerSettings
-    tvar    <- newTVarIO (makeCookieJar cobhost tok)
-    return $ CobSession $ ClientEnv manager (BaseUrl Https cobhost 443 "") (Just tvar) defaultMakeClientRequest
+withSession :: Host -> CobToken -> (CobSession -> IO a) -> IO a
+withSession cobhost tok run = withEmptySession cobhost (run <=< (`updateSessionToken` tok))
 
 -- | Create an empty 'CobSession', i.e. without a token
-emptySession :: Host -> IO CobSession
-emptySession cobhost = do
+withEmptySession :: Host -> (CobSession -> IO a) -> IO a
+withEmptySession cobhost run = withFastLogger (LogStderr defaultBufSize) $ \logger -> do
   manager <- newManager tlsManagerSettings
-  return $ CobSession $ ClientEnv manager (BaseUrl Https cobhost 443 "") Nothing defaultMakeClientRequest
+  let clientEnv = ClientEnv manager (BaseUrl Https cobhost 443 "") Nothing defaultMakeClientRequest
+  run CobSession{clientEnv, logger, verbosity=INFO}
 
 -- | Update the 'CobToken' of a 'CobSession'
 updateSessionToken :: CobSession -> CobToken -> IO CobSession
-updateSessionToken (CobSession clEnv) tok = do
-  tvar    <- newTVarIO (makeCookieJar (baseUrlHost $ baseUrl clEnv) tok)
-  return (CobSession (clEnv { C.cookieJar = Just tvar }))
+updateSessionToken sess@CobSession{clientEnv} tok = do
+  tvar    <- newTVarIO (makeCookieJar (baseUrlHost $ baseUrl clientEnv) tok)
+  return sess{clientEnv=clientEnv{ C.cookieJar = Just tvar }}
 
 makeCookieJar :: Host -> CobToken -> CookieJar
 makeCookieJar cobhost tok = createCookieJar
@@ -67,4 +85,4 @@ makeCookieJar cobhost tok = createCookieJar
 
 -- | Get the TLS 'Manager' from a 'CobSession'
 tlsManagerFrom :: CobSession -> Manager
-tlsManagerFrom (CobSession (ClientEnv manager _ _ _)) = manager
+tlsManagerFrom CobSession{clientEnv=(ClientEnv manager _ _ _)} = manager

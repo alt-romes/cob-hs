@@ -36,17 +36,16 @@ main = do
   putStrLn "Password:"
   pass <- getLine
 
-  sess <- umSession server user pass
-
-  runCob sess $ do
-    createDefFromXlsx
-      filepath
-      OptionsXlsxImporter{ worksheetName
-                         , startCoord=(1,1)
-                         , maxListSize
-                         , maxRefSize
-                         , concurrently
-                         }
+  withUMSession server user pass $ \sess -> do
+    runCob sess $ do
+      createDefFromXlsx
+        filepath
+        OptionsXlsxImporter{ worksheetName
+                           , startCoord=(1,1)
+                           , maxListSize
+                           , maxRefSize
+                           , concurrently
+                           }
 
   where
     runCob s o = runReaderT o s

@@ -134,7 +134,7 @@ xlsxToDef
         CellNumberT -> ([number], mempty)
         CellTextT
           -- If any textual cell has length > 255, we make this $text.
-          | any (maybe False ((> 255) . T.length) . (^? cellValue . _Just . _CellText)) (cell:cells)
+          | any (maybe False ((> 255) . T.length) . (^? cellValue . _Just . _CellText)) (take 100 $ cell:cells)
           -> ([text], mempty)
           -- Otherwise, we heuristically determine whether the field should be
           -- a $[], $ref, or just plain.
@@ -175,7 +175,7 @@ data CellType
 instance Semigroup CellType where
   CellTextT <> _ = CellTextT
   _ <> CellTextT = CellTextT
-  _a <> b = b
+  a <> _b = a
 
 cellType :: Xlsx -> Cell -> CellType
 cellType xlsx cell = fromMaybe CellTextT do
@@ -263,7 +263,7 @@ createDefFromXlsx :: (MonadReader CobSession m, MonadIO m)
                   -> OptionsXlsxImporter
                   -> m ()
 createDefFromXlsx fp opts = do
-  CobSession session <- ask
+  sess@CobSession{clientEnv} <- ask
 
   (refs, definition) <- liftIO $ xlsxFileToDef fp opts
 
@@ -275,12 +275,12 @@ createDefFromXlsx fp opts = do
     forHow_ (M.toList refs) \(defName, values) -> do
 
       putStrLn $ "Creating auxiliary definition: " <> T.unpack defName
-      runReaderT (newDefinition (fromDSL defName "@AUTOGENAUX" (void $ "Value" |= "$instanceLabel"))) (CobSession session)
+      runReaderT (newDefinition (fromDSL defName "@AUTOGENAUX" (void $ "Value" |= "$instanceLabel"))) sess
 
       forHow_ values \rawValue -> do
         putStrLn $ "Adding instance: " <> T.unpack rawValue
         Servant.Client.runClientM
-          (Servant.addInstance (AddSpec (T.unpack defName) (NameRecord rawValue) False)) session
+          (Servant.addInstance (AddSpec (T.unpack defName) (NameRecord rawValue) False)) clientEnv
 
     putStrLn $ "Creating main definition: " <> T.unpack opts.worksheetName
 

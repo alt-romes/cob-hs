@@ -14,8 +14,8 @@ import Cob.Session
 -- | Perform a request on a Cob servant api
 performReq :: (MonadReader CobSession m, MonadIO m) => Servant.Client.ClientM a -> m a
 performReq c = do
-    CobSession session <- ask
-    liftIO $ Servant.Client.runClientM c session >>= \case
+    CobSession{clientEnv} <- ask
+    liftIO $ Servant.Client.runClientM c clientEnv >>= \case
       Left e -> throwIO e --  todo... not this?
       Right b -> return b
 

@@ -23,6 +23,7 @@ flag examples
 library
     exposed-modules:  Cob,
                       Cob.Ref,
+                      Cob.Log,
                       Cob.Session,
                       Cob.Exception,
                       Cob.Utils,
@@ -46,6 +47,7 @@ library
                       bytestring,
                       mtl,
                       async,
+
                       free,
 
                       -- Network
@@ -54,7 +56,14 @@ library
                       http-client,
                       http-client-tls,
 
-                      -- Deriving
+                      -- Logging
+                      fast-logger,
+
+                      -- Pretty printing
+                      prettyprinter,
+                      prettyprinter-ansi-terminal,
+
+                      -- Deriving (currently unused I think)
                       generics-sop, sop-core,
 
                       -- JSON
@@ -70,7 +79,7 @@ library
 
     hs-source-dirs:   src
     default-language: Haskell2010
-    default-extensions: Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
+    default-extensions: NamedFieldPuns, Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
 
 -- A library for Cob Servant utilities
 library cob-servant
