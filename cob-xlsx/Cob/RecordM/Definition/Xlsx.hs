@@ -42,7 +42,9 @@ import Data.Semigroup
 
 data OptionsXlsxImporter = OptionsXlsxImporter
   { maxListSize :: Int
+  -- ^ The threshold over which N many distinct values are no longer considered for a $[] field
   , maxRefSize  :: Int
+  -- ^ The threshold over which N many distinct values are no longer considered for a $ref field
   , worksheetName :: Text
     -- ^ Name of the worksheet from which to parse definition
   , startCoord :: (RowIndex, ColumnIndex)
@@ -66,7 +68,7 @@ xlsxFileToDef fp opts = do
   bs <- BSL.readFile fp
   return $ xlsxToDef opts (toXlsxFast bs)
 
--- ROMES:TODO: Sacar automaticamente $[] e $link tb (e.g. ao encontrar um link nas cells)?
+-- ROMES:TODO: Sacar automaticamente $link tb (e.g. ao encontrar um link nas cells)
 
 -- ROMES:TODO: $date vs $datetime vs $time, see which formats map to which (kind of easy).
 
@@ -122,31 +124,31 @@ xlsxToDef
                   -- ^ Name of this column to name a new definition
                   -> [Cell]
                   -- ^ The cells below the header in this column
-                  -> (Text, Map Text [Text])
+                  -> (FieldDescription, Map Text [Text])
                   -- ^ Returns the description of this definition field, and,
                   -- if the field is a $ref, returns a non-empty map from the
                   -- name of the field to the value of the records that should
                   -- be added to a new definition with that name.
     descFromCells _ [] = ("", mempty)
-    descFromCells rawColName (cell:cells) = first T.unwords
+    descFromCells rawColName (cell:cells) =
       let
         normalizedDefName
           = T.take 20 $ -- Definition name length limit
             T.filter (\c -> c /= '(' && c /= ')' && c /= ',') $
             T.replace "\n" " " rawColName
        in case sconcat $ NE.map (cellType spreadsheet) (cell NE.:| take 4 cells) of
-        CellDateT -> ([datetime], mempty)
-        CellNumberT -> ([number], mempty)
+        CellDateT -> (datetime, mempty)
+        CellNumberT -> (number, mempty)
         CellTextT
           -- If any textual cell has length > 255, we make this $text.
-          | any (maybe False ((> 255) . T.length) . (^? cellValue . _Just . _CellText)) (take 100 $ cell:cells)
-          -> ([text], mempty)
+          | any (maybe False ((> 255) . T.length) . (^? cellValue . _Just . _CellText)) (take maxRefSize $ cell:cells)
+          -> (text, mempty)
           -- Otherwise, we heuristically determine whether the field should be
           -- a $[], $ref, or just plain.
           | otherwise
           -> determineListOrRef normalizedDefName (cell:cells)
 
-    determineListOrRef :: Text -> [Cell] -> ([Text], Map Text [Text])
+    determineListOrRef :: Text -> [Cell] -> (FieldDescription, Map Text [Text])
     determineListOrRef defName cells
         | let groups
                 = NE.group $ sort $
@@ -165,10 +167,10 @@ xlsxToDef
           -- Extract the first of the equal modulo capitalization group values
         , let canonGroups = map NE.head groups
         = if n < maxListSize
-              then ([list canonGroups], mempty)
+              then (list canonGroups, mempty)
               else
                 -- ngroups > 5 && < 20, make a new definition with these values
-                (["$ref(" <> defName <> ",*)"], M.singleton defName canonGroups)
+                (dollarRef defName "*", M.singleton defName canonGroups)
         | otherwise
         = mempty
 

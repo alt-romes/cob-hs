@@ -22,6 +22,7 @@ data Opts w = Opts
   , user        ::w::: Maybe String <?> "Login username for CoB server"
   , maxListSize ::w::: Int          <!> "15"    <?> "Over <maxListSize> distinct rows we no longer consider this column a $[...]"
   , maxRefSize  ::w::: Int          <!> "30"    <?> "Over <maxRefSize> distinct rows we no longer consider this column for $ref(...)"
+  , maxEditDistance ::w::: Int      <!> "3"     <?> "Strings whose levenshtein difference is below or equal to <maxEditDistance> are merged together" 
   , firstRow    ::w::: Int          <!> "1"     <?> "The row where the table starts"
   , firstCol    ::w::: Int          <!> "1"     <?> "The column where the table starts"
   , concurrently::w::: Bool         <!> "False" <?> "Create the auxiliary definitions and insert values concurrently"
@@ -35,6 +36,7 @@ main = do
 
   Opts{ server, user, filepath
       , maxListSize, maxRefSize
+      , maxEditDistance
       , firstRow, firstCol
       , concurrently, worksheetName
       , dryRun } <- unwrapRecord "cob-import-def"

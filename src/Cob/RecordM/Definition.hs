@@ -1,4 +1,5 @@
 {-# LANGUAGE GHC2021 #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -8,23 +9,25 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 module Cob.RecordM.Definition
   ( -- * Static Definition
-    Definition(..), Field(..), Condition(..), DefinitionState(..), FieldRequired(..)
+    Definition(..), Field(..), FieldDescription(..), Condition(..), DefinitionState(..), FieldRequired(..)
     -- * Definition Quoting (DSL)
   , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL
   , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
   , (===), (?)
     -- ** Keywords
-  , Keyword, keyword, instanceLabel, instanceDescription, readOnly, number
-  , datetime, date, text, list
+  , Keyword(..), instanceLabel, instanceDescription, readOnly, number
+  , datetime, date, time, text, list, dollarRef
     -- ** Debugging
   , _testBuild
   ) where
 
+import Data.String
 import Control.Monad
+import Data.Aeson (ToJSON(..))
 import Data.Functor.Identity
 import Control.Monad.State
 import Control.Monad.Reader
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, unpack)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Control.Monad.Free
@@ -33,6 +36,8 @@ import Data.Bifunctor
 import Data.Maybe
 import qualified Data.Text as T
 import Prettyprinter hiding (list)
+
+import Cob.RecordM.Query
 
 data Definition
   = Definition
@@ -46,7 +51,7 @@ data Definition
 data Field
   = Field
     { fieldName :: Text
-    , fieldDescription :: Text
+    , fieldDescription :: FieldDescription
     , fieldDuplicable :: Bool
     , fieldRequired :: FieldRequired
     , fieldFields :: Maybe (Map FieldName Field)
@@ -54,6 +59,22 @@ data Field
     , fieldId :: FieldName
     }
     deriving Show
+
+data FieldDescription
+  = Desc
+    { knownKws :: [Keyword]
+    , rawDesc :: Text
+    }
+instance Show FieldDescription where show = unpack . descText
+instance Pretty FieldDescription where pretty = viaShow
+instance ToJSON FieldDescription where toJSON = toJSON . descText
+instance IsString FieldDescription where fromString = Desc [] . fromString
+instance Semigroup FieldDescription where
+  Desc kws1 desc1 <> Desc kws2 desc2 = Desc (kws1 <> kws2) (desc1 <> " " <> desc2)
+instance Monoid FieldDescription where mempty = Desc [] ""
+
+descText :: FieldDescription -> Text
+descText Desc{..} = T.unwords (map (pack . show) knownKws) <> " " <> rawDesc
 
 data Condition
   = Equals
@@ -78,8 +99,66 @@ data FieldRequired
   | FieldNotRequired
   deriving (Eq, Show)
 
+--------------------------------------------------------------------------------
+-- $ Keywords
+--------------------------------------------------------------------------------
 
+data Keyword
+  = RawKw Text
+  | InstanceLabelKw
+  | InstanceDescriptionKw
+  | ReadOnlyKw
+  | NumberKw
+  | DateTimeKw
+  | DateKw
+  | TimeKw
+  | TextKw
+  | ListKw [Text]
+  | forall a.
+    RefKw { refKwDefName :: Text
+          , refKwQuery   :: Query a
+          }
+instance IsString Keyword where fromString = RawKw . fromString
+instance Show Keyword where show = unpack . kwText
+
+kwText :: Keyword -> Text
+kwText = \case
+    RawKw txt -> txt
+    InstanceLabelKw -> keyword "instanceLabel"
+    InstanceDescriptionKw -> keyword "instanceDescription"
+    ReadOnlyKw -> keyword "readonly"
+    NumberKw -> keyword "number"
+    DateTimeKw -> keyword "datetime"
+    DateKw -> keyword "date"
+    TimeKw -> keyword "time"
+    TextKw -> keyword "text"
+    ListKw labels -> keyword ("[" <> T.intercalate "," labels <> "]")
+    RefKw{refKwDefName=defName, refKwQuery=query} -> keyword ("ref(" <> defName <> "," <> pack (_q query) <> ")")
+   where
+    keyword = ("$" <>)
+
+instanceLabel, instanceDescription, readOnly, number, datetime, date, time, text :: FieldDescription
+instanceLabel       = kwDesc InstanceLabelKw
+instanceDescription = kwDesc InstanceDescriptionKw
+readOnly            = kwDesc ReadOnlyKw
+number              = kwDesc NumberKw
+datetime            = kwDesc DateTimeKw
+date                = kwDesc DateKw
+time                = kwDesc TimeKw
+text                = kwDesc TextKw
+
+list :: [Text] -> FieldDescription
+list = kwDesc . ListKw
+
+dollarRef :: Text -> Query a -> FieldDescription
+dollarRef t q = kwDesc (RefKw t q)
+
+kwDesc :: Keyword -> FieldDescription
+kwDesc kw = Desc [kw] ""
+
+--------------------------------------------------------------------------------
 -- * The Definition Builder DSL / Monad
+--------------------------------------------------------------------------------
 {-| 
 
 The definition builder DSL allows one to programatically create definitions.
@@ -123,7 +202,7 @@ type DefinitionQ = DefinitionQM ()
 type DefinitionQM = Free DefinitionQF
 
 data DefinitionQF next
-  = Declare Text Text (FieldName -> next)
+  = Declare Text FieldDescription (FieldName -> next)
   -- ^ A field
   | AddSubs FieldName (DefinitionQM [FieldName]) ([FieldName] -> next)
   -- ^ A field with sub-fields
@@ -137,7 +216,7 @@ data DefinitionQF next
 $(makeFree ''DefinitionQF)
 
 -- | Declare a field
-(|=) :: Text -> Text -> DefinitionQM FieldName
+(|=) :: Text -> FieldDescription -> DefinitionQM FieldName
 (|=) = declare
 
 -- | Declare subfields for a field.
@@ -157,21 +236,21 @@ $(makeFree ''DefinitionQF)
 infixr 0 |+
 
 -- | Declare a mandatory field
-(|=!) :: Text -> Text -> DefinitionQM FieldName
+(|=!) :: Text -> FieldDescription -> DefinitionQM FieldName
 (|=!) lhs rhs = do
   field <- declare lhs rhs
   mandatory field
   return field
 
 -- | Declare a duplicable field
-(|=*) :: Text -> Text -> DefinitionQM FieldName
+(|=*) :: Text -> FieldDescription -> DefinitionQM FieldName
 (|=*) lhs rhs = do
   field <- declare lhs rhs
   duplicable field
   return field
   
 -- | Declare a duplicable and mandatory field
-(|=!*) :: Text -> Text -> DefinitionQM FieldName
+(|=!*) :: Text -> FieldDescription -> DefinitionQM FieldName
 (|=!*) lhs rhs = do
   field <- declare lhs rhs
   mandatory field
@@ -197,26 +276,6 @@ infixr 0 ?
 -- mandatory   :: FieldName -> DefinitionQ
 -- duplicable  :: FieldName -> DefinitionQ
 
---------------------------------------------------------------------------------
--- $ Keywords
---------------------------------------------------------------------------------
-
-type Keyword = Text
-
-keyword :: Text -> Keyword
-keyword = ("$" <>)
-
-instanceLabel, instanceDescription, readOnly, number, datetime, date, text :: Keyword
-instanceLabel       = keyword "instanceLabel"
-instanceDescription = keyword "instanceDescription"
-readOnly            = keyword "readonly"
-number              = keyword "number"
-datetime            = keyword "datetime"
-date                = keyword "date"
-text                = keyword "text"
-
-list :: [Text] -> Keyword
-list labels = keyword ("[" <> T.intercalate "," labels <> "]")
 
 --------------------------------------------------------------------------------
 -- Interpreter
@@ -369,7 +428,7 @@ simpleDefinition name descr
     , defFieldDefinitions = mempty
     }
 
-simpleField :: FieldName -> Text -> Text -> Field
+simpleField :: FieldName -> Text -> FieldDescription -> Field
 simpleField fid name descr
   = Field
     { fieldName = name
@@ -424,7 +483,7 @@ done = return []
 aux :: DefinitionQM ()
 aux = do
   "Teste2"    |=  ""
-  "Mandatory" |=! (readOnly |+| instanceLabel)
+  "Mandatory" |=! (readOnly <> instanceLabel)
   "Dupable"   |=* instanceDescription
   return ()
 
@@ -467,5 +526,3 @@ _testBuild b = fromDSL "Nome da Def" "Descr da Def" $ do
 
   return ()
 
-(|+|) :: Text -> Text -> Text
-(|+|) d1 d2 = d1 <> " " <> d2
