@@ -43,7 +43,7 @@ import Data.Semigroup
 import Data.Text.Metrics
 import Data.Function
 import System.IO (hFlush)
-import GHC.IO.Handle.FD (stdin)
+import GHC.IO.Handle.FD (stdout)
 
 data OptionsXlsxImporter = OptionsXlsxImporter
   { maxListSize :: Int
@@ -342,7 +342,7 @@ normaliseDollarListInteractive threshold (Desc kws txt) = do
           else do
             forM_ (zip (NE.toList ngroup) [1..]) $ \(item, i) ->
               T.putStrLn $ T.pack (show i) <> ") " <> item
-            T.putStr "> "; hFlush stdin
+            T.putStr "> "; hFlush stdout
             choice <- readLn
             if choice > 0 && choice <= NE.length ngroup then
               return (ngroup NE.!! (choice - 1))
