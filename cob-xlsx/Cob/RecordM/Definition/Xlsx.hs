@@ -330,29 +330,38 @@ dryRunDefFromXlsx fp opts = do
 groupByLevenshtein :: Int -> [Text] -> [NE.NonEmpty Text]
 groupByLevenshtein threshold = NE.groupBy (fmap (<threshold) . levenshtein `on` T.toLower) . sort
 
-normaliseDollarListInteractive :: Int -> FieldDescription -> IO FieldDescription
-normaliseDollarListInteractive threshold (Desc kws txt) = do
+normaliseDollarListInteractive :: Int
+                               --  ^ Levenshtein Threshold
+                               -> Text
+                               -- ^ Field name
+                               -> FieldDescription
+                               -> IO FieldDescription
+normaliseDollarListInteractive threshold fieldname (Desc kws txt) = do
   Desc <$> mapM normaliseDollarList' kws <*> pure txt
   where
     normaliseDollarList' = \case
-      ListKw ls -> ListKw <$> do
+      ListKw ls -> ListKw . concat <$> do
         forM (groupByLevenshtein threshold ls) $ \ngroup ->
           if NE.length ngroup < 2 then
-            return (NE.head ngroup)
+            return [NE.head ngroup]
           else do
+            T.putStrLn $ "Normalise list values for field " <> fieldname <> ":"
+            T.putStrLn "0) Don't normalise"
             forM_ (zip (NE.toList ngroup) [1..]) $ \(item, i) ->
               T.putStrLn $ T.pack (show i) <> ") " <> item
             T.putStr "> "; hFlush stdout
             choice <- readLn
-            if choice > 0 && choice <= NE.length ngroup then
-              return (ngroup NE.!! (choice - 1))
+            if choice <= 0 then
+              return (NE.toList ngroup)
+            else if choice <= NE.length ngroup then
+              return [ngroup NE.!! (choice - 1)]
             else
               fail "Input is out of the range of options"
       x -> return x
 
 normaliseFieldListsInteractive :: Int -> Field -> IO Field
 normaliseFieldListsInteractive threshold field = do
-  fd'  <- normaliseDollarListInteractive threshold (fieldDescription field)
+  fd'  <- normaliseDollarListInteractive threshold field.fieldName (fieldDescription field)
   ffs' <- case fieldFields field of
     Nothing -> return Nothing
     Just fields -> Just <$>
