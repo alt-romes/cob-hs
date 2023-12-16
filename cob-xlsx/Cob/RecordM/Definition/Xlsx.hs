@@ -17,6 +17,7 @@ import Data.Maybe
 import Codec.Xlsx
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Control.Lens
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -39,12 +40,19 @@ import Cob.Session
 import Cob.Utils
 import qualified Servant.Client
 import Data.Semigroup
+import Data.Text.Metrics
+import Data.Function
+import System.IO (hFlush)
+import GHC.IO.Handle.FD (stdin)
 
 data OptionsXlsxImporter = OptionsXlsxImporter
   { maxListSize :: Int
   -- ^ The threshold over which N many distinct values are no longer considered for a $[] field
   , maxRefSize  :: Int
   -- ^ The threshold over which N many distinct values are no longer considered for a $ref field
+  , maxEditDistance :: Int
+  -- ^ Threshold over which we no longer consider two strings to be similar
+  -- enough that should be merged.
   , worksheetName :: Text
     -- ^ Name of the worksheet from which to parse definition
   , startCoord :: (RowIndex, ColumnIndex)
@@ -276,6 +284,7 @@ createDefFromXlsx fp opts = do
   sess@CobSession{clientEnv} <- ask
 
   (refs, definition) <- liftIO $ xlsxFileToDef fp opts
+  definition <- liftIO $ normaliseDefListsInteractive opts.maxEditDistance definition
 
   liftIO $ do
 
@@ -303,6 +312,7 @@ createDefFromXlsx fp opts = do
 dryRunDefFromXlsx :: FilePath -> OptionsXlsxImporter -> IO ()
 dryRunDefFromXlsx fp opts = do
   (refs, definition) <- liftIO $ xlsxFileToDef fp opts
+  definition <- liftIO $ normaliseDefListsInteractive opts.maxEditDistance definition
   print $
     PP.vsep
       (map (\(name, instances) ->
@@ -311,3 +321,47 @@ dryRunDefFromXlsx fp opts = do
            )
            (M.toList refs)) <> PP.line <>
     pretty definition
+
+
+--------------------------------------------------------------------------------
+-- * Normalising definitions
+--------------------------------------------------------------------------------
+
+groupByLevenshtein :: Int -> [Text] -> [NE.NonEmpty Text]
+groupByLevenshtein threshold = NE.groupBy (fmap (<threshold) . levenshtein `on` T.toLower) . sort
+
+normaliseDollarListInteractive :: Int -> FieldDescription -> IO FieldDescription
+normaliseDollarListInteractive threshold (Desc kws txt) = do
+  Desc <$> mapM normaliseDollarList' kws <*> pure txt
+  where
+    normaliseDollarList' = \case
+      ListKw ls -> ListKw <$> do
+        forM (groupByLevenshtein threshold ls) $ \ngroup ->
+          if NE.length ngroup < 2 then
+            return (NE.head ngroup)
+          else do
+            forM_ (zip (NE.toList ngroup) [1..]) $ \(item, i) ->
+              T.putStrLn $ T.pack (show i) <> ") " <> item
+            T.putStr "> "; hFlush stdin
+            choice <- readLn
+            if choice > 0 && choice <= NE.length ngroup then
+              return (ngroup NE.!! (choice - 1))
+            else
+              fail "Input is out of the range of options"
+      x -> return x
+
+normaliseFieldListsInteractive :: Int -> Field -> IO Field
+normaliseFieldListsInteractive threshold field = do
+  fd'  <- normaliseDollarListInteractive threshold (fieldDescription field)
+  ffs' <- case fieldFields field of
+    Nothing -> return Nothing
+    Just fields -> Just <$>
+      mapM (normaliseFieldListsInteractive threshold) fields
+  return field{fieldDescription = fd', fieldFields = ffs'}
+
+normaliseDefListsInteractive :: Int -> Definition -> IO Definition
+normaliseDefListsInteractive
+  threshold d@Definition{defFieldDefinitions} = do
+    defFieldDefinitions <- mapM (normaliseFieldListsInteractive threshold) defFieldDefinitions
+    return d{defFieldDefinitions}
+    

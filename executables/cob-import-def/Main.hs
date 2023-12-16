@@ -47,6 +47,7 @@ main = do
           , startCoord=(RowIndex firstRow, ColumnIndex firstCol)
           , maxListSize
           , maxRefSize
+          , maxEditDistance
           , concurrently
           }
 
