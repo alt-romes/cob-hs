@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -10,10 +11,12 @@ module Cob.RecordM.Definition.Xlsx
   , RowIndex(..), ColumnIndex(..)
   ) where
 
+import Debug.Trace
 import Control.Concurrent.Async hiding (Default(..), def)
 import Control.Concurrent.Async.Pool hiding (Default(..), def)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Maybe
+import qualified Data.Char as Char
 import Codec.Xlsx
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -44,6 +47,7 @@ import Data.Text.Metrics
 import Data.Function
 import System.IO (hFlush)
 import GHC.IO.Handle.FD (stdout)
+import Text.Read (readMaybe)
 
 data OptionsXlsxImporter = OptionsXlsxImporter
   { maxListSize :: Int
@@ -161,8 +165,10 @@ xlsxToDef
         | let groups
                 = NE.group $ sort $
                   mapMaybe ((\case
-                    CellText ""  -> Nothing
+                    CellText txt
+                      | T.all Char.isSpace txt -> Nothing
                     CellText txt -> Just txt
+                    CellDouble num -> Just (T.pack $ show num)
                     _ -> Nothing)
                              <=< (^.cellValue))
                            cells
@@ -172,9 +178,9 @@ xlsxToDef
           -- some of the options are only used once.
         , let n = length (take (maxRefSize+1) groups)
         , n > 1 && n < maxRefSize
-          -- Extract the first of the equal modulo capitalization group values
         , let canonGroups = map NE.head groups
-        = if n < maxListSize
+        = (if T.isInfixOf "Nif" defName then traceShow (defName, cells, groups, canonGroups) else id)
+          if n < maxListSize
               then (list canonGroups, mempty)
               else
                 -- ngroups > 5 && < 20, make a new definition with these values
@@ -350,7 +356,7 @@ normaliseDollarListInteractive threshold fieldname (Desc kws txt) = do
             forM_ (zip (NE.toList ngroup) [1..]) $ \(item, i) ->
               T.putStrLn $ T.pack (show i) <> ") " <> item
             T.putStr "> "; hFlush stdout
-            choice <- readLn
+            choice <- fromMaybe 0 . readMaybe @Int <$> getLine
             if choice <= 0 then
               return (NE.toList ngroup)
             else if choice <= NE.length ngroup then
