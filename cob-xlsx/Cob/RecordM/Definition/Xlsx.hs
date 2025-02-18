@@ -379,4 +379,4 @@ normaliseDefListsInteractive
   threshold d@Definition{defFieldDefinitions} = do
     defFieldDefinitions <- mapM (normaliseFieldListsInteractive threshold) defFieldDefinitions
     return d{defFieldDefinitions}
-    
+

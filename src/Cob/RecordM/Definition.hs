@@ -10,13 +10,14 @@
 module Cob.RecordM.Definition
   ( -- * Static Definition
     Definition(..), Field(..), FieldDescription(..), Condition(..), DefinitionState(..), FieldRequired(..)
+  , simpleDefinition, simpleField
     -- * Definition Quoting (DSL)
-  , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL
+  , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL, extendFromDSL
   , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
   , (===), (?)
     -- ** Keywords
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
-  , datetime, date, time, text, list, dollarRef
+  , datetime, date, time, text, list, dollarRef, dollarReferences
     -- ** Debugging
   , _testBuild
   ) where
@@ -38,6 +39,9 @@ import qualified Data.Text as T
 import Prettyprinter hiding (list)
 
 import Cob.RecordM.Query
+import Data.Coerce
+import Data.List (sortBy)
+import Data.Ord (Down(..), comparing)
 
 data Definition
   = Definition
@@ -118,6 +122,9 @@ data Keyword
     RefKw { refKwDefName :: Text
           , refKwQuery   :: Query a
           }
+  | ReferencesKw { referencesKwDefName :: Text
+                 , referencesKwFieldName :: Text
+                 }
 instance IsString Keyword where fromString = RawKw . fromString
 instance Show Keyword where show = unpack . kwText
 
@@ -133,7 +140,10 @@ kwText = \case
     TimeKw -> keyword "time"
     TextKw -> keyword "text"
     ListKw labels -> keyword ("[" <> T.intercalate "," labels <> "]")
-    RefKw{refKwDefName=defName, refKwQuery=query} -> keyword ("ref(" <> defName <> "," <> pack (_q query) <> ")")
+    RefKw{refKwDefName=defName, refKwQuery=query}
+      -> keyword ("ref(" <> defName <> "," <> pack (_q query) <> ")")
+    ReferencesKw {referencesKwDefName, referencesKwFieldName}
+      -> keyword ("references(" <> referencesKwDefName <> "," <> referencesKwFieldName <> ")")
    where
     keyword = ("$" <>)
 
@@ -152,6 +162,9 @@ list = kwDesc . ListKw
 
 dollarRef :: Text -> Query a -> FieldDescription
 dollarRef t q = kwDesc (RefKw t q)
+
+dollarReferences :: Text -> Text -> FieldDescription
+dollarReferences t q = kwDesc (ReferencesKw t q)
 
 kwDesc :: Keyword -> FieldDescription
 kwDesc kw = Desc [kw] ""
@@ -306,6 +319,21 @@ runDSL defName defDescription defQ
     runStateT
       (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
       (simpleDefinition defName defDescription)
+
+extendFromDSL
+  :: Definition
+  -- ^ The Definition to update
+  -> DefinitionQ
+  -- ^ Definition quote (DSL extending an existing definition)
+  -> Definition
+  -- ^ The resulting definition
+extendFromDSL def defQ
+  = snd $
+    (evalState . (\(Fresh f) -> f))
+      (runStateT
+         (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
+         def)
+    (maybe 1 ((+1) . coerce) $ listToMaybe $ sortBy (comparing Down) $ M.keys def.defFieldDefinitions)
 
 interpret :: DefinitionQM a -> Interpreter a
 interpret = iterM algebra

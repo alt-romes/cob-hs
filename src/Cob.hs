@@ -144,7 +144,6 @@ search_ = fmap (map snd) . search
 
 -- ROMES:TODO: retry ?
 
-
 instance MonadIO Cob where
   liftIO = liftCob
 

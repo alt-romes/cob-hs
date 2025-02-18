@@ -15,11 +15,6 @@ copyright:          (c) Rodrigo Mesquita
 category:           API
 extra-source-files: CHANGELOG.md
 
-flag examples
-  description: Build the examples
-  default: False
-  manual: True
-
 library
     exposed-modules:  Cob,
                       Cob.Ref,
@@ -122,21 +117,48 @@ library cob-xlsx
     hs-source-dirs:   cob-xlsx
     default-language: Haskell2010
 
-executable cob-import-def
-    main-is: Main.hs
-    hs-source-dirs: executables/cob-import-def
-    build-depends:  base, mtl, text, containers, aeson, bytestring,
-                    cob, cob:cob-xlsx, optparse-generic, async, async-pool, text-metrics
-    default-language: GHC2021
+library cob-mermaid
+    visibility: public
+    exposed-modules:  Cob.RecordM.Definition.Mermaid
 
+    -- Modules included in this library but not exported.
+    -- other-modules:
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base >=4.14,
+                      mtl,
+                      cob,
+                      async,
+                      servant-client,
+                      text, bytestring, containers, aeson,
+                      async-pool, prettyprinter, text-metrics,
+                      mermaid
+
+    hs-source-dirs:   cob-mermaid
+    default-language: GHC2021
 
 test-suite cob-tests
     type: exitcode-stdio-1.0
     main-is: Main.hs
-    build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson
+    build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson, string-qq
     hs-source-dirs: tests
     default-language: GHC2021
 
+--------------------------------------------------------------------------------
+-- * Executable Programs
+--------------------------------------------------------------------------------
+
+executable cob-import-def
+    main-is: Main.hs
+    hs-source-dirs: executables/cob-import-def
+    build-depends:  base, mtl, text, containers, aeson, bytestring,
+                    cob, cob:cob-xlsx, cob:cob-mermaid, optparse-generic, async, async-pool, text-metrics
+    default-language: GHC2021
+
+--------------------------------------------------------------------------------
+-- * Examples
+--------------------------------------------------------------------------------
 
 -- test-suite laws
 --     type: exitcode-stdio-1.0
@@ -150,43 +172,41 @@ test-suite cob-tests
 --                       dlist,
 --                       cob
 
-if flag(examples) {
-    executable mocker
-        main-is:          Main.hs
+-- executable mocker
+--     main-is:          Main.hs
 
-        -- If not invoked with +RTS -N<num capabilities> then only one thread is used
-        ghc-options:      -threaded -rtsopts
+--     -- If not invoked with +RTS -N<num capabilities> then only one thread is used
+--     ghc-options:      -threaded -rtsopts
 
-        build-depends:    base >= 4 && <= 5,
-                          cob,
+--     build-depends:    base >= 4 && <= 5,
+--                       cob,
 
-                          microlens,
-                          microlens-th,
-                          streamly
+--                       microlens,
+--                       microlens-th,
+--                       streamly
 
-        hs-source-dirs:   examples/mocker
-        default-language: Haskell2010
+--     hs-source-dirs:   examples/mocker
+--     default-language: Haskell2010
 
-    executable examinator9000
-        main-is:          Main.hs
-        other-modules:    Examinator, Examinator.View, Examinator.Monad
+-- executable examinator9000
+--     main-is:          Main.hs
+--     other-modules:    Examinator, Examinator.View, Examinator.Monad
 
-        -- If not invoked with +RTS -N<num capabilities> then only one thread is used
-        ghc-options:      -threaded -rtsopts
+--     -- If not invoked with +RTS -N<num capabilities> then only one thread is used
+--     ghc-options:      -threaded -rtsopts
 
-        build-depends:    base >= 4 && <= 5,
-                          cob, mtl,
-                          ansi-terminal,
-                          prettyprinter,
-                          prettyprinter-ansi-terminal,
-                          microlens,
-                          microlens-th,
-                          streamly,
-                          vector,
-                          haskeline,
-                          vty,
-                          brick
+--     build-depends:    base >= 4 && <= 5,
+--                       cob, mtl,
+--                       ansi-terminal,
+--                       prettyprinter,
+--                       prettyprinter-ansi-terminal,
+--                       microlens,
+--                       microlens-th,
+--                       streamly,
+--                       vector,
+--                       haskeline,
+--                       vty,
+--                       brick
 
-        hs-source-dirs:   examples/examinator9000
-        default-language: Haskell2010
-}
+--     hs-source-dirs:   examples/examinator9000
+--     default-language: Haskell2010
