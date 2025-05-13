@@ -47,7 +47,7 @@ library
 
                       -- Network
                       servant,
-                      servant-client >= 0.20,
+                      servant-client >= 0.20.2,
                       http-client,
                       http-client-tls,
 

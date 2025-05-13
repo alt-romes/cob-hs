@@ -1,4 +1,4 @@
-packages: .
+packages: ., cob-mcp
 
 source-repository-package
     type: git
@@ -12,3 +12,8 @@ source-repository-package
 source-repository-package
     type: git
     location: https://github.com/alt-romes/mermaid-hs
+
+source-repository-package
+    type: git
+    location: https://github.com/alt-romes/hs-mcp
+

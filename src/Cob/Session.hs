@@ -57,7 +57,7 @@ withSession cobhost tok run = withEmptySession cobhost (run <=< (`updateSessionT
 withEmptySession :: Host -> (CobSession -> IO a) -> IO a
 withEmptySession cobhost run = withFastLogger (LogStderr defaultBufSize) $ \logger -> do
   manager <- newManager tlsManagerSettings
-  let clientEnv = ClientEnv manager (BaseUrl Https cobhost 443 "") Nothing defaultMakeClientRequest
+  let clientEnv = ClientEnv manager (BaseUrl Https cobhost 443 "") Nothing defaultMakeClientRequest id
   run CobSession{clientEnv, logger, verbosity=INFO}
 
 -- | Update the 'CobToken' of a 'CobSession'
@@ -85,4 +85,4 @@ makeCookieJar cobhost tok = createCookieJar
 
 -- | Get the TLS 'Manager' from a 'CobSession'
 tlsManagerFrom :: CobSession -> Manager
-tlsManagerFrom CobSession{clientEnv=(ClientEnv manager _ _ _)} = manager
+tlsManagerFrom CobSession{clientEnv=ClientEnv manager _ _ _ _} = manager
