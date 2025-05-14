@@ -93,7 +93,8 @@ mermaidToDef OptionsMermaid{concurrently} ERDiagram{entityAttributes, entityRela
       , let addRelationshipRight def = extendFromDSL def do
               firstName |= case leftCard of
                 OneOrMore -> do
-                  _
+                  -- TODO _
+                  undefined
               return ()
 
       = M.adjust addRelationshipRight secondEntity $

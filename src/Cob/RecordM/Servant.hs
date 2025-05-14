@@ -30,6 +30,7 @@ import qualified Servant.Types.SourceT as Servant
 import Cob.Ref
 import Cob.RecordM.Definition
 
+-- TODO: Maybe use servant-streamly
 instance FromSourceIO a (Streamly.Stream IO a) where
   fromSourceIO src = Servant.unSourceT src go
    where

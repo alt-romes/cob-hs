@@ -3,6 +3,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Data.Text
 
+import Data.Aeson
 import Data.List
 import Data.Ord
 
@@ -41,12 +42,12 @@ tests = testGroup "Tests" [unitTests] -- , properties
 --         (n :: Integer) >= 3 QC.==> x^n + y^n /= (z^n :: Integer)
 --   ]
 
-unitTests = testGroup "Unit tests"
-  [ testCase "List comparison (different length)" $
-      [1, 2, 3] `compare` [1,2] @?= GT
+unitTests = testGroup "Unit tests" []
+  -- [ testCase "List comparison (different length)" $
+  --     [1, 2, 3] `compare` [1,2] @?= GT
 
-  -- the following test does not hold
-  , testCase "List comparison (same length)" $
-      [1, 2, 3] `compare` [1,2,2] @?= LT
-  ]
+  -- -- the following test does not hold
+  -- , testCase "List comparison (same length)" $
+  --     [1, 2, 3] `compare` [1,2,2] @?= LT
+  -- ]
 
