@@ -55,6 +55,9 @@ library
                       prettyprinter,
                       prettyprinter-ansi-terminal,
 
+                      -- Parsing
+                      megaparsec,
+
                       -- Deriving (currently unused I think)
                       generics-sop, sop-core,
 

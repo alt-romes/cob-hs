@@ -76,6 +76,8 @@ type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (Dele
 
 type DefinitionNew = "definitions" :> ReqBody '[JSON] Definition :> Post '[JSON] Value
 
+type GetDefinitionRep = "instances" :> "empty" :> "definition" :> Capture "definitionId" DefinitionId :> QueryParam "withDefaults" Bool :> Get '[JSON] (FromEmptyInstance Definition)
+
 searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
@@ -98,6 +100,9 @@ deleteInstances = C.client (Proxy @(RecordM (IntegrationDelete a)))
 
 newDefinition :: Definition -> C.ClientM Value
 newDefinition = C.client (Proxy @(RecordM DefinitionNew))
+
+getDefinitionRep :: DefinitionId -> Maybe Bool -> C.ClientM (FromEmptyInstance Definition)
+getDefinitionRep = C.client (Proxy @(RecordM GetDefinitionRep))
 
 -- Sort given a list of pairs @(<field>, <direction>)@
 newtype SortParam = SortParam [(String, String)]
@@ -148,19 +153,19 @@ instance ToJSON Definition where
       ]
 
 instance ToJSON Field where
-  toJSON (Field{..}) =
+  toJSON (f@Field{..}) =
     object $
       [ "name" .= fieldName
       , "description" .= fieldDescription
       , "duplicable" .= fieldDuplicable
       , "required" .= fieldRequired
-      , "order" .= getFieldOrder fieldId
+      , "order" .= getFieldOrder f
       , "id" .= getFieldId fieldId
       ]
-      ++ case fieldFields of
-           Nothing -> []
-           Just fields ->
-             [ "fields" .= (map snd . M.toList) fields ]
+      ++ case M.elems fieldFields of
+           [] -> []
+           fields ->
+             [ "fields" .= fields ]
       ++ case fieldCondition of
            Nothing -> []
            Just cond ->

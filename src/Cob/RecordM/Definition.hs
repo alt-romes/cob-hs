@@ -11,7 +11,6 @@ module Cob.RecordM.Definition
   ( -- * Static Definition
     Definition(..), Field(..), FieldDescription(..), Condition(..), DefinitionState(..), FieldRequired(..)
   , simpleDefinition, simpleField
-  , DefinitionId
     -- * Definition Quoting (DSL)
   , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL, extendFromDSL
   , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
@@ -19,13 +18,15 @@ module Cob.RecordM.Definition
     -- ** Keywords
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
   , datetime, date, time, text, list, dollarRef, dollarReferences
+    -- * Fetching definition representation
+  , DefinitionId(..), FromEmptyInstance(..)
     -- ** Debugging
-  , _testBuild
+  , _testBuild, parseFieldDescription, parseKeyword
   ) where
 
 import Data.String
 import Control.Monad
-import Data.Aeson (ToJSON(..))
+import Data.Aeson
 import Data.Functor.Identity
 import Control.Monad.State
 import Control.Monad.Reader
@@ -41,9 +42,19 @@ import Prettyprinter hiding (list)
 
 import Cob.RecordM.Query
 import Data.Coerce
-import Data.List (sortBy)
+import Data.List (sortBy, partition)
 import Data.Ord (Down(..), comparing)
 import Servant.API (ToHttpApiData(toUrlPiece))
+import qualified Data.Aeson.Types as Aeson (Parser)
+import Debug.Trace (trace)
+import Data.Void
+
+import Text.Megaparsec
+import Text.Megaparsec.Char (string, char)
+import qualified Text.Megaparsec.Char as P
+import Data.Functor (($>))
+import Data.Proxy
+import Text.Megaparsec.Debug
 
 -- | A Definition Id
 newtype DefinitionId = DefId Int
@@ -58,7 +69,6 @@ data Definition
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
-      -- todo: I think fields can have duplicate names.
     }
     deriving Show
 
@@ -68,27 +78,28 @@ data Field
     , fieldDescription :: FieldDescription
     , fieldDuplicable :: Bool
     , fieldRequired :: FieldRequired
-    , fieldFields :: Maybe (Map FieldName Field)
+    , fieldFields :: Map FieldName Field
     , fieldCondition :: Maybe Condition
     , fieldId :: FieldName
+    , fieldOrder :: Maybe Int -- ^ When order is Nothing, the Id is used for the order? See getFieldOrder
     }
     deriving Show
 
 data FieldDescription
-  = Desc
+  = FieldDesc
     { knownKws :: [Keyword]
     , rawDesc :: Text
     }
 instance Show FieldDescription where show = unpack . descText
 instance Pretty FieldDescription where pretty = viaShow
 instance ToJSON FieldDescription where toJSON = toJSON . descText
-instance IsString FieldDescription where fromString = Desc [] . fromString
+instance IsString FieldDescription where fromString = FieldDesc [] . fromString
 instance Semigroup FieldDescription where
-  Desc kws1 desc1 <> Desc kws2 desc2 = Desc (kws1 <> kws2) (desc1 <> " " <> desc2)
-instance Monoid FieldDescription where mempty = Desc [] ""
+  FieldDesc kws1 desc1 <> FieldDesc kws2 desc2 = FieldDesc (kws1 <> kws2) (desc1 <> " " <> desc2)
+instance Monoid FieldDescription where mempty = FieldDesc [] ""
 
 descText :: FieldDescription -> Text
-descText Desc{..} = T.unwords (map (pack . show) knownKws) <> " " <> rawDesc
+descText FieldDesc{..} = T.unwords (map (pack . show) knownKws) <> " " <> rawDesc
 
 data Condition
   = Equals
@@ -177,7 +188,7 @@ dollarReferences :: Text -> Text -> FieldDescription
 dollarReferences t q = kwDesc (ReferencesKw t q)
 
 kwDesc :: Keyword -> FieldDescription
-kwDesc kw = Desc [kw] ""
+kwDesc kw = FieldDesc [kw] ""
 
 --------------------------------------------------------------------------------
 -- * The Definition Builder DSL / Monad
@@ -213,11 +224,13 @@ rodrigoTeste = do
 
 -- | Abstract type representing a definition's field name.
 -- Useful for defining conditionals (e.g. see '(===)').
--- TODO: Export as abstract
 newtype FieldName = UnsafeFieldName Int -- Tagged by identifier
   deriving (Eq, Ord, Show)
-getFieldOrder :: FieldName -> Int
-getFieldOrder (UnsafeFieldName i) = i
+
+getFieldOrder :: Field -> Int
+getFieldOrder (Field{fieldOrder = Nothing, fieldId = UnsafeFieldName i}) = i
+getFieldOrder (Field{fieldOrder = Just o}) = o
+
 getFieldId :: FieldName -> String
 getFieldId (UnsafeFieldName i) = show (-100000000 - i)
 
@@ -392,7 +405,7 @@ algebra = \case
 
     findField :: [FieldName] -> FieldName -> Map FieldName Field -> Field
     findField [] f m = m M.! f
-    findField (p:ps) f m = findField ps f (fromMaybe mempty $ fieldFields (m M.! p))
+    findField (p:ps) f m = findField ps f (fieldFields (m M.! p))
   
 type Interpreter a
   = ReaderT [FieldName]
@@ -451,8 +464,8 @@ editFieldMap (path:paths) upd field_map
   = case M.lookup path field_map of
       Nothing -> error $ "Couldn't find path " ++ show path ++ " in " ++ show field_map
       Just field0 ->
-        let field1 = field0{fieldFields = Just $
-              editFieldMap paths upd (fromMaybe mempty field0.fieldFields)}
+        let field1 = field0{fieldFields =
+              editFieldMap paths upd field0.fieldFields}
          in M.insert path field1 field_map
 
   
@@ -473,9 +486,10 @@ simpleField fid name descr
     , fieldDescription = descr
     , fieldDuplicable = False
     , fieldRequired = FieldNotRequired
-    , fieldFields = Nothing
+    , fieldFields = mempty
     , fieldCondition = Nothing
     , fieldId = fid
+    , fieldOrder = Nothing
     }
 
 --------------------------------------------------------------------------------
@@ -508,7 +522,7 @@ instance Pretty Field where
       (if fieldRequired == MandatoryField then space <> "(mandatory)" else mempty) <>
         (if fieldDuplicable then space <> "(duplicable)" else mempty) <>
           nest 4
-            (line <> vsep (map pretty (M.elems $ fromMaybe mempty fieldFields)))
+            (line <> vsep (map pretty (M.elems fieldFields)))
 
 --------------------------------------------------------------------------------
 -- Small test to compile a Definition
@@ -564,3 +578,113 @@ _testBuild b = fromDSL "Nome da Def" "Descr da Def" $ do
 
   return ()
 
+--------------------------------------------------------------------------------
+-- * Fetching a definition representation
+--------------------------------------------------------------------------------
+
+-- | Used to fetch a definition using the endpoint which returns an empty instance.
+-- That is the same endpoint as the one used by the RecordM web UI.
+-- We use this newtype wrapper to avoid giving a FromJSON instance to
+-- 'Definition' directly, and force being explicit that we're parsing a
+-- definition from an empty instance JSON.
+newtype FromEmptyInstance a = FromEmptyInstance a
+
+instance FromJSON (FromEmptyInstance Definition) where
+  parseJSON = withObject "FromEmptyInstance Definition" $ \obj -> do
+
+    -- def
+    jsonDef <- obj .: "jsonDefinition"
+    defName <- jsonDef .: "name"
+    defDescription <- jsonDef .:? "description" .!= ""
+    defState <- maybe (pure EnabledDefinition) parseDefState =<< jsonDef .:? "state"
+
+    -- fields
+    defFieldDefinitions  <- parseFields =<< obj .: "fields"
+
+    return $ FromEmptyInstance $
+      Definition{..}
+    where
+      parseFields :: [Object] -> Aeson.Parser (Map FieldName Field)
+      parseFields = fmap M.fromList . mapM parseField
+
+      parseField :: Object -> Aeson.Parser (FieldName, Field)
+      parseField obj = do
+        fieldDef <- obj .: "fieldDefinition"
+        fieldName <- fieldDef .: "name"
+        fieldDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
+        fieldDuplicable <- fieldDef .: "duplicable"
+        fieldRequired <- parseFieldRequired =<< fieldDef .: "required"
+        fieldId <- UnsafeFieldName <$> fieldDef .: "id"
+        fieldOrder <- fieldDef .: "order"
+
+        fieldFields <- parseFields =<< obj .: "fields"
+        fieldCondition <- parseCondition =<< obj .:? "condition" .!= Nothing
+
+        return (fieldId, Field{..})
+
+      parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
+      parseFieldDescriptionAeson t = do
+        case runParser parseFieldDescription "" t of
+          Left e -> fail $ "FAILED TO PARSE DESCRIPTION: " ++ T.unpack t ++ ":\n" ++ show e
+          Right x -> return x
+
+      parseCondition :: Maybe Object -> Aeson.Parser (Maybe Condition)
+      parseCondition Nothing = pure Nothing
+      parseCondition (Just obj) = do
+        trace ("TODO: Support parsing conditions... " ++ show obj) $ pure Nothing
+
+      parseDefState :: Text -> Aeson.Parser DefinitionState
+      parseDefState = \case
+        "enabled" -> return EnabledDefinition
+        s -> fail $ "Unexpected DefinitionState: " ++ show s
+
+      parseFieldRequired :: Maybe Text -> Aeson.Parser FieldRequired
+      parseFieldRequired = \case
+        Just "mandatory" -> return MandatoryField
+        _ -> return FieldNotRequired
+
+--------------------------------------------------------------------------------
+-- ** Parsing keywords (with Megaparsec)
+--------------------------------------------------------------------------------
+-- + to simplify, assumes raw description only comes after all keywords
+-- + currently ignores `*` default options in lists
+
+parseFieldDescription :: Parsec Void Text FieldDescription
+parseFieldDescription = do
+  knownKws <- many (parseKeyword <* P.space)
+  rawDesc <- takeRest -- the rest of the input
+  return FieldDesc{ knownKws , rawDesc }
+
+parseKeyword :: Parsec Void Text Keyword
+parseKeyword = dbg "kw" $ (char '$' *>) $
+      (string "instanceLabel" $> InstanceLabelKw)
+  <|> (string "instanceDescription" $> InstanceDescriptionKw)
+  <|> (string "readonly" $> ReadOnlyKw)
+  <|> (string "number" $> NumberKw)
+  <|> (string "datetime" $> DateTimeKw)
+  <|> (string "date" $> DateKw)
+  <|> (string "time" $> TimeKw)
+  <|> (string "text" $> TextKw)
+  <|> parseListKeyword
+  <|> parseReferencesKeyword
+  <|> parseRefKeyword
+  <|> (RawKw <$> takeRest) -- fallback
+
+parseListKeyword :: Parsec Void Text Keyword
+parseListKeyword = fmap (ListKw . map T.pack) $ dbg "list" $
+  char '[' *> sepBy1 (someTill anySingle (lookAhead (char ',' <|> char ']'))) (char ',') <* char ']'
+
+parseRefKeyword :: Parsec Void Text Keyword
+parseRefKeyword = do
+  string "ref" *> char '('
+  defName <- manyTill anySingle (char ',' *> P.space)
+  queryString <- manyTill anySingle (char ')')
+  return $ RefKw (tokensToChunk (Proxy @Text) defName) (byText (tokensToChunk (Proxy @Text) queryString))
+
+parseReferencesKeyword :: Parsec Void Text Keyword
+parseReferencesKeyword = dbg "refes" do
+  string "references" *> char '('
+  defName <- manyTill anySingle (char ',')
+  fieldName <- manyTill anySingle (lookAhead (char ')'))
+  char ')'
+  return $ ReferencesKw (tokensToChunk (Proxy @Text) defName) (tokensToChunk (Proxy @Text) fieldName)

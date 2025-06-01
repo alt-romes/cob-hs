@@ -318,3 +318,13 @@ newDefinition def = do
   _ <- performReq $ Servant.newDefinition def
   pure ()
 
+--------------------------------------------------------------------------------
+-- * Fetching Definitions
+--------------------------------------------------------------------------------
+
+-- | Get a representation of the Definition given its 'DefinitionId'
+getDefinitionRep :: forall m. MonadCob m => DefinitionId -> m Definition
+getDefinitionRep defId = do
+  logInfo $ "Fetching definition by id " <> toLogStr (show defId)
+  FromEmptyInstance def <- performReq $ Servant.getDefinitionRep defId (Just False)
+  pure def
