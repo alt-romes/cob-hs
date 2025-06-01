@@ -1,4 +1,4 @@
-packages: ., cob-mcp
+packages: ., cob-mcp, cob-xlsx
 
 source-repository-package
     type: git

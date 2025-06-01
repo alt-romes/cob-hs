@@ -48,7 +48,7 @@ type RecordM a = "recordm" :> "recordm" :> a
 type Search = "definitions" :> "search" :> (
               (QueryParam' '[Required, Strict] "def" String :> SearchCommon)
               :<|>
-              (QueryParam' '[Required, Strict] "defId" Int :> SearchCommon)
+              (QueryParam' '[Required, Strict] "defId" DefinitionId :> SearchCommon)
                                            )
 type SearchCommon
     =  QueryParam "q" String
@@ -60,7 +60,7 @@ type SearchCommon
 type StreamSearch = "definitions" :> "search" :> "stream" :> (
               (QueryParam' '[Required, Strict] "def" String :> StreamSearchCommon)
               :<|>
-              (QueryParam' '[Required, Strict] "defId" Int :> StreamSearchCommon)
+              (QueryParam' '[Required, Strict] "defId" DefinitionId :> StreamSearchCommon)
                                                              )
 type StreamSearchCommon
   =  QueryParam "q" String
@@ -76,12 +76,14 @@ type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (Dele
 
 type DefinitionNew = "definitions" :> ReqBody '[JSON] Definition :> Post '[JSON] Value
 
+
+
 searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
-searchById   :: Int    -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
+searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
 
 streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
-streamSearchById   :: Int    -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
+streamSearchById   :: DefinitionId -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
 (streamSearchByName :<|> streamSearchById) = SC.client (Proxy @(RecordM StreamSearch))
 
 getInstance    :: Integer -> Maybe String -> C.ClientM Value

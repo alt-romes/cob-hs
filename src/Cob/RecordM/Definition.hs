@@ -11,6 +11,7 @@ module Cob.RecordM.Definition
   ( -- * Static Definition
     Definition(..), Field(..), FieldDescription(..), Condition(..), DefinitionState(..), FieldRequired(..)
   , simpleDefinition, simpleField
+  , DefinitionId
     -- * Definition Quoting (DSL)
   , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL, extendFromDSL
   , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
@@ -42,6 +43,14 @@ import Cob.RecordM.Query
 import Data.Coerce
 import Data.List (sortBy)
 import Data.Ord (Down(..), comparing)
+import Servant.API (ToHttpApiData(toUrlPiece))
+
+-- | A Definition Id
+newtype DefinitionId = DefId Int
+
+instance Show DefinitionId where show (DefId i) = show i
+instance ToJSON DefinitionId where toJSON (DefId i) = toJSON i
+instance ToHttpApiData DefinitionId where toUrlPiece (DefId i) = toUrlPiece i
 
 data Definition
   = Definition

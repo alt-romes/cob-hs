@@ -94,29 +94,6 @@ library cob-servant
     hs-source-dirs:   cob-servant
     default-language: Haskell2010
 
-library cob-xlsx
-    visibility: public
-    exposed-modules:  Cob.RecordM.Definition.Xlsx
-
-    -- Modules included in this library but not exported.
-    -- other-modules:
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
-    build-depends:    base >=4.14,
-                      mtl,
-                      cob,
-                      xlsx >= 1.1,
-                      async,
-                      -- We get lens because xlsx already depends on them
-                      lens,
-                      servant-client,
-                      text, bytestring, containers, aeson, async-pool,
-                      prettyprinter, text-metrics
-
-    hs-source-dirs:   cob-xlsx
-    default-language: Haskell2010
-
 library cob-mermaid
     visibility: public
     exposed-modules:  Cob.RecordM.Definition.Mermaid
@@ -143,17 +120,6 @@ test-suite cob-tests
     main-is: Main.hs
     build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson, string-qq
     hs-source-dirs: tests
-    default-language: GHC2021
-
---------------------------------------------------------------------------------
--- * Executable Programs
---------------------------------------------------------------------------------
-
-executable cob-import-def
-    main-is: Main.hs
-    hs-source-dirs: executables/cob-import-def
-    build-depends:  base, mtl, text, containers, aeson, bytestring,
-                    cob, cob:cob-xlsx, cob:cob-mermaid, optparse-generic, async, async-pool, text-metrics
     default-language: GHC2021
 
 --------------------------------------------------------------------------------
