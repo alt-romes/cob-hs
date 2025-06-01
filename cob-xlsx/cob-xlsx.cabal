@@ -37,5 +37,5 @@ executable cob-import-def
     main-is: Main.hs
     hs-source-dirs: executables/cob-import-def
     build-depends:  base, mtl, text, containers, aeson, bytestring,
-                    cob, cob-xlsx, cob:cob-mermaid, optparse-generic, async, async-pool, text-metrics
+                    cob, cob-xlsx, cob-mermaid, optparse-generic, async, async-pool, text-metrics
     default-language: GHC2021

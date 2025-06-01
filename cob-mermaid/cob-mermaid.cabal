@@ -1,0 +1,33 @@
+cabal-version:      3.4
+name:               cob-mermaid
+version:            0.1.0.0
+synopsis:           CoB x Mermaid
+license:            MIT
+tested-with:        GHC==9.4.1
+bug-reports:        https://github.com/alt-romes/cob-hs
+author:             romes
+maintainer:         rodrigo.m.mesquita@gmail.com
+copyright:          (c) Rodrigo Mesquita
+category:           API
+extra-source-files: CHANGELOG.md
+
+library
+    exposed-modules:  Cob.RecordM.Definition.Mermaid
+
+    -- Modules included in this library but not exported.
+    -- other-modules:
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base >=4.14,
+                      mtl,
+                      cob,
+                      async,
+                      servant-client,
+                      text, bytestring, containers, aeson,
+                      async-pool, prettyprinter, text-metrics,
+                      mermaid
+
+    hs-source-dirs:   src
+    default-language: GHC2021
+
