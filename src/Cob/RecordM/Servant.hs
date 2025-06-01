@@ -76,8 +76,6 @@ type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (Dele
 
 type DefinitionNew = "definitions" :> ReqBody '[JSON] Definition :> Post '[JSON] Value
 
-
-
 searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))

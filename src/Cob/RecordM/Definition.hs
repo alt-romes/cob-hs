@@ -58,6 +58,7 @@ data Definition
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
+      -- todo: I think fields can have duplicate names.
     }
     deriving Show
 

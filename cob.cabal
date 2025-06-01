@@ -4,10 +4,7 @@ version:            0.1.0.0
 synopsis:           Cult of Bits haskell interface
 description:        Cob (RecordM + UserM) interface (boilerplate free!)
 license:            MIT
-tested-with:        GHC==9.4.1,
-                    GHC==9.2.1,
-                    GHC==9.0.2,
-                    GHC==8.10.7
+tested-with:        GHC==9.10.1
 bug-reports:        https://github.com/alt-romes/cob-hs
 author:             romes
 maintainer:         rodrigo.m.mesquita@gmail.com
@@ -104,18 +101,6 @@ test-suite cob-tests
 --------------------------------------------------------------------------------
 -- * Examples
 --------------------------------------------------------------------------------
-
--- test-suite laws
---     type: exitcode-stdio-1.0
---     main-is: Lawful.hs
---     hs-source-dirs: tests
---     default-language: Haskell2010
---     build-depends:    base >= 4 && <= 5,
---                       QuickCheck,
---                       quickcheck-classes,
---                       mtl,
---                       dlist,
---                       cob
 
 -- executable mocker
 --     main-is:          Main.hs
