@@ -58,8 +58,9 @@ library
                       -- Parsing
                       megaparsec,
 
-                      -- Deriving (currently unused I think)
+                      -- Generics extra
                       generics-sop, sop-core,
+                      generic-diff,
 
                       -- JSON
                       aeson,

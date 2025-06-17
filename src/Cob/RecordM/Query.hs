@@ -37,7 +37,7 @@ data Query a = Query { _q         :: String
                      , _size      :: Int
                      , _sort      :: Maybe String
                      , _ascending :: Maybe Bool
-                     } deriving (Show)
+                     } deriving (Eq, Show)
 
 instance IsString (Query a) where
   fromString txt = defaultQuery { _q = fromString txt }

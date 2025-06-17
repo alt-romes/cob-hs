@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass, DerivingStrategies, DerivingVia #-}
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -56,6 +57,11 @@ import Data.Functor (($>))
 import Data.Proxy
 import Text.Megaparsec.Debug
 
+import GHC.Generics (Generic)
+import qualified Generics.SOP as SOP
+
+import Generics.Diff
+
 -- | A Definition Id
 newtype DefinitionId = DefId Int
 
@@ -70,7 +76,9 @@ data Definition
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
     }
-    deriving Show
+    deriving (Eq, Show)
+    deriving stock (GHC.Generics.Generic)
+    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 data Field
   = Field
@@ -83,13 +91,18 @@ data Field
     , fieldId :: FieldName
     , fieldOrder :: Maybe Int -- ^ When order is Nothing, the Id is used for the order? See getFieldOrder
     }
-    deriving Show
+    deriving (Eq, Show)
+    deriving stock (GHC.Generics.Generic)
+    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 data FieldDescription
   = FieldDesc
     { knownKws :: [Keyword]
     , rawDesc :: Text
     }
+    deriving stock (Eq, GHC.Generics.Generic)
+    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
+
 instance Show FieldDescription where show = unpack . descText
 instance Pretty FieldDescription where pretty = viaShow
 instance ToJSON FieldDescription where toJSON = toJSON . descText
@@ -106,7 +119,9 @@ data Condition
      { lhs :: Text
      , rhs :: Text
      }
-  deriving Show
+  deriving (Eq, Show)
+  deriving stock (GHC.Generics.Generic)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 data UnresolvedCondition
   = UnrEquals
@@ -117,12 +132,16 @@ data UnresolvedCondition
 
 data DefinitionState
   = EnabledDefinition
-  deriving Show
+  deriving (Eq, Show)
+  deriving stock (GHC.Generics.Generic)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 data FieldRequired
   = MandatoryField
   | FieldNotRequired
   deriving (Eq, Show)
+  deriving stock (GHC.Generics.Generic)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 --------------------------------------------------------------------------------
 -- $ Keywords
@@ -139,13 +158,16 @@ data Keyword
   | TimeKw
   | TextKw
   | ListKw [Text]
-  | forall a.
-    RefKw { refKwDefName :: Text
-          , refKwQuery   :: Query a
+  | RefKw { refKwDefName :: Text
+          , refKwQuery   :: Query () -- not an existential tyvar to be able to derive Generics
           }
   | ReferencesKw { referencesKwDefName :: Text
                  , referencesKwFieldName :: Text
                  }
+  deriving Eq
+  deriving stock (GHC.Generics.Generic)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
+
 instance IsString Keyword where fromString = RawKw . fromString
 instance Show Keyword where show = unpack . kwText
 
@@ -182,7 +204,7 @@ list :: [Text] -> FieldDescription
 list = kwDesc . ListKw
 
 dollarRef :: Text -> Query a -> FieldDescription
-dollarRef t q = kwDesc (RefKw t q)
+dollarRef t q = kwDesc (RefKw t (coerce q))
 
 dollarReferences :: Text -> Text -> FieldDescription
 dollarReferences t q = kwDesc (ReferencesKw t q)
@@ -226,6 +248,8 @@ rodrigoTeste = do
 -- Useful for defining conditionals (e.g. see '(===)').
 newtype FieldName = UnsafeFieldName Int -- Tagged by identifier
   deriving (Eq, Ord, Show)
+  deriving stock (GHC.Generics.Generic)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 getFieldOrder :: Field -> Int
 getFieldOrder (Field{fieldOrder = Nothing, fieldId = UnsafeFieldName i}) = i
@@ -688,3 +712,16 @@ parseReferencesKeyword = dbg "refes" do
   fieldName <- manyTill anySingle (lookAhead (char ')'))
   char ')'
   return $ ReferencesKw (tokensToChunk (Proxy @Text) defName) (tokensToChunk (Proxy @Text) fieldName)
+
+--------------------------------------------------------------------------------
+-- Diff
+
+instance Diff Definition where diff = gdiffTopLevel
+instance Diff Field where diff = gdiffTopLevel
+instance Diff FieldDescription where diff = gdiffTopLevel
+instance Diff Condition where diff = gdiffTopLevel
+instance Diff DefinitionState where diff = gdiffTopLevel
+instance Diff FieldRequired where diff = gdiffTopLevel
+instance Diff Keyword where diff = gdiffTopLevel
+instance Diff FieldName where diff = gdiffTopLevel
+
