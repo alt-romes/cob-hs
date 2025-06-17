@@ -139,9 +139,10 @@ data Keyword
   | TimeKw
   | TextKw
   | ListKw [Text]
-  | forall a.
-    RefKw { refKwDefName :: Text
-          , refKwQuery   :: Query a
+  | RefKw { refKwDefName :: Text
+          , refKwQuery   :: Query ()
+          -- ^ This reference can be of any type.
+          -- Use coerce to make it a query ()
           }
   | ReferencesKw { referencesKwDefName :: Text
                  , referencesKwFieldName :: Text
@@ -182,7 +183,7 @@ list :: [Text] -> FieldDescription
 list = kwDesc . ListKw
 
 dollarRef :: Text -> Query a -> FieldDescription
-dollarRef t q = kwDesc (RefKw t q)
+dollarRef t q = kwDesc (RefKw t (coerce {-refkw holds a typeless ref-} q))
 
 dollarReferences :: Text -> Text -> FieldDescription
 dollarReferences t q = kwDesc (ReferencesKw t q)

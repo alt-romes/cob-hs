@@ -13,6 +13,7 @@ data User = User
     , ucontact     :: Maybe String
     , uusernameAD  :: Maybe String
     }
+
 instance ToJSON User where
     toJSON (User username pass name email contact usernameAD) = object
         [ "username"   .= username
