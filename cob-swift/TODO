@@ -1,0 +1,2 @@
+Prepare hook must clean the files before running (because we use appendFile)
+Post hook must build with swiftc/swiftbuild

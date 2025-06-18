@@ -23,7 +23,7 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  Cob
+    exposed-modules:  Cob, Cob.Moat
     -- other-modules:
     -- other-extensions:
     build-depends:    base, cob, template-haskell, swift-ffi
