@@ -2,13 +2,14 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables, DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
-module Cob where
+module Swift.Cob where
 
-import Cob.Moat
+import Swift.Cob.Moat
 import Data.Kind
 import Foreign.Swift.Lib
 import Cob.RecordM.Definition
 import Cob.RecordM.Query
+import Cob
 
 yieldType @FieldRequired Proxy
 yieldType @(Query ()) Proxy
@@ -19,6 +20,11 @@ yieldType @FieldName Proxy
 yieldType @DefinitionState Proxy
 yieldType @Field Proxy
 yieldType @Definition Proxy
+
+searchCob :: Int -> Query Int -> IO Int
+searchCob s query = undefined
+
+yieldFunction @(Int -> Query () -> ()) Proxy 'searchCob [Just "session", Just "query"]
 
 -- streamSearch :: Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> Cob b
 -- search       :: Record a => Query a -> Cob [(Ref a, a)]

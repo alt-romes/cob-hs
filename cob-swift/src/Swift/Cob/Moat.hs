@@ -2,12 +2,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables, DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
-module Cob.Moat where
+module Swift.Cob.Moat where
 
-import Data.Kind
 import Foreign.Swift.Lib
 import Cob.RecordM.Definition
 import Cob.RecordM.Query
+import Cob.Session
+import Foreign
 
 swiftType ''FieldRequired
 swiftType ''Query
@@ -18,3 +19,4 @@ swiftType ''FieldName
 swiftType ''DefinitionState
 swiftType ''Field
 swiftType ''Definition
+

@@ -226,7 +226,7 @@ rodrigoTeste = do
 -- | Abstract type representing a definition's field name.
 -- Useful for defining conditionals (e.g. see '(===)').
 newtype FieldName = UnsafeFieldName Int -- Tagged by identifier
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, ToJSONKey, FromJSONKey)
 
 getFieldOrder :: Field -> Int
 getFieldOrder (Field{fieldOrder = Nothing, fieldId = UnsafeFieldName i}) = i
