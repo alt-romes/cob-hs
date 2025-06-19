@@ -10,13 +10,13 @@ import Cob.RecordM.Query
 import Cob.Session
 import Foreign
 
-swiftType ''FieldRequired
-swiftType ''Query
-swiftType ''Keyword
-swiftType ''FieldDescription
-swiftType ''Condition
-swiftType ''FieldName
-swiftType ''DefinitionState
-swiftType ''Field
-swiftType ''Definition
-
+-- swiftData ''FieldRequired
+-- swiftData ''Query
+-- swiftData ''Keyword
+-- swiftData ''FieldDescription
+-- swiftData ''Condition
+-- swiftData ''FieldName
+-- swiftData ''DefinitionState
+-- swiftData ''Field
+-- swiftData ''Definition
+--

@@ -26,6 +26,21 @@ library
     exposed-modules:  Swift.Cob, Swift.Cob.Moat
     -- other-modules:
     -- other-extensions:
-    build-depends:    base, cob, template-haskell, swift-ffi
+    build-depends:    base, cob, template-haskell, swift-ffi, mtl
     hs-source-dirs:   src
     default-language: GHC2024
+
+foreign-library haskell-foreign-framework
+    type: native-shared
+
+    -- This should work on Mac, despite being undefined behaviour
+    -- See https://www.hobson.space/posts/haskell-foreign-library/ (great read)
+    options: standalone
+
+    -- We copy the C stub headers to a folder in the root.
+    ghc-options: -stubdir=_build/include/
+
+    other-modules: Foreign.Cob
+    build-depends: base, cob-swift, swift-ffi, cob, mtl
+    hs-source-dirs: flib
+
