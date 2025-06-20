@@ -1,5 +1,6 @@
-packages: ., cob-mermaid, cob-xlsx, cob-mcp,
+packages: ., cob-mermaid, cob-xlsx,
           cob-swift, ../haskell-swift/swift-ffi/
+          -- cob-mcp, re-implement using the new better library on hackage
 
 source-repository-package
     type: git
@@ -14,9 +15,10 @@ source-repository-package
     type: git
     location: https://github.com/alt-romes/mermaid-hs
 
-source-repository-package
-    type: git
-    location: https://github.com/alt-romes/hs-mcp
+-- Use the newer one from hackage
+-- source-repository-package
+--     type: git
+--     location: https://github.com/alt-romes/hs-mcp
 
 -- Swift
 

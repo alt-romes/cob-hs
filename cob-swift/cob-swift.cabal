@@ -21,16 +21,16 @@ custom-setup
 common warnings
     ghc-options: -Wall
 
-library
-    import:           warnings
-    exposed-modules:  Swift.Cob, Swift.Cob.Moat
-    -- other-modules:
-    -- other-extensions:
-    build-depends:    base, cob, template-haskell, swift-ffi, mtl
-    hs-source-dirs:   src
-    default-language: GHC2024
+-- library
+--     import:           warnings
+--     exposed-modules:  Swift.Cob, Swift.Cob.Moat
+--     -- other-modules:
+--     -- other-extensions:
+--     build-depends:    base, cob, template-haskell, swift-ffi, mtl
+--     hs-source-dirs:   src
+--     default-language: GHC2024
 
-foreign-library haskell-foreign-framework
+foreign-library cob-swift
     type: native-shared
 
     -- This should work on Mac, despite being undefined behaviour
@@ -41,6 +41,7 @@ foreign-library haskell-foreign-framework
     ghc-options: -stubdir=_build/include/
 
     other-modules: Foreign.Cob
-    build-depends: base, cob-swift, swift-ffi, cob, mtl
+    build-depends: base, swift-ffi, cob, mtl
+                    -- cob-swift,
     hs-source-dirs: flib
 
