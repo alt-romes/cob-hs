@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -Wno-orphans -ddump-splices -ddump-simpl #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE GHC2024 #-}
 {-# LANGUAGE TemplateHaskell, TypeSynonymInstances #-}
 {-# LANGUAGE DerivingVia, StandaloneDeriving, UndecidableInstances #-}
@@ -20,7 +20,11 @@ import Cob.RecordM.Definition
 import Cob.RecordM.Query
 
 import Data.Proxy (Proxy(..))
+import Data.Void
 import qualified Data.Kind as K
+
+instance ToMoatType Void where
+  toMoatType _ = Concrete "Never" []
 
 -- Yield types to library
 -- yieldType @FieldRequired Proxy

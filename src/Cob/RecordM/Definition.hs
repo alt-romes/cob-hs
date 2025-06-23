@@ -140,7 +140,7 @@ data Keyword
   | TextKw
   | ListKw [Text]
   | RefKw { refKwDefName :: Text
-          , refKwQuery   :: Query ()
+          , refKwQuery   :: Query Void
           -- ^ This reference can be of any type.
           -- Use coerce to make it a query ()
           }
