@@ -1,15 +1,6 @@
 packages: ., cob-mermaid, cob-xlsx,
-          cob-swift, ../haskell-swift/swift-ffi/, ../moat
+          cob-swift, ../haskell-swift/swift-ffi/
           -- cob-mcp, re-implement using the new better library on hackage
-
-source-repository-package
-    type: git
-    location: https://github.com/composewell/streamly
-
-source-repository-package
-    type: git
-    location: https://github.com/composewell/streamly
-    subdir: core
 
 source-repository-package
     type: git
@@ -24,7 +15,16 @@ source-repository-package
 
 allow-newer: moat:*
 
--- source-repository-package
---   type:     git
---   location: https://github.com/MercuryTechnologies/moat.git
+-- use my fork now
+source-repository-package
+  type:     git
+  location: https://github.com/alt-romes/moat.git
 
+-- source-repository-package
+--     type: git
+--     location: https://github.com/composewell/streamly
+-- 
+-- source-repository-package
+--     type: git
+--     location: https://github.com/composewell/streamly
+--     subdir: core
