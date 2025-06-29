@@ -315,7 +315,7 @@ updateInstances query f = do
 newDefinition :: forall m. MonadCob m => Definition -> m ()
 newDefinition def = do
   logInfo $ "Creating new definition with name " <> toLogStr (defName def)
-  _ <- performReq $ Servant.newDefinition def
+  _ <- performReq $ Servant.newDefinition (ToRecM def)
   pure ()
 
 --------------------------------------------------------------------------------

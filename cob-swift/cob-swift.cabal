@@ -1,5 +1,5 @@
 cabal-version:      3.14
-name:               cob-swift
+name:               cob-swift-library
 version:            0.1.0.0
 -- synopsis:
 -- description:
@@ -43,3 +43,9 @@ foreign-library cob-swift
                     -- cob-swift,
     hs-source-dirs: flib
 
+
+library
+    exposed-modules: Foreign.Cob
+    build-depends: base, swift-ffi, cob, mtl
+                    -- cob-swift,
+    hs-source-dirs: flib

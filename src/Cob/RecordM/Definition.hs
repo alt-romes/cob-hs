@@ -42,7 +42,7 @@ import Prettyprinter hiding (list)
 
 import Cob.RecordM.Query
 import Data.Coerce
-import Data.List (sortBy, partition)
+import Data.List (sortBy)
 import Data.Ord (Down(..), comparing)
 import Servant.API (ToHttpApiData(toUrlPiece))
 import qualified Data.Aeson.Types as Aeson (Parser)
@@ -689,3 +689,4 @@ parseReferencesKeyword = dbg "refes" do
   fieldName <- manyTill anySingle (lookAhead (char ')'))
   char ')'
   return $ ReferencesKw (tokensToChunk (Proxy @Text) defName) (tokensToChunk (Proxy @Text) fieldName)
+
