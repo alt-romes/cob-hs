@@ -20,6 +20,8 @@ module Cob.RecordM.Definition
   , datetime, date, time, text, list, dollarRef, dollarReferences
     -- * Fetching definition representation
   , DefinitionId(..), FromEmptyInstance(..)
+    -- * Utils
+  , descText
     -- ** Debugging
   , _testBuild, parseFieldDescription, parseKeyword
   ) where
@@ -92,7 +94,6 @@ data FieldDescription
     }
 instance Show FieldDescription where show = unpack . descText
 instance Pretty FieldDescription where pretty = viaShow
-instance ToJSON FieldDescription where toJSON = toJSON . descText
 instance IsString FieldDescription where fromString = FieldDesc [] . fromString
 instance Semigroup FieldDescription where
   FieldDesc kws1 desc1 <> FieldDesc kws2 desc2 = FieldDesc (kws1 <> kws2) (desc1 <> " " <> desc2)
@@ -657,7 +658,7 @@ parseFieldDescription = do
   return FieldDesc{ knownKws , rawDesc }
 
 parseKeyword :: Parsec Void Text Keyword
-parseKeyword = dbg "kw" $ (char '$' *>) $
+parseKeyword = -- dbg "kw" $ (char '$' *>) $
       (string "instanceLabel" $> InstanceLabelKw)
   <|> (string "instanceDescription" $> InstanceDescriptionKw)
   <|> (string "readonly" $> ReadOnlyKw)
@@ -672,7 +673,7 @@ parseKeyword = dbg "kw" $ (char '$' *>) $
   <|> (RawKw <$> takeRest) -- fallback
 
 parseListKeyword :: Parsec Void Text Keyword
-parseListKeyword = fmap (ListKw . map T.pack) $ dbg "list" $
+parseListKeyword = fmap (ListKw . map T.pack) $ -- dbg "list" $
   char '[' *> sepBy1 (someTill anySingle (lookAhead (char ',' <|> char ']'))) (char ',') <* char ']'
 
 parseRefKeyword :: Parsec Void Text Keyword
@@ -683,7 +684,7 @@ parseRefKeyword = do
   return $ RefKw (tokensToChunk (Proxy @Text) defName) (byText (tokensToChunk (Proxy @Text) queryString))
 
 parseReferencesKeyword :: Parsec Void Text Keyword
-parseReferencesKeyword = dbg "refes" do
+parseReferencesKeyword = do -- dbg "refes" do
   string "references" *> char '('
   defName <- manyTill anySingle (char ',')
   fieldName <- manyTill anySingle (lookAhead (char ')'))

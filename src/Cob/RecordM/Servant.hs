@@ -167,7 +167,7 @@ instance ToJSON (ToRecM Field) where
   toJSON (ToRecM f@Field{..}) =
     object $
       [ "name" .= fieldName
-      , "description" .= fieldDescription
+      , "description" .= ToRecM fieldDescription
       , "duplicable" .= fieldDuplicable
       , "required" .= ToRecM fieldRequired
       , "order" .= getFieldOrder f
@@ -193,3 +193,5 @@ instance ToJSON (ToRecM FieldRequired) where
 instance ToJSON (ToRecM DefinitionState) where
   toJSON (ToRecM EnabledDefinition) = "enabled"
 
+instance ToJSON (ToRecM FieldDescription) where
+  toJSON (ToRecM fs) = toJSON $ descText fs
