@@ -7,5 +7,5 @@ import Distribution.Simple.SetupHooks
 import Foreign.Swift.SetupHooks
 
 setupHooks :: SetupHooks
-setupHooks = foreignSwiftSetupHooks
+setupHooks = foreignSwiftSetupHooks "CobSwift"
 

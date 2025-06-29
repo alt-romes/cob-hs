@@ -1,5 +1,5 @@
 packages: ., cob-mermaid, cob-xlsx,
-          cob-swift, ../haskell-swift/swift-ffi/
+          cob-swift, ../haskell-swift/swift-ffi/, ../haskell-swift/xcframework
           -- cob-mcp, re-implement using the new better library on hackage
 
 source-repository-package
