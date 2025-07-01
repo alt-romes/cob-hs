@@ -48,7 +48,7 @@ import Data.Text (Text)
 import Data.ByteString (ByteString)
 import Data.String (fromString)
 
-import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:), (.:?), Value(String))
+import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withText, withObject, (.:), (.:?), Value(String))
 
 import Cob.RecordM.Record (Record(..))
 import Cob.Ref (Ref(..))
