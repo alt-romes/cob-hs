@@ -48,8 +48,12 @@ data Verbosity
   | INFO
   | DEBUG
 
--- | Make a 'CobSession' with the default TLS Manager given the 'Host' and a
--- 'CobToken'.
+-- | Make a 'CobSession' with the default TLS Manager given the 'Host' and a 'CobToken'.
+--
+-- Note: this session is not like a TLS session in the sense that is maintained actively.
+-- Within the scope of this session the 'CobSession' can be used to establish
+-- connections to and use RecordM, and the logger's lifetime is delimited by
+-- it.
 withSession :: Host -> CobToken -> (CobSession -> IO a) -> IO a
 withSession cobhost tok run = withEmptySession cobhost (run <=< (`updateSessionToken` tok))
 
