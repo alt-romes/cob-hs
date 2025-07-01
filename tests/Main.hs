@@ -23,6 +23,13 @@ data CobTr
     deriving Show
 mkRecord ''CobTr "CASA Finanças Movimentos" ["Descritivo", "Data", "Movimento", "Saldo", "ID"]
 
+-- Test it compiles
+data EnumTest
+  = OptionA
+  | OptionB
+  | OptionC
+mkRecordEnum ''EnumTest ["Option A", "Option B", "Option C"]
+
 main = defaultMain tests
 
 tests :: TestTree

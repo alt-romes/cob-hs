@@ -1,7 +1,11 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 module Cob.RecordM.Record where
 
 import Data.Aeson
+import GHC.TypeLits
 
 -- | A 'Record' is an instance belonging to a RecordM 'Definition'
 -- 

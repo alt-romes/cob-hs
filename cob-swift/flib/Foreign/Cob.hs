@@ -26,17 +26,6 @@ import qualified Data.Kind as K
 instance ToMoatType Void where
   toMoatType _ = Concrete "Never" []
 
--- Yield types to library
--- yieldType @FieldRequired Proxy
--- yieldType @(Query _) Proxy
--- yieldType @Keyword Proxy
--- yieldType @FieldDescription Proxy
--- yieldType @Condition Proxy
--- yieldType @FieldName Proxy
--- yieldType @DefinitionState Proxy
--- yieldType @Field Proxy
--- yieldType @Definition Proxy
-
 swiftData ''FieldRequired
 swiftData ''Query
 swiftData ''Keyword

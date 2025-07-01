@@ -35,7 +35,7 @@
 -- Check 'SupportedRecordType' for which primitive types are supported. All
 -- JSON enabled types are supported as well.
 -- The ID field will be treated specially as a field that contains a self reference to the record
-module Cob.RecordM.TH (mkRecord, SupportedRecordType) where
+module Cob.RecordM.TH (mkRecord, SupportedRecordType, mkRecordEnum) where
 
 import Data.Time
 
@@ -48,12 +48,13 @@ import Data.Text (Text)
 import Data.ByteString (ByteString)
 import Data.String (fromString)
 
-import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:), (.:?))
+import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withObject, (.:), (.:?), Value(String))
 
 import Cob.RecordM.Record (Record(..))
 import Cob.Ref (Ref(..))
 
 import Language.Haskell.TH
+import qualified Data.Text as T
 
 -- | All other types use the default ToJSON implementation
 data SupportedRecordType = StringT
@@ -257,3 +258,49 @@ mkVarE = return . VarE . mkName
 mkVarP :: String -> Q Pat
 mkVarP = return . VarP . mkName
 
+--------------------------------------------------------------------------------
+-- Enum
+--------------------------------------------------------------------------------
+
+-- | Create JSON instances for serializing an enum (as in the keyword @$[]@ in RecordM, e.g. @$[Option 1,Value 2]@)
+--
+-- @
+-- data Status = Pending | Confirmed
+--
+-- -- Specify the matching RecordM strings for serializing Status
+-- mkRecordEnum ''Status ["Pending Status", "Confirmed Status"]
+--
+-- -- Will produce code like
+-- instance ToJSON Status where
+--   toJSON Pending = String "Pending Status"
+--   toJSON Confirmed = String "Confirmed Status"
+-- @
+mkRecordEnum :: Name -> [String] -> Q [Dec]
+mkRecordEnum ty tags = do
+  tyInfo <- reify ty
+  case tyInfo of
+    TyConI (DataD _ tyName [] _ consList _) -> do
+      if length consList /= length tags then
+        fail $ "mkRecordEnum: Number of constructors (" ++ show consList ++ ") does not match number of tags (" ++ show tags ++ ")"
+      else do
+        toJSONInst <-
+          instanceD (cxt []) [t| ToJSON $(conT tyName) |] [funD 'toJSON (zipWith mkToJSONClause consList tags)]
+        fromJSONInst <-
+          instanceD (cxt []) [t| FromJSON $(conT tyName) |] [funD 'parseJSON [mkFromJSONClause consList]]
+        return [toJSONInst, fromJSONInst]
+    _ -> fail "mkRecordEnum should be called on an enum datatype"
+  where
+    mkToJSONClause :: Con -> String -> Q Clause
+    mkToJSONClause (NormalC conName []) tag = clause [conP conName []] (normalB [e| String ($(varE 'T.pack) $(litE $ stringL tag)) |]) []
+    mkToJSONClause _ _ = fail "mkRecordEnum: Only normal constructors without arguments are supported (Enum Types)"
+
+    mkFromJSONClause :: [Con] -> Q Clause
+    mkFromJSONClause consList = clause [] (normalB
+        [e| withText $(litE $ stringL (show ty)) $ \v -> $(
+              caseE (appE (varE 'T.unpack) (varE 'v)) (zipWith mkFromJSONCase consList tags)
+          )
+        |]) []
+
+    mkFromJSONCase :: Con -> String -> Q Match
+    mkFromJSONCase (NormalC conName []) tag = match (litP $ stringL tag) (normalB [e| pure $(conE conName) |]) []
+    mkFromJSONCase _ _ = fail "mkRecordEnum: Only normal constructors without arguments are supported (Enum Types)"
