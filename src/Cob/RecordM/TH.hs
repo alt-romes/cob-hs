@@ -50,6 +50,7 @@ import Data.String (fromString)
 
 import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withText, withObject, (.:), (.:?), Value(String))
 
+import Cob.RecordM.Query
 import Cob.RecordM.Record (Record(..))
 import Cob.Ref (Ref(..))
 
@@ -274,6 +275,10 @@ mkVarP = return . VarP . mkName
 -- instance ToJSON Status where
 --   toJSON Pending = String "Pending Status"
 --   toJSON Confirmed = String "Confirmed Status"
+--
+-- instance ToQueryField Status where
+--   queryFieldValue Pending = "Pending Status"
+-- ...
 -- @
 mkRecordEnum :: Name -> [String] -> Q [Dec]
 mkRecordEnum ty tags = do
@@ -287,7 +292,9 @@ mkRecordEnum ty tags = do
           instanceD (cxt []) [t| ToJSON $(conT tyName) |] [funD 'toJSON (zipWith mkToJSONClause consList tags)]
         fromJSONInst <-
           instanceD (cxt []) [t| FromJSON $(conT tyName) |] [funD 'parseJSON [mkFromJSONClause consList]]
-        return [toJSONInst, fromJSONInst]
+        toQueryFieldInst <-
+          instanceD (cxt []) [t| ToQueryField $(conT tyName) |] [funD 'queryFieldValue (zipWith mkToQueryFieldClause consList tags)]
+        return [toJSONInst, fromJSONInst, toQueryFieldInst]
     _ -> fail "mkRecordEnum should be called on an enum datatype"
   where
     mkToJSONClause :: Con -> String -> Q Clause
@@ -304,3 +311,8 @@ mkRecordEnum ty tags = do
     mkFromJSONCase :: Con -> String -> Q Match
     mkFromJSONCase (NormalC conName []) tag = match (litP $ stringL tag) (normalB [e| pure $(conE conName) |]) []
     mkFromJSONCase _ _ = fail "mkRecordEnum: Only normal constructors without arguments are supported (Enum Types)"
+
+    mkToQueryFieldClause :: Con -> String -> Q Clause
+    mkToQueryFieldClause (NormalC conName []) tag =
+      clause [conP conName []] (normalB [e| $(litE $ stringL tag) |]) []
+    mkToQueryFieldClause _ _ = fail "mkRecordEnum: Only normal constructors without arguments are supported (Enum Types)"
