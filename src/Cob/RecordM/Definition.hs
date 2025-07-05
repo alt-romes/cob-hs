@@ -658,7 +658,7 @@ parseFieldDescription = do
   return FieldDesc{ knownKws , rawDesc }
 
 parseKeyword :: Parsec Void Text Keyword
-parseKeyword = -- dbg "kw" $ (char '$' *>) $
+parseKeyword = (char '$' *>) $
       (string "instanceLabel" $> InstanceLabelKw)
   <|> (string "instanceDescription" $> InstanceDescriptionKw)
   <|> (string "readonly" $> ReadOnlyKw)
@@ -684,7 +684,7 @@ parseRefKeyword = do
   return $ RefKw (tokensToChunk (Proxy @Text) defName) (byText (tokensToChunk (Proxy @Text) queryString))
 
 parseReferencesKeyword :: Parsec Void Text Keyword
-parseReferencesKeyword = do -- dbg "refes" do
+parseReferencesKeyword = do
   string "references" *> char '('
   defName <- manyTill anySingle (char ',')
   fieldName <- manyTill anySingle (lookAhead (char ')'))

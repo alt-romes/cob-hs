@@ -18,6 +18,7 @@ import Foreign.Swift.Lib
 
 import Cob.RecordM.Definition
 import Cob.RecordM.Query
+import Data.Aeson
 
 import Data.Proxy (Proxy(..))
 import Data.Void
@@ -45,7 +46,8 @@ swiftMarshal JSONKind ''Definition
 
 -- | Get a definition
 cobDefinition :: CobSession -> DefinitionId -> IO Definition
-cobDefinition s di = runReaderT (getDefinitionRep di) s
+cobDefinition s di = do
+  runReaderT (getDefinitionRep di) s
 $(foreignExportSwift 'cobDefinition)
 
 -- | Login to get a CobSession (todo: read the haddocks into Swift too!)

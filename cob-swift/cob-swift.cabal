@@ -39,13 +39,13 @@ foreign-library cob-swift
     options: standalone
 
     other-modules: Foreign.Cob
-    build-depends: base, swift-ffi, cob, mtl
+    build-depends: base, swift-ffi, cob, mtl, aeson
                     -- cob-swift,
     hs-source-dirs: flib
 
 
 library
     exposed-modules: Foreign.Cob
-    build-depends: base, swift-ffi, cob, mtl
+    build-depends: base, swift-ffi, cob, mtl, aeson
                     -- cob-swift,
     hs-source-dirs: flib

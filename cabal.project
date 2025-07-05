@@ -1,5 +1,6 @@
 packages: ., cob-mermaid, cob-xlsx,
           cob-swift, ../haskell-swift/swift-ffi/, ../haskell-swift/xcframework
+          ~/Developer/moat
           -- cob-mcp, re-implement using the new better library on hackage
 
 source-repository-package
@@ -16,9 +17,9 @@ source-repository-package
 allow-newer: moat:*
 
 -- use my fork now
-source-repository-package
-  type:     git
-  location: https://github.com/alt-romes/moat.git
+-- source-repository-package
+--   type:     git
+--   location: https://github.com/alt-romes/moat.git
 
 -- source-repository-package
 --     type: git
