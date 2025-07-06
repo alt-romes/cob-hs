@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE GHC2024 #-}
-{-# LANGUAGE TemplateHaskell, TypeSynonymInstances #-}
+{-# LANGUAGE TemplateHaskell, TypeSynonymInstances, OverloadedStrings #-}
 {-# LANGUAGE DerivingVia, StandaloneDeriving, UndecidableInstances #-}
 {-# LANGUAGE ScopedTypeVariables, DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
@@ -9,6 +9,7 @@ module Foreign.Cob where
 
 import Cob.UserM
 import Cob.RecordM
+import Cob.RecordM.TH
 import Cob.Session
 import Control.Monad.Reader
 
@@ -23,6 +24,9 @@ import Data.Aeson
 import Data.Proxy (Proxy(..))
 import Data.Void
 import qualified Data.Kind as K
+import Cob.RecordM.Dashboard
+import Cob.Ref
+import Cob.RecordM.DateTime
 
 instance ToMoatType Void where
   toMoatType _ = Concrete "Never" []
@@ -51,7 +55,43 @@ cobDefinition s di = do
 $(foreignExportSwift 'cobDefinition)
 
 -- | Login to get a CobSession (todo: read the haddocks into Swift too!)
-cobLogin :: Host -> String -> String -> IO CobSession
-cobLogin a b c = withUMSession a b c pure
+cobLogin :: Host -> CobToken -> IO CobSession
+cobLogin a b = do
+  s <- withSession a b pure
+  return s{logger=print} -- overwrite thing that was scope-bound in withUMSession
 $(foreignExportSwift 'cobLogin)
+
+--------------------------------------------------------------------------------
+-- Shuffdle bits
+--------------------------------------------------------------------------------
+
+-- | Shuffdle Usernames
+newtype Username = Username String
+mkRecord ''Username "Usernames" ["Nome"]
+
+data Mode = Normal | Hard
+mkRecordEnum ''Mode ["Normal", "Hard"]
+
+data ShuffdleStat = SS
+  { word  :: String
+  , date  :: DateTime
+  , user  :: Ref Username
+  , mode  :: Mode
+  , moves :: Int
+  }
+mkRecord ''ShuffdleStat "Wins" ["Word", "Date", "Username", "Mode", "Moves"]
+
+data ResolvedBoard = ResolvedBoard { board :: (Board Int) }
+swiftData ''TotalsLine
+swiftData ''BoardComponent
+swiftData ''Board
+swiftData ''ResolvedBoard
+swiftMarshal JSONKind ''ResolvedBoard
+
+shuffdleBoard :: CobSession -> IO ResolvedBoard
+shuffdleBoard = runReaderT $ ResolvedBoard <$> do
+  resolveBoard (Board "Stats"
+    [CLabel "Stats", CTotals "Wins"
+      [TDefinitionCount (SomeQuery (defaultQuery :: Query ShuffdleStat))]])
+$(foreignExportSwift 'shuffdleBoard)
 
