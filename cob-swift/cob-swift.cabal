@@ -22,15 +22,6 @@ custom-setup
 common warnings
     ghc-options: -Wall
 
--- library
---     import:           warnings
---     exposed-modules:  Swift.Cob, Swift.Cob.Moat
---     -- other-modules:
---     -- other-extensions:
---     build-depends:    base, cob, template-haskell, swift-ffi, mtl
---     hs-source-dirs:   src
---     default-language: GHC2024
-
 foreign-library cob-swift
     type: native-shared
 
@@ -40,12 +31,5 @@ foreign-library cob-swift
 
     other-modules: Foreign.Cob
     build-depends: base, swift-ffi, cob, mtl, aeson
-                    -- cob-swift,
     hs-source-dirs: flib
 
-
-library
-    exposed-modules: Foreign.Cob
-    build-depends: base, swift-ffi, cob, mtl, aeson
-                    -- cob-swift,
-    hs-source-dirs: flib
