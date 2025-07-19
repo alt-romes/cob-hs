@@ -81,17 +81,29 @@ data ShuffdleStat = SS
   }
 mkRecord ''ShuffdleStat "Wins" ["Word", "Date", "Username", "Mode", "Moves"]
 
-data ResolvedBoard = ResolvedBoard { board :: (Board Int) }
+-- | A board with queries for strings fixed for a certain definition? Here Shuffdle
+data UnresolvedBoard = UnresolvedBoard { uboard :: Board String }
+
+data ResolvedBoard = ResolvedBoard { board :: Board Int }
+
 swiftData ''TotalsLine
 swiftData ''BoardComponent
 swiftData ''Board
 swiftData ''ResolvedBoard
+swiftData ''UnresolvedBoard
 swiftMarshal JSONKind ''ResolvedBoard
+swiftMarshal JSONKind ''UnresolvedBoard
+
+resolveIt :: UnresolvedBoard -> CobSession -> IO ResolvedBoard
+resolveIt (UnresolvedBoard b) = runReaderT $
+  ResolvedBoard <$> resolveBoard (SomeQuery @ShuffdleStat . byStr <$> b)
+$(foreignExportSwift 'resolveIt)
 
 shuffdleBoard :: CobSession -> IO ResolvedBoard
 shuffdleBoard = runReaderT $ ResolvedBoard <$> do
   resolveBoard (Board "Stats"
-    [CLabel "Stats", CTotals "Wins"
+    [{- CLabel "Stats", -} CTotals "Wins"
       [TDefinitionCount (SomeQuery (defaultQuery :: Query ShuffdleStat))]])
+
 $(foreignExportSwift 'shuffdleBoard)
 
