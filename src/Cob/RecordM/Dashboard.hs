@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE DeriveFunctor #-}
 module Cob.RecordM.Dashboard where
 
 import Data.Text (Text)
@@ -13,6 +14,7 @@ data Board a = Board
   { boardTitle      :: Text
   , boardComponents :: [BoardComponent a]
   }
+  deriving Functor
 
 data BoardComponent a
   = CLabel { label :: !Text }
@@ -20,6 +22,7 @@ data BoardComponent a
     { label :: !Text
     , totals_lines :: [TotalsLine a]
     }
+  deriving Functor
 
   -- | CMenu
   -- | CKibana
@@ -37,6 +40,7 @@ data BoardComponent a
 
 data TotalsLine a
   = TDefinitionCount { count :: a }
+  deriving Functor
   -- | TDomainCount
   -- | TFieldSum
   -- | TFieldAverage

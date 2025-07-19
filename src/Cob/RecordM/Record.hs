@@ -2,10 +2,19 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
-module Cob.RecordM.Record where
+{-# LANGUAGE GADTs #-}
+module Cob.RecordM.Record
+  ( Record(..)
+    -- * Dynamic records
+  , DynRecord(..)
+  , withDynRecord
+  )
+  where
 
 import Data.Aeson
-import GHC.TypeLits
+import Data.Aeson.Key (fromString)
+import Data.Kind
+import Unsafe.Coerce (unsafeCoerce)
 
 -- | A 'Record' is an instance belonging to a RecordM 'Definition'
 -- 
@@ -13,7 +22,7 @@ import GHC.TypeLits
 -- which will allow the compiler to automatically target the correct definition
 -- when generating code to interact with RecordM
 --
--- In the future, record types for each definition could be generated automatically
+-- Record types for a definition can be generated automatically using the Cob.RecordM.TH module
 --
 -- ==== __Example__
 --
@@ -41,4 +50,35 @@ import GHC.TypeLits
 class (ToJSON a, FromJSON a) => Record a where
     -- | Get the RecordM definition (its name as a string) that has this type of 'Record'
     definition :: String
+
+-- | A dynamic instance of 'Record' for which ToJSON/FromJSON gets no record fields at all
+data DynRecord = DynRecord { dynDefName :: String }
+
+instance ToJSON DynRecord where
+  toJSON _ = object []
+
+instance FromJSON DynRecord where
+  parseJSON = withObject "EmptyRecord" $ \v -> do
+    DynRecord <$> v .: fromString "definitionName"
+
+-- | Come up with a 'Record' evidence from a runtime 'DynRecord'
+-- TODO: Test this in CI (works locally)
+withDynRecord :: forall r. DynRecord -> (Record DynRecord => r) -> r
+withDynRecord DynRecord{dynDefName} r =
+  case unsafeCoerce (FakeDict (DynRecordDict dynDefName)) :: Dict (Record DynRecord) of
+    Dict -> r
+
+-- | To wrap the runtime dict we unsafe coerce
+data FakeDict a = FakeDict a
+
+-- | Very unsafe way to come up with a dictionary at runtime
+data DynRecordDict where
+    -- | Must mimic 'Record' exactly
+    DynRecordDict :: (ToJSON DynRecord, FromJSON DynRecord) => {
+        _definition :: String
+    } -> DynRecordDict
+
+-- | Values of type Dict p capture a dictionary for a constraint of type p.
+data Dict :: Constraint -> Type where
+  Dict :: a => Dict a
 
