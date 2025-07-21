@@ -10,6 +10,12 @@ import Cob.RecordM.Query
 -- | An unresolved 'Board' stores in the leafs a 'Query' for some existential @a@ that instances @Record a@
 data SomeQuery = forall a. Record a => SomeQuery (Query a)
 
+-- | A resolved board is a board where all leafs become 'ResolvedItem's.
+-- See 'resolveBoard'
+data ResolvedItem = RInt { n :: Int }
+                  -- ... | RString String
+                  -- ... | etc
+
 data Board a = Board
   { boardTitle      :: Text
   , boardComponents :: [BoardComponent a]
@@ -48,14 +54,14 @@ data TotalsLine a
   -- | TDMEquipmentCount
   -- | TLink
 
-resolveBoard :: MonadCob m => Board SomeQuery -> m (Board Int)
+resolveBoard :: MonadCob m => Board SomeQuery -> m (Board ResolvedItem)
 resolveBoard (Board t cps) = Board t <$> mapM resolveComponent cps
 
-resolveComponent :: MonadCob m => BoardComponent SomeQuery -> m (BoardComponent Int)
+resolveComponent :: MonadCob m => BoardComponent SomeQuery -> m (BoardComponent ResolvedItem)
 resolveComponent (CLabel t) = pure $ CLabel t
 resolveComponent (CTotals t ls) = CTotals t <$> mapM resolveTotalsLine ls
 
-resolveTotalsLine :: MonadCob m => TotalsLine SomeQuery -> m (TotalsLine Int)
+resolveTotalsLine :: MonadCob m => TotalsLine SomeQuery -> m (TotalsLine ResolvedItem)
 resolveTotalsLine (TDefinitionCount (SomeQuery q)) =
-  TDefinitionCount <$> definitionCount q
+  TDefinitionCount . RInt <$> definitionCount q
 

@@ -9,6 +9,7 @@ module Foreign.Cob where
 
 import Cob.UserM
 import Cob.RecordM
+import Cob.RecordM.Record
 import Cob.RecordM.TH
 import Cob.Session
 import Control.Monad.Reader
@@ -81,22 +82,29 @@ data ShuffdleStat = SS
   }
 mkRecord ''ShuffdleStat "Wins" ["Word", "Date", "Username", "Mode", "Moves"]
 
--- | A board with queries for strings fixed for a certain definition? Here Shuffdle
-data UnresolvedBoard = UnresolvedBoard { uboard :: Board String }
+data BoardConf = BoardConf { boardDef :: String, boardQuery :: String }
 
-data ResolvedBoard = ResolvedBoard { board :: Board Int }
+-- | A board with queries for strings fixed for a certain definition? Here Shuffdle
+data UnresolvedBoard = UnresolvedBoard { uboard :: Board BoardConf }
+
+data ResolvedBoard = ResolvedBoard { board :: Board ResolvedItem }
 
 swiftData ''TotalsLine
 swiftData ''BoardComponent
 swiftData ''Board
+swiftData ''ResolvedItem
 swiftData ''ResolvedBoard
+swiftData ''BoardConf
 swiftData ''UnresolvedBoard
 swiftMarshal JSONKind ''ResolvedBoard
 swiftMarshal JSONKind ''UnresolvedBoard
 
 resolveIt :: UnresolvedBoard -> CobSession -> IO ResolvedBoard
 resolveIt (UnresolvedBoard b) = runReaderT $
-  ResolvedBoard <$> resolveBoard (SomeQuery @ShuffdleStat . byStr <$> b)
+  fmap ResolvedBoard . resolveBoard $
+    (\BoardConf{boardDef, boardQuery} ->
+      withDynRecord (DynRecord boardDef) $
+        SomeQuery @DynRecord (byStr boardQuery)) <$> b
 $(foreignExportSwift 'resolveIt)
 
 shuffdleBoard :: CobSession -> IO ResolvedBoard
