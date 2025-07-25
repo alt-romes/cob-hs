@@ -99,8 +99,8 @@ swiftData ''UnresolvedBoard
 swiftMarshal JSONKind ''ResolvedBoard
 swiftMarshal JSONKind ''UnresolvedBoard
 
-resolveIt :: UnresolvedBoard -> CobSession -> IO ResolvedBoard
-resolveIt (UnresolvedBoard b) = runReaderT $
+resolveIt :: UnresolvedBoard -> CobSession -> CatchFFI IO ResolvedBoard
+resolveIt (UnresolvedBoard b) s = CatchFFI $ flip runReaderT s $
   fmap ResolvedBoard . resolveBoard $
     (\BoardConf{boardDef, boardQuery} ->
       withDynRecord (DynRecord boardDef) $
