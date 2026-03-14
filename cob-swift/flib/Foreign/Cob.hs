@@ -4,7 +4,6 @@
 {-# LANGUAGE DerivingVia, StandaloneDeriving, UndecidableInstances #-}
 {-# LANGUAGE ScopedTypeVariables, DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -fplugin Foreign.Swift.Lib #-}
 module Foreign.Cob where
 
 import Cob.UserM
@@ -106,6 +105,7 @@ resolveIt (UnresolvedBoard b) s = CatchFFI $ flip runReaderT s $
       withDynRecord (DynRecord boardDef) $
         SomeQuery @DynRecord (byStr boardQuery)) <$> b
 $(foreignExportSwift 'resolveIt)
+
 
 shuffdleBoard :: CobSession -> IO ResolvedBoard
 shuffdleBoard = runReaderT $ ResolvedBoard <$> do
