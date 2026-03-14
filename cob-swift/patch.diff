@@ -1,0 +1,87 @@
+commit 4024996ad83e1301705b42f9e6b2a8b22b0d98a4
+Author: Rodrigo Mesquita <rodrigo.m.mesquita@gmail.com>
+Date:   Mon Jul 21 09:04:56 2025 +0100
+
+    cob-swift: ResolvedItem
+
+diff --git a/cob-swift/flib/Foreign/Cob.hs b/cob-swift/flib/Foreign/Cob.hs
+index 9edead8..d02ff3c 100644
+--- a/cob-swift/flib/Foreign/Cob.hs
++++ b/cob-swift/flib/Foreign/Cob.hs
+@@ -9,6 +9,7 @@ module Foreign.Cob where
+ 
+ import Cob.UserM
+ import Cob.RecordM
++import Cob.RecordM.Record
+ import Cob.RecordM.TH
+ import Cob.Session
+ import Control.Monad.Reader
+@@ -81,22 +82,29 @@ data ShuffdleStat = SS
+   }
+ mkRecord ''ShuffdleStat "Wins" ["Word", "Date", "Username", "Mode", "Moves"]
+ 
++data BoardConf = BoardConf { boardDef :: String, boardQuery :: String }
++
+ -- | A board with queries for strings fixed for a certain definition? Here Shuffdle
+-data UnresolvedBoard = UnresolvedBoard { uboard :: Board String }
++data UnresolvedBoard = UnresolvedBoard { uboard :: Board BoardConf }
+ 
+-data ResolvedBoard = ResolvedBoard { board :: Board Int }
++data ResolvedBoard = ResolvedBoard { board :: Board ResolvedItem }
+ 
+ swiftData ''TotalsLine
+ swiftData ''BoardComponent
+ swiftData ''Board
++swiftData ''ResolvedItem
+ swiftData ''ResolvedBoard
++swiftData ''BoardConf
+ swiftData ''UnresolvedBoard
+ swiftMarshal JSONKind ''ResolvedBoard
+ swiftMarshal JSONKind ''UnresolvedBoard
+ 
+ resolveIt :: UnresolvedBoard -> CobSession -> IO ResolvedBoard
+ resolveIt (UnresolvedBoard b) = runReaderT $
+-  ResolvedBoard <$> resolveBoard (SomeQuery @ShuffdleStat . byStr <$> b)
++  fmap ResolvedBoard . resolveBoard $
++    (\BoardConf{boardDef, boardQuery} ->
++      withDynRecord (DynRecord boardDef) $
++        SomeQuery @DynRecord (byStr boardQuery)) <$> b
+ $(foreignExportSwift 'resolveIt)
+ 
+ shuffdleBoard :: CobSession -> IO ResolvedBoard
+diff --git a/src/Cob/RecordM/Dashboard.hs b/src/Cob/RecordM/Dashboard.hs
+index 408e4b9..f6fb7ec 100644
+--- a/src/Cob/RecordM/Dashboard.hs
++++ b/src/Cob/RecordM/Dashboard.hs
+@@ -10,6 +10,12 @@ import Cob.RecordM.Query
+ -- | An unresolved 'Board' stores in the leafs a 'Query' for some existential @a@ that instances @Record a@
+ data SomeQuery = forall a. Record a => SomeQuery (Query a)
+ 
++-- | A resolved board is a board where all leafs become 'ResolvedItem's.
++-- See 'resolveBoard'
++data ResolvedItem = RInt { n :: Int }
++                  -- ... | RString String
++                  -- ... | etc
++
+ data Board a = Board
+   { boardTitle      :: Text
+   , boardComponents :: [BoardComponent a]
+@@ -48,14 +54,14 @@ data TotalsLine a
+   -- | TDMEquipmentCount
+   -- | TLink
+ 
+-resolveBoard :: MonadCob m => Board SomeQuery -> m (Board Int)
++resolveBoard :: MonadCob m => Board SomeQuery -> m (Board ResolvedItem)
+ resolveBoard (Board t cps) = Board t <$> mapM resolveComponent cps
+ 
+-resolveComponent :: MonadCob m => BoardComponent SomeQuery -> m (BoardComponent Int)
++resolveComponent :: MonadCob m => BoardComponent SomeQuery -> m (BoardComponent ResolvedItem)
+ resolveComponent (CLabel t) = pure $ CLabel t
+ resolveComponent (CTotals t ls) = CTotals t <$> mapM resolveTotalsLine ls
+ 
+-resolveTotalsLine :: MonadCob m => TotalsLine SomeQuery -> m (TotalsLine Int)
++resolveTotalsLine :: MonadCob m => TotalsLine SomeQuery -> m (TotalsLine ResolvedItem)
+ resolveTotalsLine (TDefinitionCount (SomeQuery q)) =
+-  TDefinitionCount <$> definitionCount q
++  TDefinitionCount . RInt <$> definitionCount q
+ 

@@ -28,7 +28,7 @@ foreign-library cob-swift
     -- See https://www.hobson.space/posts/haskell-foreign-library/ (great read)
     options: standalone
 
-    other-modules: Foreign.Cob
+    other-modules: Foreign.Cob, Foreign.Swift.Exported.Utils
     build-depends: base, swift-ffi, cob, mtl, aeson
     hs-source-dirs: flib
 

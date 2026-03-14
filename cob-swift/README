@@ -1,0 +1,11 @@
+To build a static library such that it can be used by Apple, for now do
+
+    cabal build cob-swift $(echo $STATIC_HASKELL_CABAL_OPTS)
+
+(The echo is needed to expand the var)
+This makes sure the resulting library is statically linked against everything except libSystem
+Check out my static_haskell module and
+
+    otool -L path-to-flib.dylib
+
+to see only libSystem is dynlinked
