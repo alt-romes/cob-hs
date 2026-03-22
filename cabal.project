@@ -1,13 +1,24 @@
-packages: ., cob-mermaid, cob-xlsx, cob-swift,
-          ../haskell-swift/swift-ffi/, ../haskell-swift/xcframework
+packages: cob.cabal
 
-source-repository-package
-    type: git
-    location: https://github.com/alt-romes/mermaid-hs
+          -- Experiments:
+          -- experiments/cob-mermaid,
+          -- experiments/cob-xlsx,
+          -- experiments/cob-swift,
+          -- (depends on
+          -- ../haskell-swift/swift-ffi/,
+          -- ../haskell-swift/xcframework)
+          -- experiments/cob-ui,
+          -- (depends on that old haskell-ui project)
 
--- use my fork now
-source-repository-package
-  type:     git
-  location: https://github.com/alt-romes/moat.git
+-- for cob-mermaid
+-- source-repository-package
+--     type: git
+--     location: https://github.com/alt-romes/mermaid-hs
 
-allow-newer: moat:*, *:base, *:template-haskell, *:containers, *:time
+-- for cob-swift
+--source-repository-package
+--  type:     git
+--  location: https://github.com/alt-romes/moat.git
+-- allow-newer: moat:*
+
+allow-newer: *:base, *:template-haskell, *:containers, *:time

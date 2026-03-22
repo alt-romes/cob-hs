@@ -1,14 +1,7 @@
 { pkgs ? import <nixpkgs> {}, ... }:
 let
-  streamly-repo = (pkgs.fetchFromGitHub {
-    repo = "streamly";
-    owner = "composewell";
-    rev = "master";
-    sha256 = "sha256-aMQ9uAeKSe1m/G0cO14xgKx5njiTptQ/XtWxbwnB3k0=";
-
-  });
   hspkgs = pkgs.haskell.packages.ghc910.override {
-    overrides = self: super: rec {
+    overrides = self: super: {
 
       # Updated versions
       streamly-core = pkgs.haskell.lib.doJailbreak super.streamly-core;
@@ -28,14 +21,6 @@ let
           sha256 = "sha256-dQ6Y2PesKeu21zmzsSi+ylYp3qTXYtmIlYoFT2dCICo=";
         } {});
 
-      # hs-mcp = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "hs-mcp" (pkgs.fetchFromGitHub {
-      #   repo = "hs-mcp";
-      #   owner = "alt-romes";
-      #   rev = "master";
-      #   sha256 = lib.fakeHash;
-      # }) {});
-      hs-mcp = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "hs-mcp" ../hs-mcp {});
-
       mermaid = pkgs.haskell.lib.doJailbreak (self.callCabal2nix "mermaid" (pkgs.fetchFromGitHub {
         repo = "mermaid-hs";
         owner = "alt-romes";
@@ -44,11 +29,9 @@ let
       }) {});
 
       cob = self.callCabal2nix "cob" ./. {};
-      cob-mcp = self.callCabal2nix "cob-mcp" ./cob-mcp {};
     };
   };
 in
 {
   cob = hspkgs.cob;
-  cob-mcp = hspkgs.cob-mcp;
 }
