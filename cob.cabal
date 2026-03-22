@@ -4,7 +4,7 @@ version:            0.1.0.0
 synopsis:           Cult of Bits haskell interface
 description:        Cob (RecordM + UserM) interface (boilerplate free!)
 license:            MIT
-tested-with:        GHC==9.10.1
+tested-with:        GHC==9.14.1
 bug-reports:        https://github.com/alt-romes/cob-hs
 author:             romes
 maintainer:         rodrigo.m.mesquita@gmail.com
