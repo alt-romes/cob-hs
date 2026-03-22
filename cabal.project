@@ -1,31 +1,13 @@
-packages: ., cob-mermaid, cob-xlsx,
-          cob-swift, ../haskell-swift/swift-ffi/, ../haskell-swift/xcframework
-          -- ~/Developer/moat
-          -- cob-mcp, re-implement using the new better library on hackage
+packages: ., cob-mermaid, cob-xlsx, cob-swift,
+          ../haskell-swift/swift-ffi/, ../haskell-swift/xcframework
 
 source-repository-package
     type: git
     location: https://github.com/alt-romes/mermaid-hs
-
--- Use the newer one from hackage
--- source-repository-package
---     type: git
---     location: https://github.com/alt-romes/hs-mcp
-
--- Swift
-
-allow-newer: moat:*, *:base, *:template-haskell, *:containers, *:time
 
 -- use my fork now
 source-repository-package
   type:     git
   location: https://github.com/alt-romes/moat.git
 
--- source-repository-package
---     type: git
---     location: https://github.com/composewell/streamly
--- 
--- source-repository-package
---     type: git
---     location: https://github.com/composewell/streamly
---     subdir: core
+allow-newer: moat:*, *:base, *:template-haskell, *:containers, *:time

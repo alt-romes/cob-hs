@@ -73,7 +73,7 @@ library
                       time
 
 
-    hs-source-dirs:   src
+    hs-source-dirs:   cob/cob
     default-language: Haskell2010
     default-extensions: NamedFieldPuns, Rank2Types, ScopedTypeVariables, LambdaCase, TypeApplications, FlexibleContexts, FlexibleInstances
 
@@ -92,7 +92,7 @@ library cob-servant
                       cob,
                       servant-server
 
-    hs-source-dirs:   cob-servant
+    hs-source-dirs:   cob/servant
     default-language: Haskell2010
 
 test-suite cob-tests
