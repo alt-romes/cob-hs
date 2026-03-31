@@ -20,25 +20,22 @@ logError, logWarn, logInfo, logDebug :: MonadCob m => LogStr -> m ()
 logError = log ERROR
 logWarn  = log WARN
 logInfo  = log INFO
-#ifdef DEBUG
 logDebug = log DEBUG
-#else
-logDebug = pure . const ()
-#endif
 
 log :: MonadCob m
     => Verbosity -> LogStr -> m ()
 log logVerbosity str = do
   CobSession{logger, verbosity} <- ask
+  let newline = logger (toLogStr "\n")
   liftIO $ 
     case (verbosity, logVerbosity) of
-      (DEBUG, _    ) -> logger str
+      (DEBUG, _    ) -> logger str >> newline
       (INFO,  DEBUG) -> pure ()
-      (INFO,  _    ) -> logger str
+      (INFO,  _    ) -> logger str >> newline
       (WARN,  DEBUG) -> pure ()
       (WARN,  INFO ) -> pure ()
-      (WARN,  _    ) -> logger str
+      (WARN,  _    ) -> logger str >> newline
       (ERROR, DEBUG) -> pure ()
       (ERROR, INFO ) -> pure ()
       (ERROR, WARN ) -> pure ()
-      (ERROR, ERROR) -> logger str
+      (ERROR, ERROR) -> logger str >> newline
