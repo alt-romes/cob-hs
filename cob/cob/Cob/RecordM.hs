@@ -129,6 +129,12 @@ definitionCount rmQuery = do
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just 0) (Just 0) Nothing
     parseOrThrowIO (withObject "definition_count" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody
 
+-- | Count the total number of records in a definition by its id
+definitionCountById :: forall m. MonadCob m => DefinitionId -> m Int
+definitionCountById did = do
+    logInfo $ "Fetching definition total count by id for " <> toLogStr (show did)
+    rbody <- performReq $ searchById did (Just "*") (Just 0) (Just 0) Nothing
+    parseOrThrowIO (withObject "definition_count" ((.: "hits") >=> (.: "total") >=> (.: "value"))) rbody
 
 --------------------------------------------------------------------------------
 -- * Creating instances
@@ -320,9 +326,15 @@ newDefinition def = do
 
 deleteDefinition :: MonadCob m => DefinitionId -> m ()
 deleteDefinition (DefId di) = do
-  logInfo $ "Deleting definition byId " <> toLogStr (di)
-  _ <- performReq $ Servant.deleteDefinition (DefId di)
-  pure ()
+  logInfo $ "deleteDefinition: Validating that definition is empty by id: " <> toLogStr (di)
+  total_insts <- definitionCountById (DefId di)
+  if total_insts > 0
+    then liftIO $
+      throwIO (NonEmptyDefinitionDelete (DefId di) total_insts)
+    else do
+      logInfo $ "Definition " <> toLogStr (di) <> " is empty, proceeding with \"safe\" deletion"
+      _ <- performReq $ Servant.deleteDefinition (DefId di)
+      pure ()
 
 --------------------------------------------------------------------------------
 -- * Fetching Definitions

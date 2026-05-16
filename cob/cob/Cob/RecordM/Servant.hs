@@ -80,7 +80,7 @@ type DefinitionDelete = "definitions" :> Capture "definitionId" DefinitionId :> 
 
 type GetDefinitionRep = "instances" :> "empty" :> "definition" :> Capture "definitionId" DefinitionId :> QueryParam "withDefaults" Bool :> Get '[JSON] (FromEmptyInstance Definition)
 
-searchByName :: String -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
+searchByName :: String       -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
 

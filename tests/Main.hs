@@ -166,6 +166,9 @@ deleteDefinitions :: CobSession -> [DefinitionId] -> IO ()
 deleteDefinitions s ids = do
   putStrLn $ "Deleting definitions by id: " ++ show ids
   threadDelay (60 * 1000000)
+  -- Running deletions in production is a bit scary.
+  -- `deleteDefinition` has some guardrails: it won't delete non-empty definitions.
+  -- Ideally, tests should be run on a mock server.
   runReaderT (mapM_ deleteDefinition (reverse ids)) s
 
 --------------------------------------------------------------------------------
