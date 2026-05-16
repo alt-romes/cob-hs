@@ -46,6 +46,7 @@ library
                       -- Network
                       servant,
                       servant-client >= 0.20.2,
+                      servant-client-core,
                       http-client,
                       http-client-tls,
 
@@ -64,6 +65,7 @@ library
 
                       -- JSON
                       aeson,
+                      aeson-pretty,
 
                       -- Streaming
                       streamly-core >= 0.2.2,

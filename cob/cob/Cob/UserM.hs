@@ -49,8 +49,8 @@ createUser user = do
     Left e@(FailureResponse _ (responseBody -> resp)) ->
       if "\"errorType\":\"NON_UNIQUE\"" `BS.isInfixOf` BS.toStrict resp
          then throwIO (NonUniqueUser (uusername user))
-         else throwIO e
-    Left e -> throwIO e
+         else throwIO (PrettyClientError e)
+    Left e -> throwIO (PrettyClientError e)
     Right b -> pure b
 
 -- | Delete an UserM user
