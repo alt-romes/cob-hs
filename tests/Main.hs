@@ -8,12 +8,14 @@
 module Main where
 
 import Control.Monad (void)
+import Control.Monad.Reader (runReaderT)
 import Data.Aeson (FromJSON, eitherDecodeFileStrict')
 import Data.IORef
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Void (Void)
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
@@ -26,7 +28,10 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Cob
+import Cob.RecordM (newDefinition, deleteDefinition)
+import Cob.RecordM.Definition
 import Cob.RecordM.TH
+import Control.Concurrent
 
 --------------------------------------------------------------------------------
 -- Test schema (Sandbox: renamed from Kanjideck)
@@ -105,6 +110,65 @@ readConfig fp = do
     else eitherDecodeFileStrict' fp
 
 --------------------------------------------------------------------------------
+-- RecordM Definitions for the Sandbox schema
+--
+-- These mirror the data types declared above and are created on the server
+-- before tests run.
+--------------------------------------------------------------------------------
+
+anyQ :: Query Void
+anyQ = "*"
+
+sbClientDef :: Definition
+sbClientDef = fromDSL "Sandbox Clients" "Cob tests — clients" $ do
+  "Email"       |=! instanceLabel
+  "Name"        |=  ""
+  "Kickstarter" |=  list ["Yes", "No"]
+  pure ()
+
+sbOrderDef :: Definition
+sbOrderDef = fromDSL "Sandbox Orders" "Cob tests — orders" $ do
+  "Client" |=! dollarRef "Sandbox Clients" anyQ
+  "State"  |=! list ["Paid", "Sent", "Refund"]
+  pure ()
+
+sbOrderItemsDef :: Definition
+sbOrderItemsDef = fromDSL "Sandbox Order Items" "Cob tests — order items" $ do
+  "Order"   |=! dollarRef "Sandbox Orders" anyQ
+  "Client"  |=  dollarReferences "Sandbox Orders" "Client"
+  -- Sandbox Products has no Haskell record (SBProduct is abstract), so we
+  -- store the product reference as a number rather than $ref(...).
+  "Product" |=! number
+  "Qt"      |=! number
+  "Value"   |=! number
+  pure ()
+
+sbDownloadsDef :: Definition
+sbDownloadsDef = fromDSL "Sandbox Downloads" "Cob tests — downloads" $ do
+  "Order Item" |=! dollarRef "Sandbox Order Items" anyQ
+  "Resource"   |=! text
+  pure ()
+
+allSandboxDefs :: [Definition]
+allSandboxDefs = [sbClientDef, sbOrderDef, sbOrderItemsDef, sbDownloadsDef]
+
+-- | Create all Sandbox definitions on the server, returning the resulting ids
+-- in creation order so they can be torn down in reverse.
+createDefinitions :: CobSession -> IO [DefinitionId]
+createDefinitions s =
+  runReaderT (mapM newDefinition allSandboxDefs) s
+
+-- | Delete all Sandbox definitions previously created.
+--
+-- Deletes in reverse creation order so that referencing definitions are gone
+-- before their targets.
+deleteDefinitions :: CobSession -> [DefinitionId] -> IO ()
+deleteDefinitions s ids = do
+  putStrLn $ "Deleting definitions by id: " ++ show ids
+  threadDelay (60 * 1000000)
+  runReaderT (mapM_ deleteDefinition (reverse ids)) s
+
+--------------------------------------------------------------------------------
 -- Entry point
 --------------------------------------------------------------------------------
 
@@ -120,8 +184,11 @@ main = do
       defaultMain (testGroup "Tests (skipped: no config)" [])
     Right cfg -> do
       counter <- newIORef 0
-      withSession (host cfg) (token cfg) $ \session ->
-        defaultMain (allTests cfg (TestEnv session counter))
+      withSession (host cfg) (token cfg) $ \session -> do
+        let env = TestEnv session counter
+        defaultMain $
+          withResource (createDefinitions session) (deleteDefinitions session) $ \_ ->
+            allTests cfg env
 
 -- | Shared environment for every test.
 data TestEnv = TestEnv
@@ -131,7 +198,7 @@ data TestEnv = TestEnv
 
 -- | Run a Cob action with mockCob (so additions are rolled back).
 runMock :: TestEnv -> Cob a -> IO a
-runMock env c = mockCob 0 (envSession env) c
+runMock env c = mockCob 100{-seconds-} (envSession env) c
 
 allTests :: TestConfig -> TestEnv -> TestTree
 allTests cfg env = testGroup "Cob mockCob integration tests"
