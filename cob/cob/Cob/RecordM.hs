@@ -312,10 +312,16 @@ updateInstances query f = do
 
 -- | Create a RecordM 'Definition', typically where 'Definition' is created
 -- using 'fromDSL' and 'DefinitionQ'.
-newDefinition :: forall m. MonadCob m => Definition -> m ()
+newDefinition :: forall m. MonadCob m => Definition -> m DefinitionId
 newDefinition def = do
   logInfo $ "Creating new definition with name " <> toLogStr (defName def)
-  _ <- performReq $ Servant.newDefinition (ToRecM def)
+  Ref _ r <- performReq $ Servant.newDefinition (ToRecM def)
+  pure (DefId (fromInteger r))
+
+deleteDefinition :: MonadCob m => DefinitionId -> m ()
+deleteDefinition (DefId di) = do
+  logInfo $ "Deleting definition byId " <> toLogStr (di)
+  _ <- performReq $ Servant.deleteDefinition (DefId di)
   pure ()
 
 --------------------------------------------------------------------------------

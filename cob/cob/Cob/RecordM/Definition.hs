@@ -56,7 +56,7 @@ import Text.Megaparsec.Char (string, char)
 import qualified Text.Megaparsec.Char as P
 import Data.Functor (($>))
 import Data.Proxy
-import Text.Megaparsec.Debug
+-- import Text.Megaparsec.Debug
 
 -- | A Definition Id
 newtype DefinitionId = DefId Int
