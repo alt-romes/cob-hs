@@ -74,6 +74,8 @@ data CobF next where
   DeleteUser   :: Ref User   -> next -> CobF next
   AddToGroup   :: [Ref User] -> Ref Group -> next -> CobF next
   Login        :: String     -> String -> (CobToken -> next) -> CobF next
+
+  -- Control flow
   LiftCob      :: IO a -> (a -> next) -> CobF next
   Try          :: Exception e => Cob a -> (Either e a -> next) -> CobF next
   Catch        :: Exception e => Cob a -> (e -> Cob a) -> (a -> next) -> CobF next
@@ -193,7 +195,8 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 -- user data to UserM ensuring all added instances and users are deleted when
 -- the test finishes running.
 --
--- Note: updates to already existing instances will NOT be undone (for now... could be done with a getRaw and pushRaw of sorts).
+-- /WARNING/: updates and deletes to already existing instances will NOT be undone
+-- (for now... could be done with a getRaw and pushRaw of sorts).
 --
 -- TODO: Could mock to host (mock.example.com)?
 --
