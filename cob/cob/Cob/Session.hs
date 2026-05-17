@@ -9,6 +9,8 @@ module Cob.Session
 import GHC.Conc (newTVarIO)
 import System.Log.FastLogger
 
+import Data.Char (isSpace)
+import Data.List (dropWhileEnd)
 import Data.String (fromString)
 
 import Data.Time.Clock    (secondsToDiffTime, UTCTime(..))
@@ -124,8 +126,11 @@ updateSessionToken sess@CobSession{clientEnv} tok = do
 
 makeCookieJar :: Host -> CobToken -> CookieJar
 makeCookieJar cobhost tok = createCookieJar
+      -- Strip surrounding whitespace: a stray '\n' (e.g. from `readFile`) inside
+      -- can result in really weird NGINX 400s (e.g. newline makes rest of
+      -- request be considered a new (malformed) HTTP request).
       [Cookie { cookie_name             = "cobtoken"
-              , cookie_value            = fromString tok
+              , cookie_value            = fromString (dropWhile isSpace (dropWhileEnd isSpace tok))
               , cookie_secure_only      = True
               , cookie_path             = "/"
               , cookie_domain           = fromString cobhost
