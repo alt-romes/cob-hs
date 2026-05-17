@@ -57,6 +57,7 @@ prettyFailureResponse req resp = unlines $
   [ "FailureResponse:"
   , "  " <> show (requestMethod req) <> " " <> showUrl req
   , "  Status: " <> show (responseStatusCode resp)
+  , "  Request: " <> show req
   ] <> bodyBlock
   where
     bodyBlock =
