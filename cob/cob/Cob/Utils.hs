@@ -54,10 +54,8 @@ instance Show PrettyClientError where
 
 prettyFailureResponse :: RequestF () (BaseUrl, BS.ByteString) -> ResponseF BL.ByteString -> String
 prettyFailureResponse req resp = unlines $
-  [ "FailureResponse:"
-  , "  " <> show (requestMethod req) <> " " <> showUrl req
-  , "  Status: " <> show (responseStatusCode resp)
-  , "  Request: " <> show req
+  [ BS.unpack (requestMethod req) <> " " <> showUrl req
+  , "  → " <> show (responseStatusCode resp)
   ] <> bodyBlock
   where
     bodyBlock =
@@ -65,7 +63,7 @@ prettyFailureResponse req resp = unlines $
           pretty = case eitherDecode body :: Either String Value of
             Right v -> BL.unpack (encodePretty v)
             Left _  -> BL.unpack body
-      in if BL.null body then [] else "  Body:" : map ("    " <>) (lines pretty)
+      in if BL.null body then [] else map ("  " <>) (lines pretty)
     showUrl r =
       let (BaseUrl sch host port basePath, urlPath) = requestPath r
           scheme = case sch of Http -> "http"; Https -> "https"
@@ -77,7 +75,7 @@ prettyFailureResponse req resp = unlines $
           qsStr
             | null qs = ""
             | otherwise = "?" <> intercalate' "&"
-                [ BL.unpack (BL.fromStrict k) <> maybe "" (\v -> "=" <> BL.unpack (BL.fromStrict v)) mv
+                [ BS.unpack k <> maybe "" (\v -> "=" <> BS.unpack v) mv
                 | (k, mv) <- qs ]
       in scheme <> "://" <> host <> portPart <> basePath <> BS.unpack urlPath <> qsStr
     intercalate' sep = \case
