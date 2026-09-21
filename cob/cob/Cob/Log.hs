@@ -26,16 +26,16 @@ log :: MonadCob m
     => Verbosity -> LogStr -> m ()
 log logVerbosity str = do
   CobSession{logger, verbosity} <- ask
-  let newline = logger (toLogStr "\n")
-  liftIO $ 
+  let emit = logger (str <> toLogStr "\n")
+  liftIO $
     case (verbosity, logVerbosity) of
-      (DEBUG, _    ) -> logger str >> newline
+      (DEBUG, _    ) -> emit
       (INFO,  DEBUG) -> pure ()
-      (INFO,  _    ) -> logger str >> newline
+      (INFO,  _    ) -> emit
       (WARN,  DEBUG) -> pure ()
       (WARN,  INFO ) -> pure ()
-      (WARN,  _    ) -> logger str >> newline
+      (WARN,  _    ) -> emit
       (ERROR, DEBUG) -> pure ()
       (ERROR, INFO ) -> pure ()
       (ERROR, WARN ) -> pure ()
-      (ERROR, ERROR) -> logger str >> newline
+      (ERROR, ERROR) -> emit
