@@ -127,7 +127,7 @@ class ToQueryField a where
 -}
 
 instance ToQueryField DateTime where
-  queryFieldValue t = formatTime undefined "%s" t
+  queryFieldValue t = show (millisSinceUnixEpoch t)
 
 instance ToQueryField String where
   queryFieldValue t = "\"" <> t <> "\""

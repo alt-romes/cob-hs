@@ -40,7 +40,7 @@ module Cob.RecordM.TH (mkRecord, SupportedRecordType, mkRecordEnum) where
 import Data.Time
 
 import Data.Char (toLower)
-import Data.Maybe (fromJust, catMaybes, listToMaybe)
+import Data.Maybe (catMaybes, listToMaybe)
 
 import Control.Monad (zipWithM, foldM)
 
@@ -50,6 +50,7 @@ import Data.String (fromString)
 
 import Data.Aeson (ToJSON, toJSON, FromJSON, parseJSON, object, (.=), withText, withObject, (.:), (.:?), Value(String))
 
+import Cob.RecordM.DateTime (dateTimeFromMillis, millisSinceUnixEpoch)
 import Cob.RecordM.Query
 import Cob.RecordM.Record (Record(..))
 import Cob.Ref (Ref(..))
@@ -81,7 +82,7 @@ mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem ty
                 mods IntT        = [e| (show <$>)            |]
                 mods FloatT      = [e| (show <$>)            |]
                 mods DoubleT     = [e| (show <$>)            |]
-                mods DateTimeT   = [e| (formatTime undefined "%s" <$>) |]
+                mods DateTimeT   = [e| ((show . millisSinceUnixEpoch) <$>) |]
                 mods (MaybeT mt) = [e| $(mods mt)            |]
                 mods _           = [e| id                    |]
 
@@ -119,7 +120,7 @@ mkParseJSON tyConName tys fields = do
               RefT       -> [e| Ref Nothing . read                    |]
               IntT       -> [e| read                                  |]
               DoubleT    -> [e| read                                  |] -- TODO: Is this right? how to account for commas etc
-              DateTimeT  -> [e| fromJust . parseTimeM False undefined "%s" |]
+              DateTimeT  -> [e| dateTimeFromMillis . read             |]
               MaybeT ty2 -> [e| ($(mods ty2) <$>) . (listToMaybe =<<) |]
               _          -> [e| id                                    |]
               
