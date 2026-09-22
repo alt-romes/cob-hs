@@ -11,6 +11,7 @@ import Cob.RecordM.TH
 import Cob.Ref
 import Cob.Session
 import Cob
+import qualified Data.Text as T
 
 newtype Owner = Owner String deriving (Show, Eq)
 mkRecord ''Owner "Owners" ["Owner"]
@@ -19,8 +20,18 @@ data Dog = Dog (Ref Owner) String
          deriving (Show, Eq)
 mkRecord ''Dog "Dogs" ["Owner", "Dog"]
 
+data KD = KD { email :: T.Text }
+mkRecord ''KD "Kanjideck Digital Fulfillment" ["Email"]
+
+newtype KD' = KD' { ref :: Ref KD }
+mkRecord ''KD' "Kanjideck Digital Accesses" ["Accessed By"]
+
+
 freeCob :: Cob ()
 freeCob = do
+
+  ba <- addSync (KD "test@example.com")
+  _ <- addSync (KD' ba)
 
   bb <- addSync (Owner "Bombásio")
 
@@ -38,6 +49,7 @@ freeCob = do
 main :: IO ()
 main = do
   cobToken <- init <$> readFile "cob-token.secret"
-  session  <- makeSession "mimes8.cultofbits.com" cobToken
-  mockCob session freeCob
+  withSession "mimes.cultofbits.com" cobToken $ \session ->
+    -- mockCob session freeCob
+    runCob session freeCob
 
