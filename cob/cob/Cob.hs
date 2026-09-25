@@ -62,7 +62,7 @@ import Cob.Ref
 type Cob = Free CobF
 
 data CobF next where
-  StreamSearch :: Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> (b -> next) -> CobF next
+  StreamSearch :: Record a => Query a -> (Streamly.Stream Cob (Ref a, a) -> Cob b) -> (b -> next) -> CobF next
   Search       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF next
   Get          :: Record a => Ref a   -> (a -> next) -> CobF next
   Count        :: Record a => Query a -> (Int -> next) -> CobF next
@@ -122,7 +122,7 @@ instance Functor CobF where
 
 makeFree_ ''CobF
 
-streamSearch :: Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> Cob b
+streamSearch :: Record a => Query a -> (Streamly.Stream Cob (Ref a, a) -> Cob b) -> Cob b
 search       :: Record a => Query a -> Cob [(Ref a, a)]
 get          :: Record a => Ref a   -> Cob a
 count        :: Record a => Query a -> Cob Int
@@ -172,7 +172,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
   where
     cobRIO :: MonadCob m => CobF ~> m
     cobRIO = \case
-        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q f
+        StreamSearch q f h -> ask >>= \s -> h <$> RM.streamDefinitionSearch q (runCob s . f . Streamly.morphInner liftCob)
         Search q f  -> f <$> RM.definitionSearch q
         Get r f     -> f <$> RM.getInstance r
         Count q f   -> f <$> RM.definitionCount q
@@ -222,7 +222,7 @@ mockCob delayInSeconds cs cobf = do
   where
     nt :: (MonadState ([Integer], [Integer]) m, MonadCob m) => CobF ~> m
     nt = \case
-        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q f
+        StreamSearch q f h -> ask >>= \s -> h <$> RM.streamDefinitionSearch q (mockCob delayInSeconds s . f . Streamly.morphInner liftCob)
         Search q f  -> f <$> RM.definitionSearch q
         Get r f     -> f <$> RM.getInstance r
         Count q f   -> f <$> RM.definitionCount q
