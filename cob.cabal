@@ -69,7 +69,7 @@ library
 
                       -- Streaming
                       streamly-core >= 0.2.2,
-                      streamly >= 0.10.1,
+                      streamly >= 0.11,
 
                       -- Util
                       time

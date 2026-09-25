@@ -296,7 +296,7 @@ updateInstances :: forall a m. MonadCob m => Record a => Query a -> (a -> a) -> 
 updateInstances query f = do
   logInfo $ "Updating instances of " <> toLogStr (definition @a) <> " matching " <> toLogStr (_q query)
   CobSession{clientEnv} <- ask
-  streamDefinitionSearch query $ Streamly.toList . Streamly.parEval id . Streamly.mapM (updateInstance' clientEnv)
+  streamDefinitionSearch query $ Streamly.toList . Streamly.parBuffered id . Streamly.mapM (updateInstance' clientEnv)
     where
       updateInstance' :: Servant.Client.ClientEnv -> (Ref a, a) -> IO (Ref a, a)
       updateInstance' session (Ref version ref, a) =
