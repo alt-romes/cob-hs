@@ -2,9 +2,6 @@
 module Cob.Events
   ( runCobEvents
   , eventM
-
-    -- * Re-exports
-  , module Control.Events
   ) where
 
 import Control.Concurrent
