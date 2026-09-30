@@ -77,6 +77,7 @@ data CobF next where
 
   -- Control flow
   LiftCob      :: IO a -> (a -> next) -> CobF next
+  UnliftCob    :: ((forall a. Cob a -> IO a) -> IO b) -> (b -> next) -> CobF next
   Try          :: Exception e => Cob a -> (Either e a -> next) -> CobF next
   Catch        :: Exception e => Cob a -> (e -> Cob a) -> (a -> next) -> CobF next
   MapConcurrently :: Traversable t => (a -> Cob b) -> t a -> (t b -> next) -> CobF next
@@ -97,6 +98,7 @@ instance Functor CobF where
     AddToGroup us gr n -> AddToGroup us gr (g n)
     Login u p f -> Login u p (g . f)
     LiftCob x f -> LiftCob x (g . f)
+    UnliftCob x f -> UnliftCob x (g . f)
     Try c f -> Try c (g . f)
     Catch c h f -> Catch c h (g . f)
     MapConcurrently h t f -> MapConcurrently h t (g . f)
@@ -135,11 +137,11 @@ deleteUser   :: Ref User -> Cob ()
 addToGroup   :: [Ref User] -> Ref Group -> Cob ()
 login        :: String -> String -> Cob CobToken
 liftCob      :: IO a -> Cob a
+unliftCob    :: ((forall a. Cob a -> IO a) -> IO b) -> Cob b
 try          :: Exception e => Cob a -> Cob (Either e a)
 catch        :: Exception e => Cob a -> (e -> Cob a) -> Cob a
 mapConcurrently :: Traversable t => (a -> Cob b) -> t a -> Cob (t b)
 -- noOp         :: Cob ()
-
 
 search_ :: Record a => Query a -> Cob [a]
 search_ = fmap (map snd) . search
@@ -185,6 +187,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
         AddToGroup us gr n -> n <$ UM.addToGroup us gr
         Login u p f -> f <$> UM.umLogin u p
         LiftCob x f -> f <$> liftIO x
+        UnliftCob x f -> f <$> liftIO (x recurse)
         Try c f     -> f <$> liftIO (Control.Exception.try $ recurse c)
         Catch c h f -> f <$> liftIO (Control.Exception.catch (recurse c) (recurse . h))
         MapConcurrently h t f -> f <$> liftIO (A.mapConcurrently (recurse . h) t)
@@ -225,7 +228,7 @@ mockCob delayInSeconds cs cobf = do
   where
     nt :: (MonadState ([Integer], [Integer]) m, MonadCob m) => CobF ~> m
     nt = \case
-        StreamSearch q f h -> ask >>= \s -> h <$> RM.streamDefinitionSearch q (mockCob delayInSeconds s . f . Streamly.morphInner liftCob)
+        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob)
         Search q f  -> f <$> RM.definitionSearch q
         Get r f     -> f <$> RM.getInstance r
         Count q f   -> f <$> RM.definitionCount q
@@ -258,7 +261,11 @@ mockCob delayInSeconds cs cobf = do
         AddToGroup us gr n -> n <$ UM.addToGroup us gr
         Login u p f -> f <$> UM.umLogin u p
         LiftCob x f -> f <$> liftIO x
-        Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ mockCob delayInSeconds s c)
-        Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (mockCob delayInSeconds s c) (mockCob delayInSeconds s . h))
-        MapConcurrently h t f -> ask >>= \s -> f <$> liftIO (A.mapConcurrently (mockCob delayInSeconds s . h) t)
+        UnliftCob x f -> f <$> liftIO (x (recurse))
+        Try c f     -> f <$> liftIO (Control.Exception.try $ recurse c)
+        Catch c h f -> f <$> liftIO (Control.Exception.catch (recurse c) (recurse . h))
+        MapConcurrently h t f -> f <$> liftIO (A.mapConcurrently (recurse . h) t)
+
+    recurse :: Cob ~> IO
+    recurse = mockCob delayInSeconds cs
 

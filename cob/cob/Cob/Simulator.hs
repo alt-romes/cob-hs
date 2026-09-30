@@ -65,6 +65,7 @@ simulateNT = \case
     AddToGroup {} -> error "UserM simulator not implemented"
     Login {} -> error "UserM simulator not implemented"
     LiftCob i f -> f <$> lift i
+    UnliftCob {} -> error "UnliftCob not implemented"
     Try _ _ -> error "Try not implemented"
     Catch {} -> error "Catch not implemented"
     MapConcurrently {} -> error "MapConcurrently not implemented"

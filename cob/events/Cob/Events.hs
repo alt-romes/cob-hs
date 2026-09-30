@@ -1,6 +1,7 @@
 {-# LANGUAGE GHC2021, GADTs, LambdaCase, OverloadedStrings, DerivingVia, TypeOperators, RankNTypes, AllowAmbiguousTypes #-}
 module Cob.Events
   ( runCobEvents
+  , eventM
 
     -- * Re-exports
   , module Control.Events
@@ -35,6 +36,13 @@ import qualified Cob.UserM   as UM
 
 import Cob
 import Control.Events
+
+eventM :: ToJSON m => Conn -> EvtMsg m -> String -> (EventId -> Cob (EvtDone, a)) -> Cob a
+eventM conn msg topic f = do
+  unliftCob $ \unlift ->
+    Control.Events.event conn msg (fromString topic) $ \eid -> do
+      (done, r) <- unlift (f eid)
+      pure (done, r)
 
 -- | Run a cob computation but send events for all destructive operations
 --
@@ -91,6 +99,7 @@ runCobEvents base cs cob =
             (UM.addToGroup us gr) >> n
         Login u p f -> UM.umLogin u p >>= f
         LiftCob x f -> liftIO x >>= f
+        UnliftCob x f -> liftIO (x recurse) >>= f
         Try c f     -> liftIO (Control.Exception.try $ recurse c) >>= f
         Catch c h f -> liftIO (Control.Exception.catch (recurse c) (recurse . h)) >>= f
         MapConcurrently h t f -> liftIO (A.mapConcurrently (recurse . h) t) >>= f
@@ -100,7 +109,7 @@ runCobEvents base cs cob =
 
     evt :: ToJSON m => EvtMsg m -> String -> (a -> String) -> ReaderT CobSession IO a -> CobEvents a
     evt msg topic succ_msg mc = CobEvents $ \(s, c) -> do
-      event c (msg & scoped .~ parent) ("cob" <> fromString topic) $ \_ -> do
+      Control.Events.event c (msg & scoped .~ parent) ("cob" <> fromString topic) $ \_ -> do
         r <- runReaderT mc s
         pure (done (succ_msg r) r)
 
