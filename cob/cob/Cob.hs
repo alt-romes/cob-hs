@@ -172,7 +172,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
   where
     cobRIO :: MonadCob m => CobF ~> m
     cobRIO = \case
-        StreamSearch q f h -> ask >>= \s -> h <$> RM.streamDefinitionSearch q (runCob s . f . Streamly.morphInner liftCob)
+        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob)
         Search q f  -> f <$> RM.definitionSearch q
         Get r f     -> f <$> RM.getInstance r
         Count q f   -> f <$> RM.definitionCount q
@@ -185,9 +185,12 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
         AddToGroup us gr n -> n <$ UM.addToGroup us gr
         Login u p f -> f <$> UM.umLogin u p
         LiftCob x f -> f <$> liftIO x
-        Try c f     -> ask >>= \s -> f <$> liftIO (Control.Exception.try $ runCob s c)
-        Catch c h f -> ask >>= \s -> f <$> liftIO (Control.Exception.catch (runCob s c) (runCob s . h))
-        MapConcurrently h t f -> ask >>= \s -> f <$> liftIO (A.mapConcurrently (runCob s . h) t)
+        Try c f     -> f <$> liftIO (Control.Exception.try $ recurse c)
+        Catch c h f -> f <$> liftIO (Control.Exception.catch (recurse c) (recurse . h))
+        MapConcurrently h t f -> f <$> liftIO (A.mapConcurrently (recurse . h) t)
+
+    recurse :: Cob ~> IO
+    recurse = runCob cs
 
 -- | Run a 'Cob' computation but all RecordM instances added and all UserM users added during the computation are removed at the end.
 --

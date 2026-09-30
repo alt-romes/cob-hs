@@ -83,18 +83,22 @@ library
 library cob-servant
     visibility: public
     exposed-modules:  Cob.Servant
-
-    -- Modules included in this library but not exported.
-    -- other-modules:
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
     build-depends:    base >=4.14.3.0,
                       mtl,
                       cob,
                       servant-server
-
     hs-source-dirs:   cob/servant
+    default-language: Haskell2010
+
+-- A library for a Cob runner that sends control-events for write operations
+library cob-events
+    visibility: public
+    exposed-modules:  Cob.Events
+    build-depends:    base,
+                      mtl, free, async, aeson,
+                      cob, streamly-core,
+                      control-events
+    hs-source-dirs:   cob/events
     default-language: Haskell2010
 
 test-suite cob-tests

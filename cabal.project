@@ -21,4 +21,8 @@ packages: cob.cabal
 --  location: https://github.com/alt-romes/moat.git
 -- allow-newer: moat:*
 
+source-repository-package
+  type:     git
+  location: https://github.com/alt-romes/control-events
+
 allow-newer: *:base, *:template-haskell, *:containers, *:time
