@@ -56,12 +56,10 @@ eventM conn msg topic f = do
 --    session <- UM.umSession ...
 --    runCobEvents (Left "server/cob-mimes/...") session cobAction
 -- @
-runCobEvents :: Either String EventId
-             -- ^ Base topic or a parent scope EventId
+runCobEvents :: Conn -> Maybe EventId
+             -- ^ A parent scope EventId
              -> CobSession -> Cob ~> IO
-runCobEvents base cs cob =
-    withConn (either fromString (const "") base) $ \conn ->
-     unCobEvents (iterM cobRIO cob) (cs, conn)
+runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
   where
     cobRIO :: CobF (CobEvents a) -> CobEvents a
     cobRIO = \case
@@ -105,16 +103,13 @@ runCobEvents base cs cob =
         MapConcurrently h t f -> liftIO (A.mapConcurrently (recurse . h) t) >>= f
 
     recurse :: Cob ~> IO
-    recurse = runCobEvents base cs
+    recurse = runCobEvents conn scopeEv cs
 
     evt :: ToJSON m => EvtMsg m -> String -> (a -> String) -> ReaderT CobSession IO a -> CobEvents a
     evt msg topic succ_msg mc = CobEvents $ \(s, c) -> do
-      Control.Events.event c (msg & scoped .~ parent) ("cob" <> fromString topic) $ \_ -> do
+      Control.Events.event c (msg & scoped .~ scopeEv) ("cob" <> fromString topic) $ \_ -> do
         r <- runReaderT mc s
         pure (done (succ_msg r) r)
-
-    parent :: Maybe EventId
-    parent = either (const Nothing) Just base
   
 
 newtype CobEvents a = CobEvents { unCobEvents :: (CobSession, Conn) -> IO a }
