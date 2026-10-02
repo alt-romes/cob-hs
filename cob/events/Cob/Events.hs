@@ -34,10 +34,10 @@ import qualified Cob.UserM   as UM
 import Cob
 import Control.Events
 
-eventM :: ToJSON m => Conn -> EvtMsg m -> String -> (EventId -> Cob (EvtDone, a)) -> Cob a
-eventM conn msg topic f = do
+eventM :: ToJSON m => Conn -> String -> EvtMsg m -> (EventId -> Cob (EvtDone, a)) -> Cob a
+eventM conn topic msg f = do
   unliftCob $ \unlift ->
-    Control.Events.event conn msg (fromString topic) $ \eid -> do
+    Control.Events.event conn (fromString topic) msg $ \eid -> do
       (done, r) <- unlift (f eid)
       pure (done, r)
 
@@ -66,31 +66,31 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
         Count q f   -> RM.definitionCount q >>= f
         Add x f     -> do
           let msg = simple "Create instance" & withMsg ?~ x
-          evt msg "add" (\r -> "Created " ++ show r)
+          evt "add" msg (\r -> "Created " ++ show r)
             (RM.addInstance x) >>= f
         AddSync x f -> do
           let msg = simple "Create instance (sync)" & withMsg ?~ x
-          evt msg "add-sync" (\r -> "Created " ++ show r)
+          evt "add-sync" msg (\r -> "Created " ++ show r)
             (RM.addInstanceSync x) >>= f
         Delete r n  -> do
           let msg = simple "Delete instance"
-          evt msg "deleted" (\r -> "Deleted " ++ show r)
+          evt "deleted" msg (\r -> "Deleted " ++ show r)
             (RM.deleteInstance r) >> n
         UpdateInstances q f h -> do
           let msg = simple "Update matching instances" & withMsg ?~ show q
-          evt msg "update" (\r -> "Updated " ++ show (map fst r))
+          evt "update" msg (\r -> "Updated " ++ show (map fst r))
             (RM.updateInstances q f) >>= h
         CreateUser u f -> do
           let msg = simple "Create user" & withMsg ?~ u
-          evt msg "create-user" (\r -> "Created user " ++ show r)
+          evt "create-user" msg (\r -> "Created user " ++ show r)
             (UM.createUser u) >>= f
         DeleteUser u n -> do
           let msg = simple "Delete user" & withMsg ?~ u
-          evt msg "delete-user" (\r -> "Deleted user " ++ show r)
+          evt "delete-user" msg (\r -> "Deleted user " ++ show r)
             (UM.deleteUser u) >> n
         AddToGroup us gr n -> do
           let msg = simple "Add users to group" & withMsg ?~ (us, gr)
-          evt msg "add-to-group" (\r -> "Added users to group " ++ show r)
+          evt "add-to-group" msg (\r -> "Added users to group " ++ show r)
             (UM.addToGroup us gr) >> n
         Login u p f -> UM.umLogin u p >>= f
         LiftCob x f -> liftIO x >>= f
@@ -102,9 +102,9 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
     recurse :: Cob ~> IO
     recurse = runCobEvents conn scopeEv cs
 
-    evt :: ToJSON m => EvtMsg m -> String -> (a -> String) -> ReaderT CobSession IO a -> CobEvents a
-    evt msg topic succ_msg mc = CobEvents $ \(s, c) -> do
-      Control.Events.event c (msg & scoped .~ scopeEv) ("cob" <> fromString topic) $ \_ -> do
+    evt :: ToJSON m => String -> EvtMsg m -> (a -> String) -> ReaderT CobSession IO a -> CobEvents a
+    evt topic msg succ_msg mc = CobEvents $ \(s, c) -> do
+      Control.Events.event c ("cob" <> fromString topic) (msg & scoped .~ scopeEv) $ \_ -> do
         r <- runReaderT mc s
         pure (done (succ_msg r) r)
   
