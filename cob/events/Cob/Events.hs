@@ -66,15 +66,15 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
         Count q f   -> RM.definitionCount q >>= f
         Add x f     -> do
           let msg = simple "Create instance" & withMsg ?~ x
-          evt "add" msg (\r -> "Created " ++ show r)
+          evt "add" msg (\r -> "Created #" ++ show r)
             (RM.addInstance x) >>= f
         AddSync x f -> do
           let msg = simple "Create instance (sync)" & withMsg ?~ x
-          evt "add-sync" msg (\r -> "Created " ++ show r)
+          evt "add-sync" msg (\r -> "Created #" ++ show r)
             (RM.addInstanceSync x) >>= f
         Delete r n  -> do
           let msg = simple "Delete instance"
-          evt "deleted" msg (\r -> "Deleted " ++ show r)
+          evt "deleted" msg (\r -> "Deleted #" ++ show r)
             (RM.deleteInstance r) >> n
         UpdateInstances q f h -> do
           let msg = simple "Update matching instances" & withMsg ?~ show q
