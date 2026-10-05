@@ -34,7 +34,7 @@ import qualified Cob.UserM   as UM
 import Cob
 import Control.Events
 
-eventM :: ToJSON m => Conn -> String -> EvtMsg m -> (EventId -> Cob (EvtDone, a)) -> Cob a
+eventM :: ToJSON m => Conn s -> String -> EvtMsg m -> (EventId -> Cob (EvtDone, a)) -> Cob a
 eventM conn topic msg f = do
   unliftCob $ \unlift ->
     Control.Events.event conn (fromString topic) msg $ \eid -> do
@@ -53,12 +53,12 @@ eventM conn topic msg f = do
 --    session <- UM.umSession ...
 --    runCobEvents (Left "server/cob-mimes/...") session cobAction
 -- @
-runCobEvents :: Conn -> Maybe EventId
+runCobEvents :: forall s. Conn s -> Maybe EventId
              -- ^ A parent scope EventId
              -> CobSession -> Cob ~> IO
 runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
   where
-    cobRIO :: CobF (CobEvents a) -> CobEvents a
+    cobRIO :: CobF (CobEvents s a) -> CobEvents s a
     cobRIO = \case
         StreamSearch q f h -> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob) >>= h
         Search q f  -> RM.definitionSearch q >>= f
@@ -102,17 +102,17 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
     recurse :: Cob ~> IO
     recurse = runCobEvents conn scopeEv cs
 
-    evt :: ToJSON m => String -> EvtMsg m -> (a -> String) -> ReaderT CobSession IO a -> CobEvents a
+    evt :: ToJSON m => String -> EvtMsg m -> (a -> String) -> ReaderT CobSession IO a -> CobEvents s a
     evt topic msg succ_msg mc = CobEvents $ \(s, c) -> do
       Control.Events.event c ("cob" <> fromString topic) (msg & scoped .~ scopeEv) $ \_ -> do
         r <- runReaderT mc s
         pure (done (succ_msg r) r)
   
 
-newtype CobEvents a = CobEvents { unCobEvents :: (CobSession, Conn) -> IO a }
-  deriving (Functor, Applicative, Monad, MonadIO) via (ReaderT (CobSession, Conn) IO)
+newtype CobEvents s a = CobEvents { unCobEvents :: (CobSession, Conn s) -> IO a }
+  deriving (Functor, Applicative, Monad, MonadIO) via (ReaderT (CobSession, Conn s) IO)
 
-instance MonadReader CobSession CobEvents where
+instance MonadReader CobSession (CobEvents s) where
   ask = CobEvents $ \(s,_) -> pure s
   local f (CobEvents g) = CobEvents $ \(s, c) -> g (f s, c)
 
