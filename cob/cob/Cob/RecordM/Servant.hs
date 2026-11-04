@@ -68,6 +68,9 @@ type StreamSearchCommon
   :> QueryParam "sort" SortParam
   :> StreamGet NewlineFraming JSON (Streamly.Stream IO Value)
 
+type StructuredSearch     = "definitions" :> "search" :> QueryParam' '[Required, Strict] "def" String :> ReqBody '[JSON] Value :> Post '[JSON] Value
+type StructuredSearchById = "definitions" :> "search" :> QueryParam' '[Required, Strict] "defId" DefinitionId :> ReqBody '[JSON] Value :> Post '[JSON] Value
+
 type InstancesGet    = "instances" :> Capture "id" Integer :> QueryParam "If-None-Match" String :> Get '[JSON] Value
 type InstancesDelete = "instances" :> Capture "id" Integer :> QueryParam "ignoreRefs" Bool :> Servant.API.Delete '[JSON] NoContent
 
@@ -87,6 +90,11 @@ searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe 
 streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
 streamSearchById   :: DefinitionId -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
 (streamSearchByName :<|> streamSearchById) = SC.client (Proxy @(RecordM StreamSearch))
+
+structuredSearchByName :: String       -> Value -> C.ClientM Value
+structuredSearchById   :: DefinitionId -> Value -> C.ClientM Value
+structuredSearchByName = C.client (Proxy @(RecordM StructuredSearch))
+structuredSearchById   = C.client (Proxy @(RecordM StructuredSearchById))
 
 getInstance    :: Integer -> Maybe String -> C.ClientM Value
 deleteInstance :: Integer -> Maybe Bool -> C.ClientM NoContent
