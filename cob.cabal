@@ -39,6 +39,7 @@ library
                       containers,
                       text,
                       bytestring,
+                      filepath,
                       mtl,
                       async,
 
@@ -50,6 +51,8 @@ library
                       servant-client-core,
                       http-client,
                       http-client-tls,
+                      servant-multipart-api,
+                      servant-multipart-client,
 
                       -- Logging
                       fast-logger,

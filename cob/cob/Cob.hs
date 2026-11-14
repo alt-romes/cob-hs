@@ -9,6 +9,9 @@ module Cob
   , module Cob.RecordM.Record
   , module Cob.RecordM.Query
   , module Cob.UserM.Entities
+
+  -- Cob.RecordM re-exported
+  , FileUpload(..)
   ) where
   -- (
   --   -- * Operations
@@ -51,6 +54,7 @@ import qualified Control.Concurrent.Async as A
 import qualified Streamly.Data.Stream as Streamly
 
 import qualified Cob.RecordM as RM
+import Cob.RecordM (FileUpload(..))
 import qualified Cob.UserM   as UM
 
 import Cob.Session
@@ -70,6 +74,7 @@ data CobF next where
   AddSync      :: Record a => a       -> (Ref a -> next) -> CobF next
   Delete       :: Record a => Ref a   -> next -> CobF next
   UpdateInstances :: Record a => Query a -> (a -> a) -> ([(Ref a, a)] -> next) -> CobF next
+  UploadFile   :: Ref a -> String -> FileUpload -> next -> CobF next
   CreateUser   :: User       -> (Ref User -> next) -> CobF next
   DeleteUser   :: Ref User   -> next -> CobF next
   AddToGroup   :: [Ref User] -> Ref Group -> next -> CobF next
@@ -93,6 +98,7 @@ instance Functor CobF where
     AddSync q f -> AddSync q (g . f)
     Delete r n  -> Delete r (g n)
     UpdateInstances q f h -> UpdateInstances q f (g . h)
+    UploadFile r f c k -> UploadFile r f c (g k)
     CreateUser u f -> CreateUser u (g . f)
     DeleteUser u n -> DeleteUser u (g n)
     AddToGroup us gr n -> AddToGroup us gr (g n)
@@ -132,6 +138,7 @@ add          :: Record a => a       -> Cob (Ref a)
 addSync      :: Record a => a       -> Cob (Ref a)
 delete       :: Record a => Ref a   -> Cob ()
 updateInstances :: Record a => Query a -> (a -> a) -> Cob [(Ref a, a)]
+uploadFile   :: Ref a -> String -> FileUpload -> Cob ()
 createUser   :: User -> Cob (Ref User)
 deleteUser   :: Ref User -> Cob ()
 addToGroup   :: [Ref User] -> Ref Group -> Cob ()
@@ -182,6 +189,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
         AddSync x f -> f <$> RM.addInstanceSync x
         Delete r n  -> n <$  RM.deleteInstance r
         UpdateInstances q f h -> h <$> RM.updateInstances q f
+        UploadFile r f c k -> k <$ RM.uploadFile r f c
         CreateUser u f -> f <$> UM.createUser u
         DeleteUser u n -> n <$  UM.deleteUser u
         AddToGroup us gr n -> n <$ UM.addToGroup us gr
@@ -247,6 +255,7 @@ mockCob delayInSeconds cs cobf = do
             modify' (first (L.delete (ref_id r)))
             pure ()
         UpdateInstances q f h -> h <$> RM.updateInstances q f
+        UploadFile r f c k -> k <$ RM.uploadFile r f c
 
         CreateUser u f -> f <$> do
             ur <- UM.createUser u

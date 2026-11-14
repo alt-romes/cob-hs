@@ -23,6 +23,12 @@ import qualified Streamly.Data.Stream.Prelude as Streamly
 
 import qualified Servant.Client
 import qualified Servant.Client.Streaming
+import Servant.Multipart.API
+import Servant.Multipart.Client (genBoundary)
+
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Text as T
+import System.FilePath (takeFileName)
 
 import Cob.RecordM.Servant as Servant
 import Cob.RecordM.Record
@@ -46,8 +52,6 @@ import Data.Maybe
 -- ROMES:TODO: Add custom errors and document which functions throw which errors
 
 -- ROMES:TODO: Don't ignore sorting!
-
--- ROMES:TODO: I removed `encode`, did I break encoding or will servant take care of it?
 
 --------------------------------------------------------------------------------
 -- * Querying definitions
@@ -311,6 +315,37 @@ updateInstances query f = do
                 | errorOS u > 0 -> throwIO (UnknownUpdateError $ Ref version ref)
                 | otherwise     -> pure (Ref (fmap (+1) version) ref, updatedRecord)
 
+
+--------------------------------------------------------------------------------
+-- * Uploading files
+--------------------------------------------------------------------------------
+
+-- | A file to upload
+data FileUpload
+  -- | Path to a file on disk, streamed rather than loaded into memory
+  = UploadFromDisk FilePath
+  -- | File name and contents
+  | UploadFromMemory FilePath BSL.ByteString
+
+-- | Upload a file to a @$file@ field of an instance, given the field name and
+-- the 'Ref' of the instance to add the upload to.
+--
+-- I think that if the instance already has an upload for that @$file@ with the
+-- same file name (derived from 'FileUpload'), it will update that file instead.
+uploadFile :: MonadCob m => Ref a -> String -> FileUpload -> m ()
+uploadFile r fieldName contents = do
+  logInfo $ "Uploading file " <> toLogStr name <> " to field " <> toLogStr fieldName <> " of instance " <> toLogStr (show r)
+  boundary <- liftIO genBoundary
+  let file :: MultipartResult tag -> (BSL.ByteString, MultipartData tag)
+      file c = (boundary, MultipartData [] [FileData "file" (T.pack name) "application/octet-stream" c])
+  _ <- performReq $ case contents of
+    UploadFromDisk fp     -> Servant.uploadFile @Tmp (ref_id r) fieldName (file fp)
+    UploadFromMemory _ bs -> Servant.uploadFile @Mem (ref_id r) fieldName (file bs)
+  pure ()
+  where
+    name = case contents of
+      UploadFromDisk fp    -> takeFileName fp
+      UploadFromMemory n _ -> n
 
 --------------------------------------------------------------------------------
 -- * Creating Definitions

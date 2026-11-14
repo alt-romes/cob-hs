@@ -80,6 +80,10 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
           let msg = simple "Update matching instances" & withMsg ?~ show q
           evt "update" msg (\r -> "Updated " ++ show (map fst r))
             (RM.updateInstances q f) >>= h
+        UploadFile r field c n -> do
+          let msg = simple "Upload file" & withMsg ?~ (show r, field)
+          evt "upload-file" msg (\_ -> "Uploaded file to " ++ field ++ " of #" ++ show r)
+            (RM.uploadFile r field c) >> n
         CreateUser u f -> do
           let msg = simple "Create user" & withMsg ?~ u
           evt "create-user" msg (\r -> "Created user " ++ show r)

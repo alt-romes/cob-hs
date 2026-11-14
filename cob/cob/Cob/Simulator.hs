@@ -60,6 +60,7 @@ simulateNT = \case
       modify' (IM.delete r)
       pure n
     UpdateInstances {} ->  error "Update simulator not implemented"
+    UploadFile {} -> error "File upload simulator not implemented"
     CreateUser _ _ -> error "UserM simulator not implemented"
     DeleteUser _ _ -> error "UserM simulator not implemented"
     AddToGroup {} -> error "UserM simulator not implemented"

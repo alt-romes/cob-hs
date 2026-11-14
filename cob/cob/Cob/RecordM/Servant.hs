@@ -18,10 +18,13 @@ import Data.Proxy
 import qualified Data.List as L (intercalate)
 
 import Servant.API hiding (Delete)
+import Servant.Multipart.API
+import Servant.Multipart.Client (MultipartClient)
 import qualified Servant.API
 import qualified Servant.Client as C
 import qualified Servant.Client.Streaming as SC
 import Data.Aeson
+import qualified Data.ByteString.Lazy as BSL
 
 import qualified Streamly.Data.Stream as Streamly
 
@@ -74,6 +77,8 @@ type StructuredSearchById = "definitions" :> "search" :> QueryParam' '[Required,
 type InstancesGet    = "instances" :> Capture "id" Integer :> QueryParam "If-None-Match" String :> Get '[JSON] Value
 type InstancesDelete = "instances" :> Capture "id" Integer :> QueryParam "ignoreRefs" Bool :> Servant.API.Delete '[JSON] NoContent
 
+type InstancesFileUpload tag = "instances" :> Capture "id" Integer :> "files" :> Capture "field" String :> MultipartForm tag (MultipartData tag) :> Post '[JSON] NoContent
+
 type IntegrationAdd    a = "instances" :> "integration" :> ReqBody '[JSON] (AddSpec a)    :> Post '[JSON] (Ref a)
 type IntegrationUpdate a = "instances" :> "integration" :> ReqBody '[JSON] (UpdateSpec a) :> Put '[JSON] OperationsSummary
 type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (DeleteSpec a) :> Servant.API.Delete '[JSON] OperationsSummary
@@ -100,6 +105,9 @@ getInstance    :: Integer -> Maybe String -> C.ClientM Value
 deleteInstance :: Integer -> Maybe Bool -> C.ClientM NoContent
 getInstance     = C.client (Proxy @(RecordM InstancesGet))
 deleteInstance  = C.client (Proxy @(RecordM InstancesDelete))
+
+uploadFile :: forall tag. MultipartClient tag => Integer -> String -> (BSL.ByteString, MultipartData tag) -> C.ClientM NoContent
+uploadFile = C.client (Proxy @(RecordM (InstancesFileUpload tag)))
 
 addInstance     :: forall a. ToJSON a => AddSpec a -> C.ClientM (Ref a)
 updateInstances :: forall a. ToJSON a => UpdateSpec a -> C.ClientM OperationsSummary
