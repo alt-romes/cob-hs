@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -19,7 +20,7 @@ import qualified Data.List as L (intercalate)
 
 import Servant.API hiding (Delete)
 import Servant.Multipart.API
-import Servant.Multipart.Client (MultipartClient)
+import Servant.Multipart.Client ()
 import qualified Servant.API
 import qualified Servant.Client as C
 import qualified Servant.Client.Streaming as SC
@@ -106,7 +107,7 @@ deleteInstance :: Integer -> Maybe Bool -> C.ClientM NoContent
 getInstance     = C.client (Proxy @(RecordM InstancesGet))
 deleteInstance  = C.client (Proxy @(RecordM InstancesDelete))
 
-uploadFile :: forall tag. MultipartClient tag => Integer -> String -> (BSL.ByteString, MultipartData tag) -> C.ClientM NoContent
+uploadFile :: forall tag. C.HasClient C.ClientM (RecordM (InstancesFileUpload tag)) => Integer -> String -> (BSL.ByteString, MultipartData tag) -> C.ClientM NoContent
 uploadFile = C.client (Proxy @(RecordM (InstancesFileUpload tag)))
 
 addInstance     :: forall a. ToJSON a => AddSpec a -> C.ClientM (Ref a)
