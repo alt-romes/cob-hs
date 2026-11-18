@@ -87,7 +87,11 @@ data Field
     , fieldFields :: Map FieldName Field
     , fieldCondition :: Maybe Condition
     , fieldId :: FieldName
-    , fieldOrder :: Maybe Int -- ^ Nothing for new fields. See 'getFieldOrder'
+    , fieldOrder :: Maybe Int
+      -- ^ Nothing for new fields. See 'getFieldOrder'.
+      -- You can update the order of the fields to re-order them in RecordM
+      -- upstream. (e.g. you can set fields with order 0,1,2 to have order
+      -- 2,1,0 respectively, and they'll be reversed in RecordM)
     }
     deriving Show
 
