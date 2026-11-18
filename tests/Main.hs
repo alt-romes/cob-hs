@@ -122,7 +122,7 @@ data TestEnv = TestEnv
 
 -- | Run a Cob action with mockCob (so additions are rolled back).
 runMock :: TestEnv -> Cob a -> IO a
-runMock env c = mockCob 100{-seconds-} (envSession env) c
+runMock env c = mockCob 1{-seconds-} (envSession env) c
 
 allTests :: TestEnv -> TestTree
 allTests env = testGroup "Cob mockCob integration tests"
@@ -213,6 +213,7 @@ testDelete env = runMock env $ do
   email <- liftCob (uniqueEmail env "delete")
   ref <- addSync (sampleClient email)
   delete ref
+  liftCob (threadDelay 2000000)
   hits <- search (byRef ref :: Query SBClient)
   liftCob $
     assertBool "deleted record must not be found"
