@@ -71,6 +71,9 @@ data Definition
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
+    , defVersion :: Maybe Integer
+      -- ^ The "version", when the definition already exists.
+      -- For atomic updates, like @'Ref'@'s version
     }
     deriving Show
 
@@ -479,6 +482,7 @@ simpleDefinition name descr
     , defDescription = descr
     , defState = EnabledDefinition
     , defFieldDefinitions = mempty
+    , defVersion = Nothing
     }
 
 simpleField :: FieldName -> Text -> FieldDescription -> Field
@@ -599,6 +603,7 @@ instance FromJSON (FromEmptyInstance Definition) where
     defName <- jsonDef .: "name"
     defDescription <- jsonDef .:? "description" .!= ""
     defState <- maybe (pure EnabledDefinition) parseDefState =<< jsonDef .:? "state"
+    defVersion <- jsonDef .: "version"
 
     -- fields
     defFieldDefinitions  <- parseFields =<< obj .: "fields"

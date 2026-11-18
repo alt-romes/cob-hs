@@ -376,6 +376,7 @@ deleteDefinition (DefId di) = do
 --------------------------------------------------------------------------------
 
 -- | Get a representation of the Definition given its 'DefinitionId'
+-- TODO: I think I could as well just use @GET /recordm/definitions/123@
 getDefinitionRep :: forall m. MonadCob m => DefinitionId -> m Definition
 getDefinitionRep defId = do
   logInfo $ "Fetching definition by id " <> toLogStr (show defId)
