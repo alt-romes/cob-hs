@@ -367,7 +367,7 @@ extendFromDSL def defQ
          def)
     (1 + maximum (0 : map freshIndex (M.keys def.defFieldDefinitions)))
   where
-    freshIndex (UnsafeFieldName i) = if i < 0 then i - newFieldBase else i
+    freshIndex (UnsafeFieldName i) = if i < 0 then i + newFieldBase else i
       -- if the field is newly created, offset it back to get the base number
 
 interpret :: DefinitionQM a -> Interpreter a
@@ -437,7 +437,7 @@ fresh :: Interpreter FieldName
 fresh = do
   i <- lift . lift . lift $ get
   lift . lift . lift $ modify' (+1)
-  return (UnsafeFieldName (newFieldBase + i))
+  return (UnsafeFieldName (newFieldBase - i))
 
 -- | Newly created fields take negative ids, offset from this base.
 newFieldBase :: Int
