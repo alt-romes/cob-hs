@@ -35,12 +35,13 @@ module Cob
 import Control.Concurrent
 
 import Data.Bifunctor
+import Data.Either (lefts)
+import Data.IORef
 
 import qualified Data.List as L
 
 import Control.Monad.IO.Class
 import Control.Monad.Reader
-import Control.Monad.RWS.Strict
 -- import Control.Monad.Free.Ap
 import Control.Monad.Free
 import Control.Monad.Free.TH
@@ -209,6 +210,8 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 -- user data to UserM ensuring all added instances and users are deleted when
 -- the test finishes running.
 --
+-- Cleanup runs even if the computation throws.
+--
 -- /WARNING/: updates and deletes to already existing instances will NOT be undone
 -- (for now... could be done with a getRaw and pushRaw of sorts).
 --
@@ -217,64 +220,60 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 mockCob :: Int -- ^ Delay in seconds
         -> CobSession -> Cob ~> IO
 mockCob delayInSeconds cs cobf = do
-
-  -- todo: also catch errors when exceptions are thrown in computation... I'll
-  -- have to try every individual computation and throw errors with the list?
-
-  (a, (rmRefs, umRefs), ()) <- runRWST (foldFree nt cobf) cs mempty
-
-  threadDelay (delayInSeconds * 1000000)
-
-  (`runReaderT` cs) $ do
-    mapM_ (RM.deleteInstance . Ref Nothing) rmRefs
-    mapM_ (UM.deleteUser . Ref Nothing) umRefs
-
-  pure a
-
-  -- return deletion errors instead of always the result?
-
+  refs <- newIORef ([], [])
+  runTracked refs cobf `finally` do
+    threadDelay (delayInSeconds * 1000000)
+    (rmRefs, umRefs) <- readIORef refs
+    results <- mapM (Control.Exception.try @SomeException . (`runReaderT` cs)) $
+      map (RM.deleteInstance . Ref Nothing) rmRefs ++ map (UM.deleteUser . Ref Nothing) umRefs
+    mapM_ throwIO (take 1 (lefts results))
   where
-    nt :: (MonadState ([Integer], [Integer]) m, MonadCob m) => CobF ~> m
-    nt = \case
-        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob)
-        Search q f  -> f <$> RM.definitionSearch q
-        Get r f     -> f <$> RM.getInstance r
-        Count q f   -> f <$> RM.definitionCount q
-        Add x f     -> f <$> do
-            r <- RM.addInstance x
-            modify' (first (ref_id r:))
-            pure r
-        AddSync x f -> f <$> do
-            r <- RM.addInstanceSync x
-            modify' (first (ref_id r:))
-            pure r
-        Delete r n ->
-          -- ROMES:TODO:For-the-others-too: Should I get the instance I'm going to delete first so that I can restore it after?
-          n <$ do
-            RM.deleteInstance r
-            modify' (first (L.delete (ref_id r)))
-            pure ()
-        UpdateInstances q f h -> h <$> RM.updateInstances q f
-        UploadFile r f c k -> k <$ RM.uploadFile r f c
+    -- Nested computations share the same 'IORef', so cleanup happens only once, at the end.
+    runTracked :: IORef ([Integer], [Integer]) -> Cob ~> IO
+    runTracked refs = (`runReaderT` cs) . foldFree nt
+      where
+        track :: MonadIO m => (([Integer], [Integer]) -> ([Integer], [Integer])) -> m ()
+        track f = liftIO (atomicModifyIORef' refs (\s -> (f s, ())))
 
-        CreateUser u f -> f <$> do
-            ur <- UM.createUser u
-            modify' (second (ref_id ur:))
-            pure ur
-        DeleteUser u n ->
-          n <$ do
-            UM.deleteUser u
-            modify' (second (L.delete (ref_id u)))
-            pure ()
+        nt :: MonadCob m => CobF ~> m
+        nt = \case
+            StreamSearch q f h -> h <$> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob)
+            Search q f  -> f <$> RM.definitionSearch q
+            Get r f     -> f <$> RM.getInstance r
+            Count q f   -> f <$> RM.definitionCount q
+            Add x f     -> f <$> do
+                r <- RM.addInstance x
+                track (first (ref_id r:))
+                pure r
+            AddSync x f -> f <$> do
+                r <- RM.addInstanceSync x
+                track (first (ref_id r:))
+                pure r
+            Delete r n ->
+              -- ROMES:TODO:For-the-others-too: Should I get the instance I'm going to delete first so that I can restore it after?
+              n <$ do
+                RM.deleteInstance r
+                track (first (L.delete (ref_id r)))
+            UpdateInstances q f h -> h <$> RM.updateInstances q f
+            UploadFile r f c k -> k <$ RM.uploadFile r f c
 
-        AddToGroup us gr n -> n <$ UM.addToGroup us gr
-        Login u p f -> f <$> UM.umLogin u p
-        LiftCob x f -> f <$> liftIO x
-        UnliftCob x f -> f <$> liftIO (x (recurse))
-        Try c f     -> f <$> liftIO (Control.Exception.try $ recurse c)
-        Catch c h f -> f <$> liftIO (Control.Exception.catch (recurse c) (recurse . h))
-        MapConcurrently h t f -> f <$> liftIO (A.mapConcurrently (recurse . h) t)
+            CreateUser u f -> f <$> do
+                ur <- UM.createUser u
+                track (second (ref_id ur:))
+                pure ur
+            DeleteUser u n ->
+              n <$ do
+                UM.deleteUser u
+                track (second (L.delete (ref_id u)))
 
-    recurse :: Cob ~> IO
-    recurse = mockCob delayInSeconds cs
+            AddToGroup us gr n -> n <$ UM.addToGroup us gr
+            Login u p f -> f <$> UM.umLogin u p
+            LiftCob x f -> f <$> liftIO x
+            UnliftCob x f -> f <$> liftIO (x recurse)
+            Try c f     -> f <$> liftIO (Control.Exception.try $ recurse c)
+            Catch c h f -> f <$> liftIO (Control.Exception.catch (recurse c) (recurse . h))
+            MapConcurrently h t f -> f <$> liftIO (A.mapConcurrently (recurse . h) t)
+
+        recurse :: Cob ~> IO
+        recurse = runTracked refs
 
