@@ -8,11 +8,14 @@
 module Main where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, displayException, handle)
+import Control.Exception (SomeException, displayException, finally, handle)
 import Control.Monad (void)
-import Control.Monad.Reader (runReaderT)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (ReaderT, runReaderT)
 import Data.Aeson (FromJSON, eitherDecodeFileStrict')
 import Data.IORef
+import Data.List (sortOn)
+import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -31,7 +34,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Cob
-import Cob.RecordM (updDefinition)
+import Cob.RecordM (getDefinition, updDefinition)
 import Cob.RecordM.Definition
 import Cob.RecordM.TH
 
@@ -68,8 +71,9 @@ sbClientDef = fromDSL "TEST Sandbox Clients" "Cob tests — clients" $ do
 --     "definitionId": 123
 --   }
 --
--- The definition is overwritten with 'sbClientDef' before the tests run, so
--- the token only needs permission to modify (and add instances to) it.
+-- The definition is overwritten with 'sbClientDef' before the tests run, and
+-- the definition tests modify it further (restoring it afterwards), so the
+-- token only needs permission to modify (and add instances to) it.
 --
 -- Path: COB_TEST_CONFIG env var, defaulting to `tests/cob-test.json`.
 --------------------------------------------------------------------------------
@@ -117,27 +121,48 @@ main = do
       withSession (host cfg) (token cfg) $ \s -> do
         let session = s { logger = \_ -> pure () }
         setupDefinition session (DefId (definitionId cfg))
-        defaultMain (allTests (TestEnv session counter))
+        defaultMain (allTests (TestEnv session (DefId (definitionId cfg)) counter))
 
 -- | Shared environment for every test.
 data TestEnv = TestEnv
   { envSession :: CobSession
+  , envDefId   :: DefinitionId
   , envCounter :: IORef Int
   }
 
--- | Run a Cob action with mockCob (so additions are rolled back), showing the
--- logs only if it fails.
-runMock :: TestEnv -> Cob a -> IO a
-runMock env c = do
+-- | Run an action with a session whose logs are shown only if it fails.
+withLogs :: TestEnv -> (CobSession -> IO a) -> IO a
+withLogs env k = do
   logs <- newIORef mempty
   let session = (envSession env) { logger = \l -> modifyIORef' logs (<> l) }
   handle (\(e :: SomeException) -> do
     out <- readIORef logs
     assertFailure (displayException e <> "\n--- logs ---\n" <> T.unpack (decodeUtf8 (fromLogStr out)))) $
-    mockCob 1{-seconds-} session c
+    k session
+
+-- | Run a Cob action with mockCob, so additions are rolled back.
+runMock :: TestEnv -> Cob a -> IO a
+runMock env c = withLogs env $ \s -> mockCob 1{-seconds-} s c
+
+-- | Run an action on the test definition, restoring it to 'sbClientDef' afterwards.
+withDef :: TestEnv -> (DefinitionId -> ReaderT CobSession IO a) -> IO a
+withDef env act = withLogs env $ \s ->
+  runReaderT (act (envDefId env)) s `finally` setupDefinition s (envDefId env)
 
 allTests :: TestEnv -> TestTree
-allTests env = testGroup "Cob mockCob integration tests"
+allTests env = dependentTestGroup "Cob integration tests" AllFinish
+  [ dependentTestGroup "Definitions" AllFinish
+    [ testCase "getDefinition returns the test definition" $ testGetDefinition    env
+    , testCase "extendFromDSL appends fields, keeping ids" $ testExtendDefinition env
+    , testCase "Updating descriptions"                     $ testUpdDescriptions  env
+    , testCase "Removing a field"                          $ testRemoveField      env
+    , testCase "Adding a field with subfields"             $ testSubfields        env
+    ]
+  , testGroup "Records (mockCob)" (recordTests env)
+  ]
+
+recordTests :: TestEnv -> [TestTree]
+recordTests env =
   [ testCase "Add + Get roundtrip (SBClient)"                $ testAddGet             env
   , testCase "AddSync makes the record immediately findable" $ testAddSync            env
   , testCase "Search finds added record"                     $ testSearch             env
@@ -159,6 +184,22 @@ uniqueEmail env tag = do
   let stamp = show (truncate now :: Integer)
   return $ T.pack ("cob-tests+" <> tag <> "-" <> stamp <> "-" <> show n <> "@example.invalid")
 
+-- | Name, description and requiredness of top-level fields, by order.
+describeFields :: Definition -> [(Text, Text, FieldRequired)]
+describeFields = map describeField . sortOn getFieldOrder . M.elems . defFieldDefinitions
+  where
+    describeField f = (fieldName f, descText (fieldDescription f), fieldRequired f)
+
+fieldIds :: Definition -> [(Text, FieldName)]
+fieldIds d = [ (fieldName f, fieldId f) | f <- M.elems (defFieldDefinitions d) ]
+
+sbClientFields :: [(Text, Text, FieldRequired)]
+sbClientFields =
+  [ ("Email",       "$instanceLabel", MandatoryField)
+  , ("Name",        "",               FieldNotRequired)
+  , ("Kickstarter", "$[Yes,No]",      FieldNotRequired)
+  ]
+
 sampleClient :: Text -> SBClient
 sampleClient e = SBClient
   { sbcEmail       = e
@@ -167,13 +208,82 @@ sampleClient e = SBClient
   }
 
 --------------------------------------------------------------------------------
--- Individual tests
+-- Definition tests
+--------------------------------------------------------------------------------
+
+testGetDefinition :: TestEnv -> Assertion
+testGetDefinition env = withDef env $ \did -> do
+  d <- getDefinition did
+  liftIO $ do
+    defName d        @?= defName sbClientDef
+    describeFields d @?= sbClientFields
+
+testExtendDefinition :: TestEnv -> Assertion
+testExtendDefinition env = withDef env $ \did -> do
+  before <- getDefinition did
+  _ <- updDefinition did (`extendFromDSL` do
+    "Extra" |= text
+    pure ())
+  after <- getDefinition did
+  liftIO $ do
+    describeFields after @?= sbClientFields ++ [("Extra", "$text", FieldNotRequired)]
+    assertBool "existing fields must keep their ids" $
+      all (`elem` fieldIds after) (fieldIds before)
+
+testUpdDescriptions :: TestEnv -> Assertion
+testUpdDescriptions env = withDef env $ \did -> do
+  let setName f = if fieldName f == "Name" then f { fieldDescription = text } else f
+  _ <- updDefinition did $ \d -> d
+    { defDescription      = "Updated description"
+    , defFieldDefinitions = M.map setName (defFieldDefinitions d)
+    }
+  d <- getDefinition did
+  liftIO $ do
+    defDescription d @?= "Updated description"
+    describeFields d @?=
+      [ ("Email",       "$instanceLabel", MandatoryField)
+      , ("Name",        "$text",          FieldNotRequired)
+      , ("Kickstarter", "$[Yes,No]",      FieldNotRequired)
+      ]
+
+testRemoveField :: TestEnv -> Assertion
+testRemoveField env = withDef env $ \did -> do
+  _ <- updDefinition did (`extendFromDSL` do
+    "Extra" |= text
+    pure ())
+  _ <- updDefinition did $ \d ->
+    d { defFieldDefinitions = M.filter ((/= "Extra") . fieldName) (defFieldDefinitions d) }
+  d <- getDefinition did
+  liftIO $ describeFields d @?= sbClientFields
+
+testSubfields :: TestEnv -> Assertion
+testSubfields env = withDef env $ \did -> do
+  _ <- updDefinition did (`extendFromDSL` do
+    _ <- "Details" |= "" |+ do
+      "Note"  |= text
+      "Score" |= number
+      pure []
+    pure ())
+  d <- getDefinition did
+  liftIO $ do
+    map (\(n, _, _) -> n) (describeFields d) @?= ["Email", "Name", "Kickstarter", "Details"]
+    case filter ((== "Details") . fieldName) (M.elems (defFieldDefinitions d)) of
+      [details] ->
+        describeFields d { defFieldDefinitions = fieldFields details } @?=
+          [ ("Note",  "$text",   FieldNotRequired)
+          , ("Score", "$number", FieldNotRequired)
+          ]
+      _ -> assertFailure "expected exactly one Details field"
+
+--------------------------------------------------------------------------------
+-- Record tests
 --------------------------------------------------------------------------------
 
 testAddGet :: TestEnv -> Assertion
 testAddGet env = runMock env $ do
   email <- liftCob (uniqueEmail env "addget")
   ref <- add (sampleClient email)
+  liftCob (threadDelay 2000000)
   got <- get ref
   liftCob $ do
     sbcEmail got       @?= email
