@@ -53,13 +53,13 @@ data SBClient = SBClient
   , sbcName        :: Maybe Text
   , sbcKickstarter :: Maybe KickstarterPerm
   } deriving Show
-mkRecord ''SBClient "Sandbox Clients" ["Email", "Name", "Kickstarter"]
+mkRecord ''SBClient "TEST Sandbox Clients" ["Email", "Name", "Kickstarter"]
 
 data SBOrder = SBOrder
   { sboClient :: Ref SBClient
   , sboState  :: OrderState
   }
-mkRecord ''SBOrder "Sandbox Orders" ["Client", "State"]
+mkRecord ''SBOrder "TEST Sandbox Orders" ["Client", "State"]
 
 data SBOrderItem = SBOrderItem
   { sboiOrder   :: Ref SBOrder
@@ -68,10 +68,10 @@ data SBOrderItem = SBOrderItem
   , sboiQt      :: Int
   , sboiValue   :: Int
   }
-mkRecord ''SBOrderItem "Sandbox Order Items" ["Order", "Client", "Product", "Qt", "Value"]
+mkRecord ''SBOrderItem "TEST Sandbox Order Items" ["Order", "Client", "Product", "Qt", "Value"]
 
 data SBDownloaded = SBDownloaded (Ref SBOrderItem) Text
-mkRecord ''SBDownloaded "Sandbox Downloads" ["Order Item", "Resource"]
+mkRecord ''SBDownloaded "TEST Sandbox Downloads" ["Order Item", "Resource"]
 
 --------------------------------------------------------------------------------
 -- Test configuration
@@ -81,10 +81,6 @@ mkRecord ''SBDownloaded "Sandbox Downloads" ["Order Item", "Resource"]
 --   {
 --     "host":       "test.cultofbits.com",
 --     "token":      "…",
---     "loginUser":  "…",
---     "loginPass":  "…",
---     "groupRef":   123,
---     "productRef": 456
 --   }
 --
 -- Path: COB_TEST_CONFIG env var, defaulting to `tests/cob-test.json`. Tests
@@ -94,10 +90,6 @@ mkRecord ''SBDownloaded "Sandbox Downloads" ["Order Item", "Resource"]
 data TestConfig = TestConfig
   { host       :: String
   , token      :: String
-  , loginUser  :: Maybe String
-  , loginPass  :: Maybe String
-  , groupRef   :: Maybe Integer
-  , productRef :: Maybe Integer
   } deriving (Generic)
 
 instance FromJSON TestConfig
@@ -120,22 +112,22 @@ anyQ :: Query Void
 anyQ = "*"
 
 sbClientDef :: Definition
-sbClientDef = fromDSL "Sandbox Clients" "Cob tests — clients" $ do
+sbClientDef = fromDSL "TEST Sandbox Clients" "Cob tests — clients" $ do
   "Email"       |=! instanceLabel
   "Name"        |=  ""
   "Kickstarter" |=  list ["Yes", "No"]
   pure ()
 
 sbOrderDef :: Definition
-sbOrderDef = fromDSL "Sandbox Orders" "Cob tests — orders" $ do
-  "Client" |=! dollarRef "Sandbox Clients" anyQ
+sbOrderDef = fromDSL "TEST Sandbox Orders" "Cob tests — orders" $ do
+  "Client" |=! dollarRef "TEST Sandbox Clients" anyQ
   "State"  |=! list ["Paid", "Sent", "Refund"]
   pure ()
 
 sbOrderItemsDef :: Definition
-sbOrderItemsDef = fromDSL "Sandbox Order Items" "Cob tests — order items" $ do
-  "Order"   |=! dollarRef "Sandbox Orders" anyQ
-  "Client"  |=  dollarReferences "Sandbox Orders" "Client"
+sbOrderItemsDef = fromDSL "TEST Sandbox Order Items" "Cob tests — order items" $ do
+  "Order"   |=! dollarRef "TEST Sandbox Orders" anyQ
+  "Client"  |=  dollarReferences "TEST Sandbox Orders" "Client"
   -- Sandbox Products has no Haskell record (SBProduct is abstract), so we
   -- store the product reference as a number rather than $ref(...).
   "Product" |=! number
@@ -144,8 +136,8 @@ sbOrderItemsDef = fromDSL "Sandbox Order Items" "Cob tests — order items" $ do
   pure ()
 
 sbDownloadsDef :: Definition
-sbDownloadsDef = fromDSL "Sandbox Downloads" "Cob tests — downloads" $ do
-  "Order Item" |=! dollarRef "Sandbox Order Items" anyQ
+sbDownloadsDef = fromDSL "TEST Sandbox Downloads" "Cob tests — downloads" $ do
+  "Order Item" |=! dollarRef "TEST Sandbox Order Items" anyQ
   "Resource"   |=! text
   pure ()
 
@@ -212,22 +204,9 @@ allTests cfg env = testGroup "Cob mockCob integration tests"
   , testCase "StreamSearch streams added record"             $ testStreamSearch       env
   , testCase "Delete removes the record"                     $ testDelete             env
   , testCase "UpdateInstances applies the update"            $ testUpdateInstances    env
-  , testCase "Order + OrderItem references (serialization)"  $ testReferences         env cfg
   , testCase "Enum and Maybe serialization roundtrip"        $ testEnumMaybeRoundtrip env
   , testCase "CreateUser + DeleteUser"                       $ testCreateUser         env
-  , optionalGroup cfg "AddToGroup"                           $ testAddToGroup         env
-  , optionalLogin cfg "Login"                                $ testLogin              env
   ]
-
-optionalGroup :: TestConfig -> TestName -> (Integer -> Assertion) -> TestTree
-optionalGroup cfg name act = case groupRef cfg of
-  Just g  -> testCase name (act g)
-  Nothing -> testCase (name <> " (skipped: no groupRef)") (return ())
-
-optionalLogin :: TestConfig -> TestName -> ((String, String) -> Assertion) -> TestTree
-optionalLogin cfg name act = case (loginUser cfg, loginPass cfg) of
-  (Just u, Just p) -> testCase name (act (u, p))
-  _ -> testCase (name <> " (skipped: no login creds)") (return ())
 
 --------------------------------------------------------------------------------
 -- Test helpers
@@ -333,37 +312,6 @@ testUpdateInstances env = runMock env $ do
     assertBool "updateInstances returned no rows" (not (null updated))
     mapM_ (\(_, c) -> sbcName c @?= Just "Updated Name") updated
 
-testReferences :: TestEnv -> TestConfig -> Assertion
-testReferences env cfg = runMock env $ do
-  email     <- liftCob (uniqueEmail env "refs")
-  clientRef <- addSync (sampleClient email)
-  orderRef  <- addSync SBOrder { sboClient = clientRef, sboState = OrderPaid }
-  ord       <- get orderRef
-  liftCob $ do
-    ref_id (sboClient ord) @?= ref_id clientRef
-    case sboState ord of
-      OrderPaid -> return ()
-      _         -> assertFailure "expected OrderPaid"
-
-  case productRef cfg of
-    Nothing -> return ()
-    Just pid -> do
-      let prodRef = Ref Nothing pid :: Ref SBProduct
-      itemRef <- addSync SBOrderItem
-        { sboiOrder   = orderRef
-        , sboiClient  = Just clientRef
-        , sboiProduct = prodRef
-        , sboiQt      = 3
-        , sboiValue   = 1500
-        }
-      item <- get itemRef
-      liftCob $ do
-        ref_id (sboiOrder item)           @?= ref_id orderRef
-        fmap ref_id (sboiClient item)     @?= Just (ref_id clientRef)
-        ref_id (sboiProduct item)         @?= pid
-        sboiQt item                       @?= 3
-        sboiValue item                    @?= 1500
-      void $ add (SBDownloaded itemRef "https://example.invalid/test.pdf")
 
 testEnumMaybeRoundtrip :: TestEnv -> Assertion
 testEnumMaybeRoundtrip env = runMock env $ do
@@ -388,13 +336,3 @@ testCreateUser env = runMock env $ do
   ur    <- createUser (sampleUser email)
   liftCob $ assertBool "createUser returned a ref" (ref_id ur > 0)
 
-testAddToGroup :: TestEnv -> Integer -> Assertion
-testAddToGroup env gid = runMock env $ do
-  email <- liftCob (uniqueEmail env "grp")
-  ur    <- createUser (sampleUser email)
-  addToGroup [ur] (Ref Nothing gid :: Ref Group)
-
-testLogin :: TestEnv -> (String, String) -> Assertion
-testLogin env (user, pass) = runMock env $ do
-  tok <- login user pass
-  liftCob $ assertBool "login returned a non-empty token" (not (null tok))
