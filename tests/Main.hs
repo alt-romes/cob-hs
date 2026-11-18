@@ -7,6 +7,8 @@
 {-# LANGUAGE TypeApplications #-}
 module Main where
 
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, displayException, handle)
 import Control.Monad (void)
 import Control.Monad.Reader (runReaderT)
 import Data.Aeson (FromJSON, eitherDecodeFileStrict')
@@ -14,11 +16,13 @@ import Data.IORef
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.IO (hPutStrLn, stderr)
+import System.Log.FastLogger (fromLogStr)
 
 import qualified Streamly.Data.Stream as Streamly
 import qualified Streamly.Data.Fold as Fold
@@ -110,7 +114,8 @@ main = do
       defaultMain (testGroup "Tests (skipped: no config)" [])
     Right cfg -> do
       counter <- newIORef 0
-      withSession (host cfg) (token cfg) $ \session -> do
+      withSession (host cfg) (token cfg) $ \s -> do
+        let session = s { logger = \_ -> pure () }
         setupDefinition session (DefId (definitionId cfg))
         defaultMain (allTests (TestEnv session counter))
 
@@ -120,9 +125,16 @@ data TestEnv = TestEnv
   , envCounter :: IORef Int
   }
 
--- | Run a Cob action with mockCob (so additions are rolled back).
+-- | Run a Cob action with mockCob (so additions are rolled back), showing the
+-- logs only if it fails.
 runMock :: TestEnv -> Cob a -> IO a
-runMock env c = mockCob 1{-seconds-} (envSession env) c
+runMock env c = do
+  logs <- newIORef mempty
+  let session = (envSession env) { logger = \l -> modifyIORef' logs (<> l) }
+  handle (\(e :: SomeException) -> do
+    out <- readIORef logs
+    assertFailure (displayException e <> "\n--- logs ---\n" <> T.unpack (decodeUtf8 (fromLogStr out)))) $
+    mockCob 1{-seconds-} session c
 
 allTests :: TestEnv -> TestTree
 allTests env = testGroup "Cob mockCob integration tests"

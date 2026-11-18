@@ -108,7 +108,7 @@ test-suite cob-tests
     type: exitcode-stdio-1.0
     main-is: Main.hs
     build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson, string-qq,
-                   streamly-core, directory, time
+                   streamly-core, directory, time, fast-logger
     hs-source-dirs: tests
     default-language: GHC2021
 
