@@ -30,8 +30,7 @@ library
                       Cob.RecordM.TH,
                       Cob.UserM,
                       Cob.UserM.Entities,
-                      Cob.UserM.Servant,
-                      Cob.Simulator
+                      Cob.UserM.Servant
 
     ghc-options:      -Wall -Wtabs
     build-depends:    base >= 4 && <= 5,
