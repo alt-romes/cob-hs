@@ -157,6 +157,7 @@ allTests env = dependentTestGroup "Cob integration tests" AllFinish
     , testCase "Updating descriptions"                     $ testUpdDescriptions  env
     , testCase "Removing a field"                          $ testRemoveField      env
     , testCase "Adding a field with subfields"             $ testSubfields        env
+    , testCase "Reordering fields and back"                $ testReorder          env
     ]
   , testGroup "Records (mockCob)" (recordTests env)
   ]
@@ -189,6 +190,9 @@ describeFields :: Definition -> [(Text, Text, FieldRequired)]
 describeFields = map describeField . sortOn getFieldOrder . M.elems . defFieldDefinitions
   where
     describeField f = (fieldName f, descText (fieldDescription f), fieldRequired f)
+
+fieldNames :: Definition -> [Text]
+fieldNames = map (\(n, _, _) -> n) . describeFields
 
 fieldIds :: Definition -> [(Text, FieldName)]
 fieldIds d = [ (fieldName f, fieldId f) | f <- M.elems (defFieldDefinitions d) ]
@@ -266,7 +270,7 @@ testSubfields env = withDef env $ \did -> do
     pure ())
   d <- getDefinition did
   liftIO $ do
-    map (\(n, _, _) -> n) (describeFields d) @?= ["Email", "Name", "Kickstarter", "Details"]
+    fieldNames d @?= ["Email", "Name", "Kickstarter", "Details"]
     case filter ((== "Details") . fieldName) (M.elems (defFieldDefinitions d)) of
       [details] ->
         describeFields d { defFieldDefinitions = fieldFields details } @?=
@@ -274,6 +278,21 @@ testSubfields env = withDef env $ \did -> do
           , ("Score", "$number", FieldNotRequired)
           ]
       _ -> assertFailure "expected exactly one Details field"
+
+testReorder :: TestEnv -> Assertion
+testReorder env = withDef env $ \did -> do
+  let original = ["Email", "Name", "Kickstarter"]
+      reorder names = void $ updDefinition did $ \d -> d
+        { defFieldDefinitions = M.map (\f -> f { fieldOrder = lookup (fieldName f) (zip names [0..]) }) (defFieldDefinitions d) }
+  before <- getDefinition did
+  reorder (reverse original)
+  reversed <- getDefinition did
+  reorder original
+  after <- getDefinition did
+  liftIO $ do
+    fieldNames reversed @?= reverse original
+    fieldNames after    @?= original
+    fieldIds after      @?= fieldIds before
 
 --------------------------------------------------------------------------------
 -- Record tests
