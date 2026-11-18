@@ -100,11 +100,14 @@ instance Show FieldDescription where show = unpack . descText
 instance Pretty FieldDescription where pretty = viaShow
 instance IsString FieldDescription where fromString = FieldDesc [] . fromString
 instance Semigroup FieldDescription where
-  FieldDesc kws1 desc1 <> FieldDesc kws2 desc2 = FieldDesc (kws1 <> kws2) (desc1 <> " " <> desc2)
+  FieldDesc kws1 desc1 <> FieldDesc kws2 desc2 = FieldDesc (kws1 <> kws2) (joinWords [desc1, desc2])
 instance Monoid FieldDescription where mempty = FieldDesc [] ""
 
 descText :: FieldDescription -> Text
-descText FieldDesc{..} = T.unwords (map (pack . show) knownKws) <> " " <> rawDesc
+descText FieldDesc{..} = joinWords (map kwText knownKws ++ [rawDesc])
+
+joinWords :: [Text] -> Text
+joinWords = T.unwords . filter (not . T.null)
 
 data Condition
   = Equals
@@ -664,7 +667,7 @@ instance FromJSON Definition where
 parseFieldDescription :: Parsec Void Text FieldDescription
 parseFieldDescription = do
   knownKws <- many (parseKeyword <* P.space)
-  rawDesc <- takeRest -- the rest of the input
+  rawDesc <- T.strip <$> takeRest
   return FieldDesc{ knownKws , rawDesc }
 
 parseKeyword :: Parsec Void Text Keyword
@@ -680,7 +683,7 @@ parseKeyword = (char '$' *>) $
   <|> parseListKeyword
   <|> parseReferencesKeyword
   <|> parseRefKeyword
-  <|> (RawKw <$> takeRest) -- fallback
+  <|> (RawKw . T.stripEnd <$> takeRest) -- fallback
 
 parseListKeyword :: Parsec Void Text Keyword
 parseListKeyword = fmap (ListKw . map T.pack) $ -- dbg "list" $
