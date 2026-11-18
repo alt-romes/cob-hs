@@ -30,13 +30,6 @@ import Cob.Session
 import Cob.Ref
 import Cob.Log
 
--- | UserM writes the added users thorought the Cob computation.
--- This allows it to undo (delete) all added users in a computation (particularly in a testing environment)
---
--- This list of added instances is **unused** when the computation is run with 'runCob'.
--- However, when the computation is run with 'runUserMTests', all added instances will be deleted
--- type instance CobWriter 'UserM = Ref User
-
 -- | Create an UserM user
 --
 -- Throws the 'NonUniqueUser' 'CobException' if the created user is non unique
