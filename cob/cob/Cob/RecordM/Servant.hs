@@ -84,10 +84,10 @@ type IntegrationAdd    a = "instances" :> "integration" :> ReqBody '[JSON] (AddS
 type IntegrationUpdate a = "instances" :> "integration" :> ReqBody '[JSON] (UpdateSpec a) :> Put '[JSON] OperationsSummary
 type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (DeleteSpec a) :> Servant.API.Delete '[JSON] OperationsSummary
 
+type DefinitionGet = "definitions" :> Capture "definitionId" DefinitionId :> Get '[JSON] Definition
 type DefinitionNew = "definitions" :> ReqBody '[JSON] (ToRecM Definition) :> Post '[JSON] (Ref Definition)
+type DefinitionUpd = "definitions" :> Capture "definitionId" DefinitionId :> ReqBody '[JSON] (ToRecM Definition) :> Put '[JSON] Definition
 type DefinitionDelete = "definitions" :> Capture "definitionId" DefinitionId :> Servant.API.Delete '[JSON] NoContent
-
-type GetDefinitionRep = "instances" :> "empty" :> "definition" :> Capture "definitionId" DefinitionId :> QueryParam "withDefaults" Bool :> Get '[JSON] (FromEmptyInstance Definition)
 
 searchByName :: String       -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
@@ -117,14 +117,14 @@ addInstance     = C.client (Proxy @(RecordM (IntegrationAdd a)))
 updateInstances = C.client (Proxy @(RecordM (IntegrationUpdate a)))
 deleteInstances = C.client (Proxy @(RecordM (IntegrationDelete a)))
 
+getDefinition :: DefinitionId -> C.ClientM Definition
 newDefinition :: ToRecM Definition -> C.ClientM (Ref Definition)
-newDefinition = C.client (Proxy @(RecordM DefinitionNew))
-
+updDefinition :: DefinitionId -> ToRecM Definition -> C.ClientM Definition{-returns updated definition-}
 deleteDefinition :: DefinitionId -> C.ClientM NoContent
+getDefinition = C.client (Proxy @(RecordM DefinitionGet))
+newDefinition = C.client (Proxy @(RecordM DefinitionNew))
+updDefinition = C.client (Proxy @(RecordM DefinitionUpd))
 deleteDefinition = C.client (Proxy @(RecordM DefinitionDelete))
-
-getDefinitionRep :: DefinitionId -> Maybe Bool -> C.ClientM (FromEmptyInstance Definition)
-getDefinitionRep = C.client (Proxy @(RecordM GetDefinitionRep))
 
 -- Sort given a list of pairs @(<field>, <direction>)@
 newtype SortParam = SortParam [(String, String)]
@@ -180,6 +180,7 @@ instance ToJSON (ToRecM Definition) where
       , "fieldDefinitions" .= (map (ToRecM . snd) . M.toList) defFieldDefinitions
       , "state" .= ToRecM defState
       , "version" .= defVersion
+      , "id" .= defId
       ]
 
 instance ToJSON (ToRecM Field) where
@@ -203,7 +204,7 @@ instance ToJSON (ToRecM Field) where
              [ "condition" .= (ToRecM cond) ]
 
 instance ToJSON (ToRecM Condition) where
-  toJSON (ToRecM Equals{lhs, rhs}) = String (lhs <> "=" <> rhs)
+  toJSON (ToRecM Equals{lhs, rhs}) = String ({- lhs <>  TODO? or is it really just always =? -} "=" <> rhs)
 
 instance ToJSON (ToRecM FieldRequired) where
   toJSON (ToRecM MandatoryField) = "mandatory"

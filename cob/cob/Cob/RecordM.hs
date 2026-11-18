@@ -348,7 +348,7 @@ uploadFile r fieldName contents = do
       UploadFromMemory n _ -> n
 
 --------------------------------------------------------------------------------
--- * Creating Definitions
+-- * Definitions
 --------------------------------------------------------------------------------
 
 -- | Create a RecordM 'Definition', typically where 'Definition' is created
@@ -371,14 +371,17 @@ deleteDefinition (DefId di) = do
       _ <- performReq $ Servant.deleteDefinition (DefId di)
       pure ()
 
---------------------------------------------------------------------------------
--- * Fetching Definitions
---------------------------------------------------------------------------------
-
 -- | Get a representation of the Definition given its 'DefinitionId'
--- TODO: I think I could as well just use @GET /recordm/definitions/123@
-getDefinitionRep :: forall m. MonadCob m => DefinitionId -> m Definition
-getDefinitionRep defId = do
+getDefinition :: forall m. MonadCob m => DefinitionId -> m Definition
+getDefinition defId = do
   logInfo $ "Fetching definition by id " <> toLogStr (show defId)
-  FromEmptyInstance def <- performReq $ Servant.getDefinitionRep defId (Just False)
-  pure def
+  performReq $ Servant.getDefinition defId
+
+-- | Update the given 'Definition' by 'DefinitionId' and return the updated 'Definition'
+updDefinition :: forall m. MonadCob m => DefinitionId -> (Definition -> Definition) -> m Definition
+updDefinition defId updDef = do
+  def <- Cob.RecordM.getDefinition defId
+  let localUpdDef = updDef def
+  logInfo $ "Updating definition by id " <> toLogStr (show defId) <> " with new definition " <> toLogStr (encode (ToRecM localUpdDef))
+  realUpdatedDef <- performReq $ Servant.updDefinition defId (ToRecM localUpdDef)
+  pure realUpdatedDef

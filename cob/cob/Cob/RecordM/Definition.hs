@@ -19,7 +19,7 @@ module Cob.RecordM.Definition
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
   , datetime, date, time, text, list, dollarRef, dollarReferences
     -- * Fetching definition representation
-  , DefinitionId(..), FromEmptyInstance(..)
+  , DefinitionId(..)
     -- * Utils
   , descText
     -- ** Debugging
@@ -48,7 +48,6 @@ import Data.List (sortBy)
 import Data.Ord (Down(..), comparing)
 import Servant.API (ToHttpApiData(toUrlPiece))
 import qualified Data.Aeson.Types as Aeson (Parser)
-import Debug.Trace (trace)
 import Data.Void
 
 import Text.Megaparsec
@@ -67,10 +66,14 @@ instance ToHttpApiData DefinitionId where toUrlPiece (DefId i) = toUrlPiece i
 
 data Definition
   = Definition
-    { defName :: Text
+    { defId   :: Maybe DefinitionId
+      -- ^ Nothing if the definition is new
+    , defName :: Text
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
+      -- ^ Field names will be -100000000 + count if definition is new,
+      -- otherwise they'll be whatever was picked up.
     , defVersion :: Maybe Integer
       -- ^ The "version", when the definition already exists.
       -- For atomic updates, like @'Ref'@'s version
@@ -237,7 +240,7 @@ getFieldOrder (Field{fieldOrder = Nothing, fieldId = UnsafeFieldName i}) = i
 getFieldOrder (Field{fieldOrder = Just o}) = o
 
 getFieldId :: FieldName -> String
-getFieldId (UnsafeFieldName i) = show (-100000000 - i)
+getFieldId (UnsafeFieldName i) = show i
 
 type DefinitionQ = DefinitionQM ()
 type DefinitionQM = Free DefinitionQF
@@ -430,7 +433,8 @@ fresh :: Interpreter FieldName
 fresh = do
   i <- lift . lift . lift $ get
   lift . lift . lift $ modify' (+1)
-  return (UnsafeFieldName i)
+  return (UnsafeFieldName (-100000000 + i))
+    -- newly created fields take negative ids.
 
 --------------------------------------------------------------------------------
 -- Utils: Definition
@@ -478,7 +482,8 @@ editFieldMap (path:paths) upd field_map
 simpleDefinition :: Text -> Text -> Definition
 simpleDefinition name descr
   = Definition
-    { defName = name
+    { defId = Nothing
+    , defName = name
     , defDescription = descr
     , defState = EnabledDefinition
     , defFieldDefinitions = mempty
@@ -588,24 +593,12 @@ _testBuild b = fromDSL "Nome da Def" "Descr da Def" $ do
 -- * Fetching a definition representation
 --------------------------------------------------------------------------------
 
--- | Used to fetch a definition using the endpoint which returns an empty instance.
--- That is the same endpoint as the one used by the RecordM web UI.
--- We use this newtype wrapper to avoid giving a FromJSON instance to
--- 'Definition' directly, and force being explicit that we're parsing a
--- definition from an empty instance JSON.
-newtype FromEmptyInstance a = FromEmptyInstance a
-
-instance FromJSON a => FromJSON (FromEmptyInstance a) where
-  parseJSON = withObject "FromEmptyInstance a" $ \obj -> do
-    jsonDef <- obj .: "jsonDefinition"
-    def <- parseJSON (Object jsonDef)
-    return $ FromEmptyInstance def
-
 -- TODO: Not FromJSON!! Something like FromRecM... (define in separate module so both us and Servant can use it)
 instance FromJSON Definition where
   parseJSON = withObject "Definition" $ \jsonDef -> do
 
     -- def
+    defId   <- Just . DefId <$> jsonDef .: "id"
     defName <- jsonDef .: "name"
     defDescription <- jsonDef .:? "description" .!= ""
     defState <- maybe (pure EnabledDefinition) parseDefState =<< jsonDef .:? "state"
@@ -620,8 +613,7 @@ instance FromJSON Definition where
       parseFields = fmap M.fromList . mapM parseField
 
       parseField :: Object -> Aeson.Parser (FieldName, Field)
-      parseField obj = do
-        fieldDef <- obj .: "fieldDefinition"
+      parseField fieldDef = do
         fieldName <- fieldDef .: "name"
         fieldDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
         fieldDuplicable <- fieldDef .: "duplicable"
@@ -629,8 +621,8 @@ instance FromJSON Definition where
         fieldId <- UnsafeFieldName <$> fieldDef .: "id"
         fieldOrder <- fieldDef .: "order"
 
-        fieldFields <- parseFields =<< obj .: "fields"
-        fieldCondition <- parseCondition =<< obj .:? "condition" .!= Nothing
+        fieldFields <- parseFields =<< fieldDef .: "fields"
+        fieldCondition <- parseCondition =<< fieldDef .:? "condition"
 
         return (fieldId, Field{..})
 
@@ -640,10 +632,14 @@ instance FromJSON Definition where
           Left e -> fail $ "FAILED TO PARSE DESCRIPTION: " ++ T.unpack t ++ ":\n" ++ show e
           Right x -> return x
 
-      parseCondition :: Maybe Object -> Aeson.Parser (Maybe Condition)
+      parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
       parseCondition Nothing = pure Nothing
-      parseCondition (Just obj) = do
-        trace ("TODO: Support parsing conditions... " ++ show obj) $ pure Nothing
+      parseCondition (Just cond) = do
+        -- Only supports simple conditions for now, like "=Yes" or "=No"
+        -- TODO: seems horrible, need to fix!
+        case cond of
+          ('=':rhs) -> return $ Just (Equals "" (pack rhs))
+          _ -> fail $ "Unexpected condition format: " ++ show cond
 
       parseDefState :: Text -> Aeson.Parser DefinitionState
       parseDefState = \case
