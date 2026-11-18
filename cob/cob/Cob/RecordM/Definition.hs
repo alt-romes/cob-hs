@@ -70,8 +70,8 @@ data Definition
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
-      -- ^ Field names will be 'newFieldBase' + count if field is new,
-      -- otherwise they'll be whatever was picked up.
+      -- ^ Keyed by 'NewField' for fields created with the DSL, otherwise by
+      -- the 'ExistingField' id picked up from the server.
     , defVersion :: Maybe Integer
       -- ^ The "version", when the definition already exists.
       -- For atomic updates, like @'Ref'@'s version
@@ -87,7 +87,7 @@ data Field
     , fieldFields :: Map FieldName Field
     , fieldCondition :: Maybe Condition
     , fieldId :: FieldName
-    , fieldOrder :: Maybe Int -- ^ When order is Nothing, the Id is used for the order? See getFieldOrder
+    , fieldOrder :: Maybe Int -- ^ Nothing for new fields. See 'getFieldOrder'
     }
     deriving Show
 
@@ -233,15 +233,23 @@ rodrigoTeste = do
 
 -- | Abstract type representing a definition's field name.
 -- Useful for defining conditionals (e.g. see '(===)').
-newtype FieldName = UnsafeFieldName Int -- Tagged by identifier
-  deriving (Eq, Ord, Show, ToJSONKey, FromJSONKey)
+data FieldName
+  = ExistingField Int
+  -- ^ The id of a field which exists in the server
+  | NewField Int
+  -- ^ A field created with the DSL, numbered in declaration order
+  deriving (Eq, Ord, Show)
 
+-- | New fields are ordered by declaration.
 getFieldOrder :: Field -> Int
-getFieldOrder (Field{fieldOrder = Nothing, fieldId = UnsafeFieldName i}) = i
-getFieldOrder (Field{fieldOrder = Just o}) = o
+getFieldOrder Field{fieldOrder = Just o} = o
+getFieldOrder Field{fieldId = NewField n} = n
+getFieldOrder Field{fieldId = ExistingField i} = i
 
+-- | The id sent to the server. New fields take negative ids.
 getFieldId :: FieldName -> String
-getFieldId (UnsafeFieldName i) = show i
+getFieldId (ExistingField i) = show i
+getFieldId (NewField n) = show (-100000000 - n)
 
 type DefinitionQ = DefinitionQM ()
 type DefinitionQM = Free DefinitionQF
@@ -365,10 +373,9 @@ extendFromDSL def defQ
       (runStateT
          (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
          def)
-    (1 + maximum (0 : map freshIndex (M.keys def.defFieldDefinitions)))
+    (1 + maximum (0 : map getFieldOrder (allFields def.defFieldDefinitions)))
   where
-    freshIndex (UnsafeFieldName i) = if i < 0 then i + newFieldBase else i
-      -- if the field is newly created, offset it back to get the base number
+    allFields = concatMap (\f -> f : allFields f.fieldFields) . M.elems
 
 interpret :: DefinitionQM a -> Interpreter a
 interpret = iterM algebra
@@ -437,11 +444,7 @@ fresh :: Interpreter FieldName
 fresh = do
   i <- lift . lift . lift $ get
   lift . lift . lift $ modify' (+1)
-  return (UnsafeFieldName (newFieldBase - i))
-
--- | Newly created fields take negative ids, offset from this base.
-newFieldBase :: Int
-newFieldBase = -100000000
+  return (NewField i)
 
 --------------------------------------------------------------------------------
 -- Utils: Definition
@@ -625,7 +628,7 @@ instance FromJSON Definition where
         fieldDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
         fieldDuplicable <- fieldDef .: "duplicable"
         fieldRequired <- parseFieldRequired =<< fieldDef .: "required"
-        fieldId <- UnsafeFieldName <$> fieldDef .: "id"
+        fieldId <- ExistingField <$> fieldDef .: "id"
         fieldOrder <- fieldDef .: "order"
 
         fieldFields <- parseFields =<< fieldDef .: "fields"
