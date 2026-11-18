@@ -126,7 +126,8 @@ test-suite cob-golden
 executable cobsh
     main-is:          Main.hs
     build-depends:    base, cob, haskeline, megaparsec, text, aeson, mtl, containers, groups,
-                      prettyprinter, optparse-applicative, shellwords
+                      prettyprinter, prettyprinter-ansi-terminal, directory, filepath, process,
+                      optparse-applicative, shellwords
     hs-source-dirs:   app
     default-language: GHC2021
     ghc-options:      -Wall
