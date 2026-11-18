@@ -157,7 +157,7 @@ instance Show Keyword where show = unpack . kwText
 
 kwText :: Keyword -> Text
 kwText = \case
-    RawKw txt -> txt
+    RawKw txt -> keyword txt
     InstanceLabelKw -> keyword "instanceLabel"
     InstanceDescriptionKw -> keyword "instanceDescription"
     ReadOnlyKw -> keyword "readonly"
