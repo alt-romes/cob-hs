@@ -13,56 +13,30 @@ module Cob
   -- Cob.RecordM re-exported
   , FileUpload(..)
   ) where
-  -- (
-  --   -- * Operations
-  --   streamSearch
-  -- , search      
-  -- , get         
-  -- , count       
-  -- , add         
-  -- , addSync     
-  -- , delete      
-  -- , liftCob
-
-  -- -- * Types
-  -- , Cob
-  -- , CobM
-  -- , CobF
-  -- ) where
-
---  romes: add documentation explaining to what functions throw what kind of errors (performRequest throws that servant client error)
 
 import Control.Concurrent
 
+import Cob.Exception
+import Cob.RecordM (FileUpload(..))
+import Cob.RecordM.Query
+import Cob.RecordM.Record
+import Cob.Ref
+import Cob.Session
+import Cob.UserM.Entities
+import Cob.Utils (MonadCob)
+import Control.Exception
+import Control.Monad.Free
+import Control.Monad.Free.TH
+import Control.Monad.IO.Class
+import Control.Monad.Reader
 import Data.Bifunctor
 import Data.Either (lefts)
 import Data.IORef
-
-import qualified Data.List as L
-
-import Control.Monad.IO.Class
-import Control.Monad.Reader
--- import Control.Monad.Free.Ap
-import Control.Monad.Free
-import Control.Monad.Free.TH
-
-import Control.Exception
-import Cob.Exception
-import Cob.Utils (MonadCob)
-
-import qualified Control.Concurrent.Async as A
-
-import qualified Streamly.Data.Stream as Streamly
-
 import qualified Cob.RecordM as RM
-import Cob.RecordM (FileUpload(..))
 import qualified Cob.UserM   as UM
-
-import Cob.Session
-import Cob.RecordM.Query
-import Cob.RecordM.Record
-import Cob.UserM.Entities
-import Cob.Ref
+import qualified Control.Concurrent.Async as A
+import qualified Data.List as L
+import qualified Streamly.Data.Stream as Streamly
 
 type Cob = Free CobF
 
@@ -87,7 +61,6 @@ data CobF next where
   Try          :: Exception e => Cob a -> (Either e a -> next) -> CobF next
   Catch        :: Exception e => Cob a -> (e -> Cob a) -> (a -> next) -> CobF next
   MapConcurrently :: Traversable t => (a -> Cob b) -> t a -> (t b -> next) -> CobF next
-  -- NoOp :: next -> CobF next
 
 instance Functor CobF where
   fmap g = \case
@@ -110,25 +83,6 @@ instance Functor CobF where
     Catch c h f -> Catch c h (g . f)
     MapConcurrently h t f -> MapConcurrently h t (g . f)
 
--- instance Applicative CobF where
---   pure x = NoOp x
---   f <*> g = undefined -- \case
-    -- StreamSearch q f h -> StreamSearch q f (g . h)
-    -- Search q f  -> Search q (g . f)
-    -- Get r f     -> Get r (g . f)
-    -- Count q f   -> Count q (g . f)
-    -- Add q f     -> Add q (g . f)
-    -- AddSync q f -> AddSync q (g . f)
-    -- Delete r n  -> Delete r (g n)
-    -- CreateUser u f -> CreateUser u (g . f)
-    -- DeleteUser u n -> DeleteUser u (g n)
-    -- AddToGroup us gr n -> AddToGroup us gr (g n)
-    -- Login u p f -> Login u p (g . f)
-    -- LiftCob x f -> LiftCob x (g . f)
-    -- Try c f -> Try c (g . f)
-    -- Catch c h f -> Catch c h (g . f)
-    -- MapConcurrently h t f -> MapConcurrently h t (g . f)
-
 makeFree_ ''CobF
 
 streamSearch :: Record a => Query a -> (Streamly.Stream Cob (Ref a, a) -> Cob b) -> Cob b
@@ -149,18 +103,12 @@ unliftCob    :: ((forall a. Cob a -> IO a) -> IO b) -> Cob b
 try          :: Exception e => Cob a -> Cob (Either e a)
 catch        :: Exception e => Cob a -> (e -> Cob a) -> Cob a
 mapConcurrently :: Traversable t => (a -> Cob b) -> t a -> Cob (t b)
--- noOp         :: Cob ()
 
 search_ :: Record a => Query a -> Cob [a]
 search_ = fmap (map snd) . search
 
--- ROMES:TODO: retry ?
-
-instance MonadIO Cob where
-  liftIO = liftCob
-
-instance MonadFail Cob where
-  fail = liftIO . fail
+instance MonadIO   Cob where liftIO = liftCob
+instance MonadFail Cob where fail = liftIO . fail
 
 type f ~> g = forall x. f x -> g x
 infixr 0 ~>
@@ -216,7 +164,6 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
 -- (for now... could be done with a getRaw and pushRaw of sorts).
 --
 -- TODO: Could mock to host (mock.example.com)?
---
 mockCob :: Int -- ^ Delay in seconds
         -> CobSession -> Cob ~> IO
 mockCob delayInSeconds cs cobf = do
