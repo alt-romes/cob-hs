@@ -179,9 +179,7 @@ instance ToJSON (ToRecM Definition) where
       , "description" .= defDescription
       , "fieldDefinitions" .= (map (ToRecM . snd) . M.toList) defFieldDefinitions
       , "state" .= ToRecM defState
-      -- ROMES:TODO: Should this be set to html encoded things or just nothing?
-      , "htmlEncodedName" .= ("" :: T.Text)
-      , "htmlEncodedDescription" .= ("" :: T.Text)
+      , "version" .= defVersion
       ]
 
 instance ToJSON (ToRecM Field) where
