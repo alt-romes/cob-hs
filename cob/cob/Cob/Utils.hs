@@ -24,16 +24,6 @@ import Cob.Session
 
 type MonadCob m = (MonadIO m, MonadReader CobSession m)
 
--- Eventually, we could have
--- class MonadIO m => MonadCob m where
---   askSession :: m CobSession
--- instance MonadIO m => MonadCob (ReaderT CobSession m) where
---   askSession = ask
--- instance MonadCob m => MonadCob (ReaderT env m) where
---   askSession = lift askSession
--- instance MonadCob m => MonadCob (StateT env m) where
---   askSession = lift askSession
-
 -- | Perform a request on a Cob servant api
 performReq :: MonadCob m => Servant.Client.ClientM a -> m a
 performReq c = do
