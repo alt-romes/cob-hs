@@ -44,8 +44,6 @@ import Prettyprinter hiding (list)
 
 import Cob.RecordM.Query
 import Data.Coerce
-import Data.List (sortBy)
-import Data.Ord (Down(..), comparing)
 import Servant.API (ToHttpApiData(toUrlPiece))
 import qualified Data.Aeson.Types as Aeson (Parser)
 import Data.Void
@@ -72,7 +70,7 @@ data Definition
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
-      -- ^ Field names will be -100000000 + count if definition is new,
+      -- ^ Field names will be 'newFieldBase' + count if field is new,
       -- otherwise they'll be whatever was picked up.
     , defVersion :: Maybe Integer
       -- ^ The "version", when the definition already exists.
@@ -364,7 +362,10 @@ extendFromDSL def defQ
       (runStateT
          (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
          def)
-    (maybe 1 ((+1) . coerce) $ listToMaybe $ sortBy (comparing Down) $ M.keys def.defFieldDefinitions)
+    (1 + maximum (0 : map freshIndex (M.keys def.defFieldDefinitions)))
+  where
+    freshIndex (UnsafeFieldName i) = if i < 0 then i - newFieldBase else i
+      -- if the field is newly created, offset it back to get the base number
 
 interpret :: DefinitionQM a -> Interpreter a
 interpret = iterM algebra
@@ -433,8 +434,11 @@ fresh :: Interpreter FieldName
 fresh = do
   i <- lift . lift . lift $ get
   lift . lift . lift $ modify' (+1)
-  return (UnsafeFieldName (-100000000 + i))
-    -- newly created fields take negative ids.
+  return (UnsafeFieldName (newFieldBase + i))
+
+-- | Newly created fields take negative ids, offset from this base.
+newFieldBase :: Int
+newFieldBase = -100000000
 
 --------------------------------------------------------------------------------
 -- Utils: Definition
