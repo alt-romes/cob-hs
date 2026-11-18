@@ -15,7 +15,6 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Data.Void (Void)
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
@@ -28,25 +27,17 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Cob
-import Cob.RecordM (newDefinition, deleteDefinition)
+import Cob.RecordM (updDefinition)
 import Cob.RecordM.Definition
 import Cob.RecordM.TH
-import Control.Concurrent
 
 --------------------------------------------------------------------------------
--- Test schema (Sandbox: renamed from Kanjideck)
+-- Test schema
 --------------------------------------------------------------------------------
 
 data KickstarterPerm = KickstarterYes | KickstarterNo
   deriving (Show, Eq)
 mkRecordEnum ''KickstarterPerm ["Yes", "No"]
-
-data OrderState = OrderPaid | OrderSent | OrderRefund
-  deriving (Show, Eq)
-mkRecordEnum ''OrderState ["Paid", "Sent", "Refund"]
-
--- Abstract, only used to type references.
-data SBProduct
 
 data SBClient = SBClient
   { sbcEmail       :: Text
@@ -55,41 +46,34 @@ data SBClient = SBClient
   } deriving Show
 mkRecord ''SBClient "TEST Sandbox Clients" ["Email", "Name", "Kickstarter"]
 
-data SBOrder = SBOrder
-  { sboClient :: Ref SBClient
-  , sboState  :: OrderState
-  }
-mkRecord ''SBOrder "TEST Sandbox Orders" ["Client", "State"]
-
-data SBOrderItem = SBOrderItem
-  { sboiOrder   :: Ref SBOrder
-  , sboiClient  :: Maybe (Ref SBClient)
-  , sboiProduct :: Ref SBProduct
-  , sboiQt      :: Int
-  , sboiValue   :: Int
-  }
-mkRecord ''SBOrderItem "TEST Sandbox Order Items" ["Order", "Client", "Product", "Qt", "Value"]
-
-data SBDownloaded = SBDownloaded (Ref SBOrderItem) Text
-mkRecord ''SBDownloaded "TEST Sandbox Downloads" ["Order Item", "Resource"]
+sbClientDef :: Definition
+sbClientDef = fromDSL "TEST Sandbox Clients" "Cob tests — clients" $ do
+  "Email"       |=! instanceLabel
+  "Name"        |=  ""
+  "Kickstarter" |=  list ["Yes", "No"]
+  pure ()
 
 --------------------------------------------------------------------------------
 -- Test configuration
 --
--- JSON file with the following shape (optional fields may be omitted or null):
+-- JSON file with the following shape:
 --
 --   {
---     "host":       "test.cultofbits.com",
---     "token":      "…",
+--     "host":         "test.cultofbits.com",
+--     "token":        "…",
+--     "definitionId": 123
 --   }
 --
--- Path: COB_TEST_CONFIG env var, defaulting to `tests/cob-test.json`. Tests
--- needing a missing optional field are reported as skipped.
+-- The definition is overwritten with 'sbClientDef' before the tests run, so
+-- the token only needs permission to modify (and add instances to) it.
+--
+-- Path: COB_TEST_CONFIG env var, defaulting to `tests/cob-test.json`.
 --------------------------------------------------------------------------------
 
 data TestConfig = TestConfig
-  { host       :: String
-  , token      :: String
+  { host         :: String
+  , token        :: String
+  , definitionId :: Int
   } deriving (Generic)
 
 instance FromJSON TestConfig
@@ -101,67 +85,14 @@ readConfig fp = do
     then return (Left ("file not found: " <> fp))
     else eitherDecodeFileStrict' fp
 
---------------------------------------------------------------------------------
--- RecordM Definitions for the Sandbox schema
---
--- These mirror the data types declared above and are created on the server
--- before tests run.
---------------------------------------------------------------------------------
-
-anyQ :: Query Void
-anyQ = "*"
-
-sbClientDef :: Definition
-sbClientDef = fromDSL "TEST Sandbox Clients" "Cob tests — clients" $ do
-  "Email"       |=! instanceLabel
-  "Name"        |=  ""
-  "Kickstarter" |=  list ["Yes", "No"]
-  pure ()
-
-sbOrderDef :: Definition
-sbOrderDef = fromDSL "TEST Sandbox Orders" "Cob tests — orders" $ do
-  "Client" |=! dollarRef "TEST Sandbox Clients" anyQ
-  "State"  |=! list ["Paid", "Sent", "Refund"]
-  pure ()
-
-sbOrderItemsDef :: Definition
-sbOrderItemsDef = fromDSL "TEST Sandbox Order Items" "Cob tests — order items" $ do
-  "Order"   |=! dollarRef "TEST Sandbox Orders" anyQ
-  "Client"  |=  dollarReferences "TEST Sandbox Orders" "Client"
-  -- Sandbox Products has no Haskell record (SBProduct is abstract), so we
-  -- store the product reference as a number rather than $ref(...).
-  "Product" |=! number
-  "Qt"      |=! number
-  "Value"   |=! number
-  pure ()
-
-sbDownloadsDef :: Definition
-sbDownloadsDef = fromDSL "TEST Sandbox Downloads" "Cob tests — downloads" $ do
-  "Order Item" |=! dollarRef "TEST Sandbox Order Items" anyQ
-  "Resource"   |=! text
-  pure ()
-
-allSandboxDefs :: [Definition]
-allSandboxDefs = [sbClientDef, sbOrderDef, sbOrderItemsDef, sbDownloadsDef]
-
--- | Create all Sandbox definitions on the server, returning the resulting ids
--- in creation order so they can be torn down in reverse.
-createDefinitions :: CobSession -> IO [DefinitionId]
-createDefinitions s =
-  runReaderT (mapM newDefinition allSandboxDefs) s
-
--- | Delete all Sandbox definitions previously created.
---
--- Deletes in reverse creation order so that referencing definitions are gone
--- before their targets.
-deleteDefinitions :: CobSession -> [DefinitionId] -> IO ()
-deleteDefinitions s ids = do
-  putStrLn $ "Deleting definitions by id: " ++ show ids
-  threadDelay (60 * 1000000)
-  -- Running deletions in production is a bit scary.
-  -- `deleteDefinition` has some guardrails: it won't delete non-empty definitions.
-  -- Ideally, tests should be run on a mock server.
-  runReaderT (mapM_ deleteDefinition (reverse ids)) s
+setupDefinition :: CobSession -> DefinitionId -> IO ()
+setupDefinition s did = void (runReaderT (updDefinition did setFields) s)
+  where
+    setFields d = d
+      { defName             = defName sbClientDef
+      , defDescription      = defDescription sbClientDef
+      , defFieldDefinitions = defFieldDefinitions sbClientDef
+      }
 
 --------------------------------------------------------------------------------
 -- Entry point
@@ -180,10 +111,8 @@ main = do
     Right cfg -> do
       counter <- newIORef 0
       withSession (host cfg) (token cfg) $ \session -> do
-        let env = TestEnv session counter
-        defaultMain $
-          withResource (createDefinitions session) (deleteDefinitions session) $ \_ ->
-            allTests cfg env
+        setupDefinition session (DefId (definitionId cfg))
+        defaultMain (allTests (TestEnv session counter))
 
 -- | Shared environment for every test.
 data TestEnv = TestEnv
@@ -195,8 +124,8 @@ data TestEnv = TestEnv
 runMock :: TestEnv -> Cob a -> IO a
 runMock env c = mockCob 100{-seconds-} (envSession env) c
 
-allTests :: TestConfig -> TestEnv -> TestTree
-allTests cfg env = testGroup "Cob mockCob integration tests"
+allTests :: TestEnv -> TestTree
+allTests env = testGroup "Cob mockCob integration tests"
   [ testCase "Add + Get roundtrip (SBClient)"                $ testAddGet             env
   , testCase "AddSync makes the record immediately findable" $ testAddSync            env
   , testCase "Search finds added record"                     $ testSearch             env
@@ -205,7 +134,6 @@ allTests cfg env = testGroup "Cob mockCob integration tests"
   , testCase "Delete removes the record"                     $ testDelete             env
   , testCase "UpdateInstances applies the update"            $ testUpdateInstances    env
   , testCase "Enum and Maybe serialization roundtrip"        $ testEnumMaybeRoundtrip env
-  , testCase "CreateUser + DeleteUser"                       $ testCreateUser         env
   ]
 
 --------------------------------------------------------------------------------
@@ -225,18 +153,6 @@ sampleClient e = SBClient
   , sbcName        = Just "Test Sandbox Client"
   , sbcKickstarter = Just KickstarterYes
   }
-
-sampleUser :: Text -> User
-sampleUser e =
-  let uname = T.unpack e
-  in User
-       { uusername   = uname
-       , upassword   = Just "test-pw-do-not-use"
-       , uname       = "Cob Tests"
-       , uemail      = uname
-       , ucontact    = Nothing
-       , uusernameAD = Nothing
-       }
 
 --------------------------------------------------------------------------------
 -- Individual tests
@@ -329,10 +245,3 @@ testEnumMaybeRoundtrip env = runMock env $ do
   r2 <- addSync c2
   g2 <- get r2
   liftCob $ sbcKickstarter g2 @?= Just KickstarterNo
-
-testCreateUser :: TestEnv -> Assertion
-testCreateUser env = runMock env $ do
-  email <- liftCob (uniqueEmail env "user")
-  ur    <- createUser (sampleUser email)
-  liftCob $ assertBool "createUser returned a ref" (ref_id ur > 0)
-
