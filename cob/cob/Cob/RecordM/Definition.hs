@@ -595,21 +595,26 @@ _testBuild b = fromDSL "Nome da Def" "Descr da Def" $ do
 -- definition from an empty instance JSON.
 newtype FromEmptyInstance a = FromEmptyInstance a
 
-instance FromJSON (FromEmptyInstance Definition) where
-  parseJSON = withObject "FromEmptyInstance Definition" $ \obj -> do
+instance FromJSON a => FromJSON (FromEmptyInstance a) where
+  parseJSON = withObject "FromEmptyInstance a" $ \obj -> do
+    jsonDef <- obj .: "jsonDefinition"
+    def <- parseJSON (Object jsonDef)
+    return $ FromEmptyInstance def
+
+-- TODO: Not FromJSON!! Something like FromRecM... (define in separate module so both us and Servant can use it)
+instance FromJSON Definition where
+  parseJSON = withObject "Definition" $ \jsonDef -> do
 
     -- def
-    jsonDef <- obj .: "jsonDefinition"
     defName <- jsonDef .: "name"
     defDescription <- jsonDef .:? "description" .!= ""
     defState <- maybe (pure EnabledDefinition) parseDefState =<< jsonDef .:? "state"
     defVersion <- jsonDef .: "version"
 
     -- fields
-    defFieldDefinitions  <- parseFields =<< obj .: "fields"
+    defFieldDefinitions  <- parseFields =<< jsonDef .: "fieldDefinitions"
 
-    return $ FromEmptyInstance $
-      Definition{..}
+    return Definition{..}
     where
       parseFields :: [Object] -> Aeson.Parser (Map FieldName Field)
       parseFields = fmap M.fromList . mapM parseField
