@@ -36,8 +36,8 @@ fieldsTable d = vsep $
     flags f = [if isMandatory f then 'M' else ' ', if fieldDuplicable f then 'D' else ' ']
 
 prettyFieldDescription :: FieldDescription -> Doc AnsiStyle
-prettyFieldDescription fd =
-  hsep (map (annotate (color Cyan) . viaShow) (knownKws fd) ++ [pretty (rawDesc fd) | not (T.null (rawDesc fd))])
+prettyFieldDescription (FieldDesc ps) = mconcat
+  [ case p of KwPart k -> annotate (color Cyan) (viaShow k); RawPart t -> pretty t | p <- ps ]
 
 -- | All attributes of a field, given its parent
 prettyField :: Maybe FieldName -> Field -> Doc AnsiStyle

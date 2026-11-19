@@ -9,7 +9,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 module Cob.RecordM.Definition
   ( -- * Static Definition
-    Definition(..), Field(..), FieldDescription(..), Condition(..), DefinitionState(..), FieldRequired(..)
+    Definition(..), Field(..), FieldDescription(..), DescPart(..), Condition(..), DefinitionState(..), FieldRequired(..)
   , simpleDefinition, simpleField
     -- * Definition Quoting (DSL)
   , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL, extendFromDSL
@@ -21,7 +21,7 @@ module Cob.RecordM.Definition
     -- * Fetching definition representation
   , DefinitionId(..)
     -- * Utils
-  , descText
+  , descText, knownKws, rawDesc
     -- ** Debugging
   , parseFieldDescription, parseKeyword
   ) where
@@ -49,11 +49,9 @@ import Data.Void
 
 import Text.Megaparsec
 import Text.Megaparsec.Char (string, char)
-import qualified Text.Megaparsec.Char as P
 import Data.Functor (($>))
 import Data.Proxy
-import Data.Char (isSpace)
-import Data.Either (partitionEithers)
+import Data.Char (isSpace, isAlphaNum)
 -- import Text.Megaparsec.Debug
 
 -- | A Definition Id
@@ -96,19 +94,30 @@ data Field
     }
     deriving Show
 
-data FieldDescription
-  = FieldDesc
-    { knownKws :: [Keyword]
-    , rawDesc :: Text
-    }
+-- | A description is kept as its parts in order, so that 'descText' gives
+-- back exactly the text it was parsed from.
+newtype FieldDescription = FieldDesc [DescPart]
+
+data DescPart = KwPart Keyword | RawPart Text
+
 instance Show FieldDescription where show = unpack . descText
-instance IsString FieldDescription where fromString = FieldDesc [] . fromString
+instance IsString FieldDescription where fromString s = FieldDesc [RawPart (pack s) | not (null s)]
 instance Semigroup FieldDescription where
-  FieldDesc kws1 desc1 <> FieldDesc kws2 desc2 = FieldDesc (kws1 <> kws2) (joinWords [desc1, desc2])
-instance Monoid FieldDescription where mempty = FieldDesc [] ""
+  FieldDesc a <> FieldDesc b = FieldDesc (a ++ [RawPart " " | not (null a || null b)] ++ b)
+instance Monoid FieldDescription where mempty = FieldDesc []
 
 descText :: FieldDescription -> Text
-descText FieldDesc{..} = joinWords (map kwText knownKws ++ [rawDesc])
+descText (FieldDesc ps) = T.concat [either id kwText (partEither p) | p <- ps]
+
+knownKws :: FieldDescription -> [Keyword]
+knownKws (FieldDesc ps) = [k | KwPart k <- ps]
+
+rawDesc :: FieldDescription -> Text
+rawDesc (FieldDesc ps) = joinWords [T.strip t | RawPart t <- ps]
+
+partEither :: DescPart -> Either Text Keyword
+partEither (KwPart k) = Right k
+partEither (RawPart t) = Left t
 
 joinWords :: [Text] -> Text
 joinWords = T.unwords . filter (not . T.null)
@@ -206,7 +215,7 @@ dollarReferences :: Text -> Text -> FieldDescription
 dollarReferences t q = kwDesc (ReferencesKw t q)
 
 kwDesc :: Keyword -> FieldDescription
-kwDesc kw = FieldDesc [kw] ""
+kwDesc kw = FieldDesc [KwPart kw]
 
 --------------------------------------------------------------------------------
 -- * The Definition Builder DSL / Monad
@@ -544,7 +553,7 @@ instance FromJSON Definition where
     defId   <- Just . DefId <$> jsonDef .: "id"
     defName <- jsonDef .: "name"
     defDescription <- jsonDef .:? "description" .!= ""
-    defState <- maybe (pure EnabledDefinition) parseDefState =<< jsonDef .:? "state"
+    defState <- parseDefState =<< jsonDef .: "state"
     defVersion <- jsonDef .: "version"
 
     -- fields
@@ -570,10 +579,12 @@ instance FromJSON Definition where
         return (fieldId, Field{..})
 
       parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
-      parseFieldDescriptionAeson t = do
+      parseFieldDescriptionAeson t =
         case runParser parseFieldDescription "" t of
-          Left e -> fail $ "FAILED TO PARSE DESCRIPTION: " ++ T.unpack t ++ ":\n" ++ show e
-          Right x -> return x
+          Left e -> fail $ "Failed to parse description " ++ show t ++ ":\n" ++ errorBundlePretty e
+          Right d
+            | descText d /= t -> fail $ "Description " ++ show t ++ " would be sent back as " ++ show (descText d)
+            | otherwise -> return d
 
       parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
       parseCondition Nothing = pure Nothing
@@ -592,33 +603,33 @@ instance FromJSON Definition where
       parseFieldRequired :: Maybe Text -> Aeson.Parser FieldRequired
       parseFieldRequired = \case
         Just "mandatory" -> return MandatoryField
-        _ -> return FieldNotRequired
+        Nothing -> return FieldNotRequired
+        Just r -> fail $ "Unexpected required value: " ++ show r
 
 --------------------------------------------------------------------------------
 -- ** Parsing keywords (with Megaparsec)
 --------------------------------------------------------------------------------
 
--- | Keywords may be interleaved with raw text, which is collected into 'rawDesc'.
 parseFieldDescription :: Parsec Void Text FieldDescription
-parseFieldDescription = do
-  parts <- many (Left <$> parseKeyword <|> Right . T.strip <$> takeWhile1P Nothing (/= '$')) <* eof
-  let (knownKws, raws) = partitionEithers parts
-  return FieldDesc{ knownKws, rawDesc = joinWords raws }
+parseFieldDescription =
+  FieldDesc <$> many (KwPart <$> parseKeyword <|> RawPart <$> takeWhile1P Nothing (/= '$')) <* eof
 
 parseKeyword :: Parsec Void Text Keyword
 parseKeyword = (char '$' *>) $
-      (string "instanceLabel" $> InstanceLabelKw)
-  <|> (string "instanceDescription" $> InstanceDescriptionKw)
-  <|> (string "readonly" $> ReadOnlyKw)
-  <|> (string "number" $> NumberKw)
-  <|> (string "datetime" $> DateTimeKw)
-  <|> (string "date" $> DateKw)
-  <|> (string "time" $> TimeKw)
-  <|> (string "text" $> TextKw)
+      named "instanceLabel" InstanceLabelKw
+  <|> named "instanceDescription" InstanceDescriptionKw
+  <|> named "readonly" ReadOnlyKw
+  <|> named "number" NumberKw
+  <|> named "datetime" DateTimeKw
+  <|> named "date" DateKw
+  <|> named "time" TimeKw
+  <|> named "text" TextKw
   <|> parseListKeyword
   <|> parseReferencesKeyword
   <|> parseRefKeyword
   <|> (RawKw <$> takeWhileP Nothing (not . isSpace)) -- fallback
+  where
+    named n k = try (string n <* notFollowedBy (satisfy isAlphaNum)) $> k
 
 parseListKeyword :: Parsec Void Text Keyword
 parseListKeyword = do
@@ -629,7 +640,7 @@ parseListKeyword = do
 parseRefKeyword :: Parsec Void Text Keyword
 parseRefKeyword = do
   string "ref" *> char '('
-  defName <- manyTill anySingle (char ',' *> P.space)
+  defName <- manyTill anySingle (char ',')
   queryString <- manyTill anySingle (char ')')
   return $ RefKw (tokensToChunk (Proxy @Text) defName) (byText (tokensToChunk (Proxy @Text) queryString))
 
