@@ -17,7 +17,7 @@ module Cob.RecordM.Definition
   , (===), (?)
     -- ** Keywords
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
-  , datetime, date, time, text, list, dollarRef, dollarReferences
+  , datetime, date, time, text, list, listDefault, dollarRef, dollarReferences
     -- * Fetching definition representation
   , DefinitionId(..)
     -- * Utils
@@ -52,6 +52,8 @@ import Text.Megaparsec.Char (string, char)
 import qualified Text.Megaparsec.Char as P
 import Data.Functor (($>))
 import Data.Proxy
+import Data.Char (isSpace)
+import Data.Either (partitionEithers)
 -- import Text.Megaparsec.Debug
 
 -- | A Definition Id
@@ -148,7 +150,8 @@ data Keyword
   | DateKw
   | TimeKw
   | TextKw
-  | ListKw [Text]
+  | ListKw [Text] (Maybe Text)
+  -- ^ Options and the default option
   | RefKw { refKwDefName :: Text
           , refKwQuery   :: Query Void
           -- ^ This reference can be of any type.
@@ -171,7 +174,7 @@ kwText = \case
     DateKw -> keyword "date"
     TimeKw -> keyword "time"
     TextKw -> keyword "text"
-    ListKw labels -> keyword ("[" <> T.intercalate "," labels <> "]")
+    ListKw labels def -> keyword ("[" <> T.intercalate "," [l <> if Just l == def then "*" else "" | l <- labels] <> "]")
     RefKw{refKwDefName=defName, refKwQuery=query}
       -> keyword ("ref(" <> defName <> "," <> pack (_q query) <> ")")
     ReferencesKw {referencesKwDefName, referencesKwFieldName}
@@ -190,7 +193,11 @@ time                = kwDesc TimeKw
 text                = kwDesc TextKw
 
 list :: [Text] -> FieldDescription
-list = kwDesc . ListKw
+list ls = kwDesc (ListKw ls Nothing)
+
+-- | A list with a default option
+listDefault :: [Text] -> Text -> FieldDescription
+listDefault ls def = kwDesc (ListKw ls (Just def))
 
 dollarRef :: Text -> Query a -> FieldDescription
 dollarRef t q = kwDesc (RefKw t (coerce {-refkw holds a typeless ref-} q))
@@ -590,15 +597,13 @@ instance FromJSON Definition where
 --------------------------------------------------------------------------------
 -- ** Parsing keywords (with Megaparsec)
 --------------------------------------------------------------------------------
--- TODO:
--- + to simplify, assumes raw description only comes after all keywords
--- + currently ignores `*` default options in lists
 
+-- | Keywords may be interleaved with raw text, which is collected into 'rawDesc'.
 parseFieldDescription :: Parsec Void Text FieldDescription
 parseFieldDescription = do
-  knownKws <- many (parseKeyword <* P.space)
-  rawDesc <- T.strip <$> takeRest
-  return FieldDesc{ knownKws , rawDesc }
+  parts <- many (Left <$> parseKeyword <|> Right . T.strip <$> takeWhile1P Nothing (/= '$')) <* eof
+  let (knownKws, raws) = partitionEithers parts
+  return FieldDesc{ knownKws, rawDesc = joinWords raws }
 
 parseKeyword :: Parsec Void Text Keyword
 parseKeyword = (char '$' *>) $
@@ -613,11 +618,13 @@ parseKeyword = (char '$' *>) $
   <|> parseListKeyword
   <|> parseReferencesKeyword
   <|> parseRefKeyword
-  <|> (RawKw . T.stripEnd <$> takeRest) -- fallback
+  <|> (RawKw <$> takeWhileP Nothing (not . isSpace)) -- fallback
 
 parseListKeyword :: Parsec Void Text Keyword
-parseListKeyword = fmap (ListKw . map T.pack) $ -- dbg "list" $
-  char '[' *> sepBy1 (someTill anySingle (lookAhead (char ',' <|> char ']'))) (char ',') <* char ']'
+parseListKeyword = do
+  items <- char '[' *> sepBy1 (takeWhile1P Nothing (`notElem` [',', ']'])) (char ',') <* char ']'
+  let labels = map (\l -> fromMaybe l (T.stripSuffix "*" l)) items
+  return $ ListKw labels (T.stripSuffix "*" =<< listToMaybe (filter ("*" `T.isSuffixOf`) items))
 
 parseRefKeyword :: Parsec Void Text Keyword
 parseRefKeyword = do
