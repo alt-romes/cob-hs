@@ -1,0 +1,76 @@
+{
+    "description": "A definition",
+    "fieldDefinitions": [
+        {
+            "description": "$instanceLabel",
+            "duplicable": false,
+            "id": "-100000001",
+            "name": "Name",
+            "order": 1,
+            "required": "mandatory"
+        },
+        {
+            "description": "$[A,B]",
+            "duplicable": true,
+            "id": "-100000002",
+            "name": "Tags",
+            "order": 2,
+            "required": ""
+        },
+        {
+            "description": "$ref(GOLDEN Owners,name:x)",
+            "duplicable": false,
+            "id": "-100000003",
+            "name": "Owner",
+            "order": 3,
+            "required": ""
+        },
+        {
+            "description": "$number $readonly Some text",
+            "duplicable": true,
+            "id": "-100000004",
+            "name": "Both",
+            "order": 4,
+            "required": "mandatory"
+        },
+        {
+            "description": "Some details",
+            "duplicable": false,
+            "fields": [
+                {
+                    "description": "$text",
+                    "duplicable": false,
+                    "id": "-100000006",
+                    "name": "Note",
+                    "order": 6,
+                    "required": ""
+                },
+                {
+                    "description": "$number",
+                    "duplicable": false,
+                    "id": "-100000007",
+                    "name": "Score",
+                    "order": 7,
+                    "required": ""
+                }
+            ],
+            "id": "-100000005",
+            "name": "Details",
+            "order": 5,
+            "required": ""
+        },
+        {
+            "condition": "=Yes",
+            "description": "",
+            "duplicable": false,
+            "id": "-100000008",
+            "name": "Shown if yes",
+            "order": 8,
+            "required": ""
+        }
+    ],
+    "id": null,
+    "name": "GOLDEN Kitchen",
+    "state": "enabled",
+    "version": null
+}

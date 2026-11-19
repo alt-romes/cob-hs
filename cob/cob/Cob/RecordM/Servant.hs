@@ -49,7 +49,6 @@ instance FromSourceIO a (Streamly.Stream IO a) where
 
 type RecordM a = "recordm" :> "recordm" :> a
 
-
 type Search = "definitions" :> "search" :> (
               (QueryParam' '[Required, Strict] "def" String :> SearchCommon)
               :<|>

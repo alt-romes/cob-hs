@@ -1,0 +1,19 @@
+{
+    "type": "GOLDEN Kitchen",
+    "values": {
+        "Age": "9",
+        "Buddy": "8",
+        "Code": "K-1",
+        "Count": "3",
+        "ID": "42",
+        "Mood": "Confirmed Status",
+        "Name": "Kitchen",
+        "Nickname": "Nick",
+        "Note": "Some \"quoted\" note, with ünïcode",
+        "Owner": "7",
+        "Price": "12.5",
+        "Status": "Pending Status",
+        "When": "1700000000123"
+    },
+    "waitForSearchAvailability": true
+}

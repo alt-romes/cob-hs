@@ -1,0 +1,15 @@
+{
+    "condition": "recordmInstanceId:42@3",
+    "type": "GOLDEN Kitchen",
+    "values": {
+        "Code": "K-1",
+        "Count": "3",
+        "ID": "42",
+        "Name": "Kitchen",
+        "Note": "Some \"quoted\" note, with ünïcode",
+        "Owner": "7",
+        "Price": "3.0",
+        "Status": "Pending Status",
+        "When": "1700000000123"
+    }
+}

@@ -112,6 +112,14 @@ test-suite cob-tests
     hs-source-dirs: tests
     default-language: GHC2021
 
+test-suite cob-golden
+    type: exitcode-stdio-1.0
+    main-is: Golden.hs
+    build-depends: base, cob, tasty, tasty-golden, aeson, aeson-pretty,
+                   bytestring, text, filepath, containers
+    hs-source-dirs: tests
+    default-language: GHC2021
+
 --------------------------------------------------------------------------------
 -- * Examples
 --------------------------------------------------------------------------------
