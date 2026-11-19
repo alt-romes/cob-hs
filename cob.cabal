@@ -23,6 +23,7 @@ library
                       Cob.RecordM.Aggregation,
                       Cob.RecordM.Dashboard,
                       Cob.RecordM.Definition,
+                      Cob.RecordM.Definition.Pretty,
                       Cob.RecordM.Query,
                       Cob.RecordM.Record,
                       Cob.RecordM.DateTime,

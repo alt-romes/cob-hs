@@ -40,7 +40,6 @@ import Control.Monad.Free.TH
 import Data.Bifunctor
 import Data.Maybe
 import qualified Data.Text as T
-import Prettyprinter hiding (list)
 
 import Cob.RecordM.Query
 import Data.Coerce
@@ -101,7 +100,6 @@ data FieldDescription
     , rawDesc :: Text
     }
 instance Show FieldDescription where show = unpack . descText
-instance Pretty FieldDescription where pretty = viaShow
 instance IsString FieldDescription where fromString = FieldDesc [] . fromString
 instance Semigroup FieldDescription where
   FieldDesc kws1 desc1 <> FieldDesc kws2 desc2 = FieldDesc (kws1 <> kws2) (joinWords [desc1, desc2])
@@ -526,28 +524,6 @@ newtype Fresh m a = Fresh (StateT Int m a)
 
 runFresh :: Monad m => Fresh m a -> m a
 runFresh (Fresh f) = evalStateT f 1
-
---------------------------------------------------------------------------------
--- Pretty printing
---------------------------------------------------------------------------------
-
-instance Pretty Definition where
-  pretty Definition{..} =
-    pretty defName <> ":" <+> pretty defDescription <>
-      nest 4
-        (line <> vsep (map pretty (M.elems defFieldDefinitions)))
-      
-instance Pretty Field where
-  pretty Field{..} =
-    (case fieldCondition of
-       Nothing -> mempty
-       Just cond -> viaShow cond <> space
-    ) <>
-    pretty fieldName <> ":" <+> pretty fieldDescription <>
-      (if fieldRequired == MandatoryField then space <> "(mandatory)" else mempty) <>
-        (if fieldDuplicable then space <> "(duplicable)" else mempty) <>
-          nest 4
-            (line <> vsep (map pretty (M.elems fieldFields)))
 
 --------------------------------------------------------------------------------
 -- * Fetching a definition representation
