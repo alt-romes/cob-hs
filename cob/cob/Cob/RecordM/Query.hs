@@ -28,8 +28,6 @@ import Cob.Ref
 
 
 -- | A @RecordM@ query
---
--- TODO: Remove type parameter?
 data Query a = Query { _q         :: String
                      , _from      :: Int
                      , _size      :: Int

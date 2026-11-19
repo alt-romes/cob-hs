@@ -39,6 +39,7 @@ data LoginData
   = LoginData
       String -- ^ Username
       String -- ^ Password
+
 instance ToJSON LoginData where
   toJSON (LoginData username pass) = object
     [ "username" .= username

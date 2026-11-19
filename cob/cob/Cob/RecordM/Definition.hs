@@ -23,7 +23,7 @@ module Cob.RecordM.Definition
     -- * Utils
   , descText
     -- ** Debugging
-  , _testBuild, parseFieldDescription, parseKeyword
+  , parseFieldDescription, parseKeyword
   ) where
 
 import Data.String
@@ -550,60 +550,6 @@ instance Pretty Field where
             (line <> vsep (map pretty (M.elems fieldFields)))
 
 --------------------------------------------------------------------------------
--- Small test to compile a Definition
---------------------------------------------------------------------------------
-
-done :: Monad m => m [a]
-done = return []
-
-
-aux :: DefinitionQM ()
-aux = do
-  "Teste2"    |=  ""
-  "Mandatory" |=! (readOnly <> instanceLabel)
-  "Dupable"   |=* instanceDescription
-  return ()
-
-_testBuild :: Bool -> Definition
-_testBuild b = fromDSL "Nome da Def" "Descr da Def" $ do
-
-  nome <- "Nome" |= instanceLabel
-
-  when b $ do
-    "Only if true" |= "OK"
-    pure ()
-
-  forM_ [1..15 :: Int] $ \i ->
-    ("Field " <> pack (show i)) |= readOnly
-
-  "Sub Field" |=  "Descrip.." |+ do
-
-      "Its SubField" |= "..." |+ do
-
-          "Sub Sub" |= ""
-          "Sibling Sub Sub" |= ""
-          done
-
-      "Sibling Sub" |= ""
-      done
-
-  "Conditional" |= "" |+ do
-
-    nome === "RODRIGO" ? do
-        "Condition True" |= ""
-        "Condition True 2" |= ""
-        done
-
-    nome === "TESTE" ? do
-        "NomeIsTeste 1" |=* ""
-        "Nome Is Teste 2" |= ""
-        done
-
-  aux
-
-  return ()
-
---------------------------------------------------------------------------------
 -- * Fetching a definition representation
 --------------------------------------------------------------------------------
 
@@ -668,6 +614,7 @@ instance FromJSON Definition where
 --------------------------------------------------------------------------------
 -- ** Parsing keywords (with Megaparsec)
 --------------------------------------------------------------------------------
+-- TODO:
 -- + to simplify, assumes raw description only comes after all keywords
 -- + currently ignores `*` default options in lists
 
