@@ -18,8 +18,8 @@ module Cob.RecordM.Definition
     -- ** Keywords
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
   , datetime, date, time, text, list, listDefault, dollarRef, dollarReferences
-    -- * Fetching definition representation
-  , DefinitionId(..)
+    -- * RecordM JSON representation
+  , DefinitionId(..), definitionValue, parseDefinition
     -- * Utils
   , descText, knownKws, rawDesc
     -- ** Debugging
@@ -541,69 +541,101 @@ runFresh :: Monad m => Fresh m a -> m a
 runFresh (Fresh f) = evalStateT f 1
 
 --------------------------------------------------------------------------------
--- * Fetching a definition representation
+-- * RecordM JSON representation
 --------------------------------------------------------------------------------
 
--- TODO: Not FromJSON!! Something like FromRecM... (define in separate module so both us and Servant can use it)
-instance FromJSON Definition where
-  parseJSON = withObject "Definition" $ \jsonDef -> do
+-- | Encode a 'Definition' as RecordM expects it when creating or updating one.
+definitionValue :: Definition -> Value
+definitionValue Definition{..} =
+  object
+    [ "name" .= defName
+    , "description" .= defDescription
+    , "fieldDefinitions" .= map fieldValue (M.elems defFieldDefinitions)
+    , "state" .= stateValue defState
+    , "version" .= defVersion
+    , "id" .= defId
+    ]
+  where
+    stateValue :: DefinitionState -> Text
+    stateValue EnabledDefinition = "enabled"
 
-    -- def
-    defId   <- Just . DefId <$> jsonDef .: "id"
-    defName <- jsonDef .: "name"
-    defDescription <- jsonDef .:? "description" .!= ""
-    defState <- parseDefState =<< jsonDef .: "state"
-    defVersion <- jsonDef .: "version"
+    fieldValue :: Field -> Value
+    fieldValue f@Field{..} =
+      object $
+        [ "name" .= fieldName
+        , "description" .= descText fieldDescription
+        , "duplicable" .= fieldDuplicable
+        , "required" .= requiredValue fieldRequired
+        , "order" .= getFieldOrder f
+        , "id" .= getFieldId fieldId
+        ]
+        ++ [ "fields" .= map fieldValue (M.elems fieldFields) | not (M.null fieldFields) ]
+        ++ [ "condition" .= ("=" <> rhs) | Just Equals{rhs} <- [fieldCondition] ]
 
-    -- fields
-    defFieldDefinitions  <- parseFields =<< jsonDef .: "fieldDefinitions"
+    requiredValue :: FieldRequired -> Text
+    requiredValue MandatoryField = "mandatory"
+    requiredValue FieldNotRequired = ""
 
-    return Definition{..}
-    where
-      parseFields :: [Object] -> Aeson.Parser (Map FieldName Field)
-      parseFields = fmap M.fromList . mapM parseField
+-- | Decode a 'Definition' as RecordM returns it.
+parseDefinition :: Value -> Aeson.Parser Definition
+parseDefinition = withObject "Definition" $ \jsonDef -> do
 
-      parseField :: Object -> Aeson.Parser (FieldName, Field)
-      parseField fieldDef = do
-        fieldName <- fieldDef .: "name"
-        fieldDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
-        fieldDuplicable <- fieldDef .: "duplicable"
-        fieldRequired <- parseFieldRequired =<< fieldDef .: "required"
-        fieldId <- ExistingField <$> fieldDef .: "id"
-        fieldOrder <- fieldDef .: "order"
+  -- def
+  defId   <- Just . DefId <$> jsonDef .: "id"
+  defName <- jsonDef .: "name"
+  defDescription <- jsonDef .:? "description" .!= ""
+  defState <- parseDefState =<< jsonDef .: "state"
+  defVersion <- jsonDef .: "version"
 
-        fieldFields <- parseFields =<< fieldDef .: "fields"
-        fieldCondition <- parseCondition =<< fieldDef .:? "condition"
+  -- fields
+  defFieldDefinitions  <- parseFields =<< jsonDef .: "fieldDefinitions"
 
-        return (fieldId, Field{..})
+  return Definition{..}
+  where
+    parseFields :: [Object] -> Aeson.Parser (Map FieldName Field)
+    parseFields = fmap M.fromList . mapM parseField
 
-      parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
-      parseFieldDescriptionAeson t =
-        case runParser parseFieldDescription "" t of
-          Left e -> fail $ "Failed to parse description " ++ show t ++ ":\n" ++ errorBundlePretty e
-          Right d
-            | descText d /= t -> fail $ "Description " ++ show t ++ " would be sent back as " ++ show (descText d)
-            | otherwise -> return d
+    parseField :: Object -> Aeson.Parser (FieldName, Field)
+    parseField fieldDef = do
+      fieldName <- fieldDef .: "name"
+      fieldDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
+      fieldDuplicable <- fieldDef .: "duplicable"
+      fieldRequired <- parseFieldRequired =<< fieldDef .: "required"
+      fieldId <- ExistingField <$> fieldDef .: "id"
+      fieldOrder <- fieldDef .: "order"
 
-      parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
-      parseCondition Nothing = pure Nothing
-      parseCondition (Just cond) = do
-        -- Only supports simple conditions for now, like "=Yes" or "=No"
-        -- TODO: seems horrible, need to fix!
-        case cond of
-          ('=':rhs) -> return $ Just (Equals "" (pack rhs))
-          _ -> fail $ "Unexpected condition format: " ++ show cond
+      fieldFields <- parseFields =<< fieldDef .: "fields"
+      fieldCondition <- parseCondition =<< fieldDef .:? "condition"
 
-      parseDefState :: Text -> Aeson.Parser DefinitionState
-      parseDefState = \case
-        "enabled" -> return EnabledDefinition
-        s -> fail $ "Unexpected DefinitionState: " ++ show s
+      return (fieldId, Field{..})
 
-      parseFieldRequired :: Maybe Text -> Aeson.Parser FieldRequired
-      parseFieldRequired = \case
-        Just "mandatory" -> return MandatoryField
-        Nothing -> return FieldNotRequired
-        Just r -> fail $ "Unexpected required value: " ++ show r
+    parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
+    parseFieldDescriptionAeson t =
+      case runParser parseFieldDescription "" t of
+        Left e -> fail $ "Failed to parse description " ++ show t ++ ":\n" ++ errorBundlePretty e
+        Right d
+          | descText d /= t -> fail $ "Description " ++ show t ++ " would be sent back as " ++ show (descText d)
+          | otherwise -> return d
+
+    parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
+    parseCondition Nothing = pure Nothing
+    parseCondition (Just cond) = do
+      -- Only supports simple conditions for now, like "=Yes" or "=No"
+      -- TODO: seems horrible, need to fix!
+      case cond of
+        ('=':rhs) -> return $ Just (Equals "" (pack rhs))
+        _ -> fail $ "Unexpected condition format: " ++ show cond
+
+    parseDefState :: Text -> Aeson.Parser DefinitionState
+    parseDefState = \case
+      "enabled" -> return EnabledDefinition
+      s -> fail $ "Unexpected DefinitionState: " ++ show s
+
+    parseFieldRequired :: Maybe Text -> Aeson.Parser FieldRequired
+    parseFieldRequired = \case
+      Just "mandatory" -> return MandatoryField
+      Nothing -> return FieldNotRequired
+      Just r -> fail $ "Unexpected required value: " ++ show r
 
 --------------------------------------------------------------------------------
 -- ** Parsing keywords (with Megaparsec)

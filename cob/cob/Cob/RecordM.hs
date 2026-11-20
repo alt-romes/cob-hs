@@ -271,7 +271,7 @@ uploadFile r fieldName contents = do
 newDefinition :: forall m. MonadCob m => Definition -> m DefinitionId
 newDefinition def = do
   logInfo $ "Creating new definition with name " <> toLogStr (defName def)
-  Ref r <- performReq $ Servant.newDefinition (ToRecM def)
+  Ref r <- performReq $ Servant.newDefinition (definitionValue def)
   pure (DefId (fromInteger r))
 
 deleteDefinition :: MonadCob m => DefinitionId -> m ()
@@ -290,13 +290,12 @@ deleteDefinition (DefId di) = do
 getDefinition :: forall m. MonadCob m => DefinitionId -> m Definition
 getDefinition defId = do
   logInfo $ "Fetching definition by id " <> toLogStr (show defId)
-  performReq $ Servant.getDefinition defId
+  performReq (Servant.getDefinition defId) >>= parseOrThrowIO parseDefinition
 
 -- | Update the given 'Definition' by 'DefinitionId' and return the updated 'Definition'
 updDefinition :: forall m. MonadCob m => DefinitionId -> (Definition -> Definition) -> m Definition
 updDefinition defId updDef = do
   def <- Cob.RecordM.getDefinition defId
-  let localUpdDef = updDef def
-  logInfo $ "Updating definition by id " <> toLogStr (show defId) <> " with new definition " <> toLogStr (encode (ToRecM localUpdDef))
-  realUpdatedDef <- performReq $ Servant.updDefinition defId (ToRecM localUpdDef)
-  pure realUpdatedDef
+  let newDef = definitionValue (updDef def)
+  logInfo $ "Updating definition by id " <> toLogStr (show defId) <> " with new definition " <> toLogStr (encode newDef)
+  performReq (Servant.updDefinition defId newDef) >>= parseOrThrowIO parseDefinition

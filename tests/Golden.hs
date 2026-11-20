@@ -21,7 +21,7 @@ import Cob.RecordM.DateTime
 import Cob.RecordM.Definition
 import Cob.RecordM.Query (Query)
 import Cob.RecordM.Record
-import Cob.RecordM.Servant (AddSpec(..), DeleteSpec(..), ToRecM(..), UpdateSpec(..))
+import Cob.RecordM.Servant (AddSpec(..), DeleteSpec(..), UpdateSpec(..))
 import Cob.RecordM.TH
 import Cob.UserM.Entities
 import Cob.UserM.Servant (LoginData(..))
@@ -45,7 +45,7 @@ encDeleteSpec :: DeleteSpec a -> BSL.ByteString
 encDeleteSpec = encode
 
 encDefinition :: Definition -> BSL.ByteString
-encDefinition = encode . ToRecM
+encDefinition = encode . definitionValue
 
 encUser :: User -> BSL.ByteString
 encUser = encode

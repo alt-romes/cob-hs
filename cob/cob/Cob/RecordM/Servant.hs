@@ -1,6 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MonoLocalBinds #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -13,7 +12,6 @@
 module Cob.RecordM.Servant where
 
 import qualified Data.Text as T
-import qualified Data.Map as M
 
 import Data.Proxy
 import qualified Data.List as L (intercalate)
@@ -34,7 +32,6 @@ import qualified Servant.Types.SourceT as Servant
 import Cob.Ref
 import Cob.RecordM.Record
 import Cob.RecordM.Definition
-import Data.Coerce (coerce)
 
 -- TODO: Maybe use servant-streamly
 instance FromSourceIO a (Streamly.Stream IO a) where
@@ -84,9 +81,9 @@ type IntegrationAdd    a = "instances" :> "integration" :> ReqBody '[JSON] (AddS
 type IntegrationUpdate a = "instances" :> "integration" :> ReqBody '[JSON] (UpdateSpec a) :> Put '[JSON] OperationsSummary
 type IntegrationDelete a = "instances" :> "integration" :> ReqBody '[JSON] (DeleteSpec a) :> Servant.API.Delete '[JSON] OperationsSummary
 
-type DefinitionGet = "definitions" :> Capture "definitionId" DefinitionId :> Get '[JSON] Definition
-type DefinitionNew = "definitions" :> ReqBody '[JSON] (ToRecM Definition) :> Post '[JSON] (Ref Definition)
-type DefinitionUpd = "definitions" :> Capture "definitionId" DefinitionId :> ReqBody '[JSON] (ToRecM Definition) :> Put '[JSON] Definition
+type DefinitionGet = "definitions" :> Capture "definitionId" DefinitionId :> Get '[JSON] Value
+type DefinitionNew = "definitions" :> ReqBody '[JSON] Value :> Post '[JSON] (Ref Definition)
+type DefinitionUpd = "definitions" :> Capture "definitionId" DefinitionId :> ReqBody '[JSON] Value :> Put '[JSON] Value
 type DefinitionDelete = "definitions" :> Capture "definitionId" DefinitionId :> Servant.API.Delete '[JSON] NoContent
 
 searchByName :: String       -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
@@ -117,9 +114,9 @@ addInstance     = C.client (Proxy @(RecordM (IntegrationAdd a)))
 updateInstances = C.client (Proxy @(RecordM (IntegrationUpdate a)))
 deleteInstances = C.client (Proxy @(RecordM (IntegrationDelete a)))
 
-getDefinition :: DefinitionId -> C.ClientM Definition
-newDefinition :: ToRecM Definition -> C.ClientM (Ref Definition)
-updDefinition :: DefinitionId -> ToRecM Definition -> C.ClientM Definition{-returns updated definition-}
+getDefinition :: DefinitionId -> C.ClientM Value
+newDefinition :: Value -> C.ClientM (Ref Definition)
+updDefinition :: DefinitionId -> Value -> C.ClientM Value{-returns updated definition-}
 deleteDefinition :: DefinitionId -> C.ClientM NoContent
 getDefinition = C.client (Proxy @(RecordM DefinitionGet))
 newDefinition = C.client (Proxy @(RecordM DefinitionNew))
@@ -169,55 +166,3 @@ instance FromJSON OperationsSummary where
       <*> (obj .: "deleted")
       <*> (obj .: "forbidden")
       <*> (obj .: "error")
-
---------------------------------------------------------------------------------
--- ToJSON RecordM specific instances
--- Don't change them! These are what RecordM expects.
-
--- | A newtype wrapper to provide ToJSON instances compatible with upstream RecordM
--- Make sure to use the newtype wrapper to ensure the ToJSON instance is compatible.
-newtype ToRecM a   = ToRecM a
-
-instance ToJSON (ToRecM Definition) where
-  toJSON (ToRecM Definition{..}) =
-    object
-      [ "name" .= defName
-      , "description" .= defDescription
-      , "fieldDefinitions" .= (map (ToRecM . snd) . M.toList) defFieldDefinitions
-      , "state" .= ToRecM defState
-      , "version" .= defVersion
-      , "id" .= defId
-      ]
-
-instance ToJSON (ToRecM Field) where
-  toJSON (ToRecM f@Field{..}) =
-    object $
-      [ "name" .= fieldName
-      , "description" .= ToRecM fieldDescription
-      , "duplicable" .= fieldDuplicable
-      , "required" .= ToRecM fieldRequired
-      , "order" .= getFieldOrder f
-      , "id" .= getFieldId fieldId
-      ]
-      ++ case coerce @[Field] @[ToRecM Field] $
-              M.elems fieldFields of
-           [] -> []
-           fields ->
-             [ "fields" .= fields ]
-      ++ case fieldCondition of
-           Nothing -> []
-           Just cond ->
-             [ "condition" .= (ToRecM cond) ]
-
-instance ToJSON (ToRecM Condition) where
-  toJSON (ToRecM Equals{lhs, rhs}) = String ({- lhs <>  TODO? or is it really just always =? -} "=" <> rhs)
-
-instance ToJSON (ToRecM FieldRequired) where
-  toJSON (ToRecM MandatoryField) = "mandatory"
-  toJSON (ToRecM FieldNotRequired) = ""
-
-instance ToJSON (ToRecM DefinitionState) where
-  toJSON (ToRecM EnabledDefinition) = "enabled"
-
-instance ToJSON (ToRecM FieldDescription) where
-  toJSON (ToRecM fs) = toJSON $ descText fs
