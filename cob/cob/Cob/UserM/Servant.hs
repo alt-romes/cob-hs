@@ -22,7 +22,7 @@ type UserM = "userm" :>
       :<|>
       "user" :> Capture "id" Integer :> Delete '[JSON] NoContent
       :<|>
-      "group" :> Capture "groupId" Integer :> "users" :> ReqBody '[JSON] [Ref User] :> Put '[JSON] NoContent
+      "group" :> Capture "groupId" Integer :> "users" :> ReqBody '[JSON] [Integer] :> Put '[JSON] NoContent
               )
   :<|>
 
@@ -30,10 +30,9 @@ type UserM = "userm" :>
 
 createUser :: User -> ClientM (Ref User)
 deleteUser :: Integer -> ClientM NoContent
-addUsersToGroup :: Integer -> [Ref User] -> ClientM NoContent
+addUsersToGroup :: Integer -> [Integer] -> ClientM NoContent
 login :: LoginData -> ClientM Value
 (createUser :<|> deleteUser :<|> addUsersToGroup) :<|> login = client (Proxy @UserM)
-
 
 data LoginData
   = LoginData

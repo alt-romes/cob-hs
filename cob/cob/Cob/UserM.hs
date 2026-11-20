@@ -48,16 +48,16 @@ createUser user = do
 
 -- | Delete an UserM user
 deleteUser :: MonadCob m => Ref User -> m ()
-deleteUser r@(Ref _ ref) = do
+deleteUser r@(Ref ref) = do
   logInfo $ "Deleting user " <> toLogStr (show r)
   _ <- performReq $ Servant.deleteUser ref
   pure ()
 
 -- | Add users to a group given their ids
 addToGroup :: MonadCob m => [Ref User] -> Ref Group -> m ()
-addToGroup users r@(Ref _ group) = do
+addToGroup users r@(Ref group) = do
   logInfo $ "Adding users " <> toLogStr (show users) <> " to group " <> toLogStr (show r)
-  _ <- performReq $ Servant.addUsersToGroup group users
+  _ <- performReq $ Servant.addUsersToGroup group (map ref_id users)
   pure ()
 
 -- | Log-in to UserM using a username and password.

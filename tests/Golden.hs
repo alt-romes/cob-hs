@@ -33,7 +33,7 @@ import Cob.UserM.Servant (LoginData(..))
 --------------------------------------------------------------------------------
 
 encRecord :: Record a => a -> BSL.ByteString
-encRecord = encode
+encRecord = encodeRecord
 
 encAddSpec :: Record a => AddSpec a -> BSL.ByteString
 encAddSpec = encode
@@ -50,7 +50,7 @@ encDefinition = encode . ToRecM
 encUser :: User -> BSL.ByteString
 encUser = encode
 
-encGroupUsers :: [Ref User] -> BSL.ByteString
+encGroupUsers :: [Integer] -> BSL.ByteString
 encGroupUsers = encode
 
 encLogin :: LoginData -> BSL.ByteString
@@ -88,7 +88,7 @@ mkRecord ''Kitchen "GOLDEN Kitchen"
 
 kitchen :: Kitchen
 kitchen = Kitchen
-  { kId       = Ref (Just 3) 42
+  { kId       = Ref 42
   , kName     = "Kitchen"
   , kCode     = "K-1"
   , kNote     = "Some \"quoted\" note, with ünïcode"
@@ -145,7 +145,7 @@ main = defaultMain $ testGroup "CoB JSON golden tests"
     , request "record-values-no-optionals"    (encRecord kitchenNoOptionals)
     , request "dynrecord-values"              (withDynRecord (DynRecord "GOLDEN Kitchen") (encRecord (DynRecord "GOLDEN Kitchen")))
     , request "integration-add"               (encAddSpec (AddSpec "GOLDEN Kitchen" kitchen True))
-    , request "integration-update"            (encUpdateSpec (UpdateSpec "GOLDEN Kitchen" "recordmInstanceId:42@3" kitchenNoOptionals))
+    , request "integration-update"            (encUpdateSpec (UpdateSpec (Ref 42) (Versioned kitchenNoOptionals 3)))
     , request "integration-delete"            (encDeleteSpec (DeleteSpec @Kitchen "GOLDEN Kitchen" "id:42" True))
     , request "definition-new"                (encDefinition kitchenDef)
     , request "definition-update"             (encDefinition kitchenDefExisting)

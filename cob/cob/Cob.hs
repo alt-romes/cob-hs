@@ -172,7 +172,7 @@ mockCob delayInSeconds cs cobf = do
     threadDelay (delayInSeconds * 1000000)
     (rmRefs, umRefs) <- readIORef refs
     results <- mapM (Control.Exception.try @SomeException . (`runReaderT` cs)) $
-      map (RM.deleteInstance . Ref Nothing) rmRefs ++ map (UM.deleteUser . Ref Nothing) umRefs
+      map (RM.deleteInstance . Ref) rmRefs ++ map (UM.deleteUser . Ref) umRefs
     mapM_ throwIO (take 1 (lefts results))
   where
     -- Nested computations share the same 'IORef', so cleanup happens only once, at the end.

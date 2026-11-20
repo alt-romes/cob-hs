@@ -80,7 +80,7 @@ byText = fromString . T.unpack
 
 -- | 'Query' by 'Ref'
 byRef :: Ref a -> Query a
-byRef ref = defaultQuery { _q = "id:" <> show ref }
+byRef ref = defaultQuery { _q = "id:" <> show ref, _size = 1 }
 
 -- | The default 'Query'
 -- @
@@ -96,11 +96,11 @@ byRef ref = defaultQuery { _q = "id:" <> show ref }
 -- ==== __Example__
 --
 -- @
--- rmDefinitionSearch_ (defaultQuery { _q = "id:123*"
---                                   , _from = 1
---                                   , _size = 21
---                                   , _sort = Just \"id\"
---                                   , _ascending = Just True })
+-- definitionSearch defaultQuery { _q = "id:123*"
+--                               , _from = 1
+--                               , _size = 21
+--                               , _sort = Just \"id\"
+--                               , _ascending = Just True }
 -- @
 defaultQuery :: Query a
 defaultQuery = Query { _q         = "*"

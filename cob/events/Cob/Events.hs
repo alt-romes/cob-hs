@@ -65,11 +65,11 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
         Get r f     -> RM.getInstance r >>= f
         Count q f   -> RM.definitionCount q >>= f
         Add x f     -> do
-          let msg = simple "Create instance" & withMsg ?~ x
+          let msg = simple "Create instance" & withMsg ?~ toRecordM x
           evt "add" msg (\r -> "Created #" ++ show r)
             (RM.addInstance x) >>= f
         AddSync x f -> do
-          let msg = simple "Create instance (sync)" & withMsg ?~ x
+          let msg = simple "Create instance (sync)" & withMsg ?~ toRecordM x
           evt "add-sync" msg (\r -> "Created #" ++ show r)
             (RM.addInstanceSync x) >>= f
         Delete r n  -> do
@@ -89,11 +89,11 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
           evt "create-user" msg (\r -> "Created user " ++ show r)
             (UM.createUser u) >>= f
         DeleteUser u n -> do
-          let msg = simple "Delete user" & withMsg ?~ u
+          let msg = simple "Delete user" & withMsg ?~ ref_id u
           evt "delete-user" msg (\r -> "Deleted user " ++ show r)
             (UM.deleteUser u) >> n
         AddToGroup us gr n -> do
-          let msg = simple "Add users to group" & withMsg ?~ (us, gr)
+          let msg = simple "Add users to group" & withMsg ?~ (map ref_id us, ref_id gr)
           evt "add-to-group" msg (\r -> "Added users to group " ++ show r)
             (UM.addToGroup us gr) >> n
         Login u p f -> UM.umLogin u p >>= f

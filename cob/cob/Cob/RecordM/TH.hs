@@ -13,17 +13,15 @@
 -- should automatically generate
 --
 -- @
--- instance ToJSON Dog where
---      toJSON (Dog ownerName dogName) = object
+-- instance Record Dog where
+--      definition = \"Dogs\"
+--      toRecordM (Dog ownerName dogName) = object
 --          [ "Owner Name" .= ownerName
 --          , "Dog Name" .= dogName ]
--- instance FromJSON Dog where
---      parseJSON = withObject "Dogs record" \v -> do
+--      fromRecordM = withObject "Dogs record" \v -> do
 --          [ownerName] <- v .: "owner_name"
 --          [dogName]   <- v .: "dog_name"
 --          return (Dog ownerName dogName)
--- instance Record Dog where
---      definition = \"Dogs\"
 -- @
 --
 -- when the following is in the module
@@ -92,11 +90,7 @@ mkToJSON tys fields = [e| object (catMaybes $(ListE <$> zipWithM mkToJSONItem ty
 mkParseJSON :: Name -> [SupportedRecordType] -> [Field] -> Q Exp
 mkParseJSON tyConName tys fields = do
         finalStmt <- NoBindS . AppE (VarE $ mkName "return") <$> foldM foldConArgs (ConE tyConName) (zip tys fields)
-#if __GLASGOW_HASKELL__ >= 900
         LamE [VarP $ mkName "v"] . DoE Nothing . (++ [finalStmt]) <$> zipWithM mkParseJSONItem tys fields
-#else
-        LamE [VarP $ mkName "v"] . DoE . (++ [finalStmt]) <$> zipWithM mkParseJSONItem tys fields
-#endif
     where
         mkParseJSONItem :: SupportedRecordType -> Field -> Q Stmt
         mkParseJSONItem (MaybeT _) field =
@@ -117,7 +111,7 @@ mkParseJSON tyConName tys fields = do
 
         mods :: SupportedRecordType -> Q Exp
         mods ty = case ty of
-              RefT       -> [e| Ref Nothing . read                    |]
+              RefT       -> [e| Ref . read                            |]
               IntT       -> [e| read                                  |]
               DoubleT    -> [e| read                                  |] -- TODO: Is this right? how to account for commas etc
               DateTimeT  -> [e| dateTimeFromMillis . read             |]
@@ -127,11 +121,7 @@ mkParseJSON tyConName tys fields = do
 mkRecordPat :: Name -> [SupportedRecordType] -> [Field] -> Q Pat
 mkRecordPat tyConName tyConArgList fields = do
     pats <- zipWithM mkArgPat tyConArgList fields
-#if __GLASGOW_HASKELL__ >= 902
     return $ ConP tyConName [] pats
-#else
-    return $ ConP tyConName pats
-#endif
     where
         mkArgPat :: SupportedRecordType -> Field -> Q Pat
         mkArgPat ty field = case ty of
@@ -186,7 +176,7 @@ recordTypeInfo ty = do
             _ -> fail "makeRecord should be called on a datatype or newtype declaration with only one normal or record constructor and no type variables"
       _ -> fail "makeRecord should be called on a datatype or newtype"
 
--- | mkRecord is able to fully generate instances from ToJSON, FromJSON and Record for a data type in accordance with @RecordM@
+-- | mkRecord is able to fully generate instances from Record for a data type in accordance with @RecordM@
 --
 -- It receives the Type, the name of the table, and a list of ordered fields (matching the type constructor arguments)
 --
@@ -227,15 +217,12 @@ mkRecord ty definitionName fields = do
     (tyName, tyConName, tyConArgList') <- recordTypeInfo ty
     tyConArgList <- parseTyConArgList tyConArgList'
     [d|
-        instance ToJSON $(mkTy tyName) where
-            toJSON $(mkRecordPat tyConName tyConArgList fields) = $(mkToJSON tyConArgList fields)
-
-        instance FromJSON $(mkTy tyName) where
-            parseJSON = withObject $(mkString $ show tyName)
-                $(mkParseJSON tyConName tyConArgList fields)
 
         instance Record $(mkTy tyName) where
             definition = $(mkString definitionName)
+            toRecordM $(mkRecordPat tyConName tyConArgList fields) = $(mkToJSON tyConArgList fields)
+            fromRecordM = withObject $(mkString $ show tyName)
+                $(mkParseJSON tyConName tyConArgList fields)
       |]
 
 --- Util

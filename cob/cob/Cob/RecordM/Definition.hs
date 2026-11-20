@@ -27,7 +27,6 @@ module Cob.RecordM.Definition
   ) where
 
 import Data.String
-import Control.Monad
 import Data.Aeson
 import Data.Functor.Identity
 import Control.Monad.State

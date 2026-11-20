@@ -38,48 +38,41 @@ import Cob.Utils
 import Cob.Session
 import Cob.Ref
 import Cob.Log
-import Data.Maybe
-
--- TODO: Nested fields! # Creating an instance with duplicate fields https://learning.cultofbits.com/docs/cob-platform/developers/recordm-integration-resource/#creating-an-instance-with-duplicate-fields
-
--- TODO: Make Async versions of functions that receive a callback or return an async token???
-
--- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
--- an instance of Record to find them or make body of search conditional on
--- whether it's a ref or not..
-
-
--- ROMES:TODO: Add custom errors and document which functions throw which errors
-
--- ROMES:TODO: Don't ignore sorting!
+import Data.Bifunctor
 
 --------------------------------------------------------------------------------
 -- * Querying definitions
 --------------------------------------------------------------------------------
 
--- | Search a @RecordM@ 'Definition' given a 'Query, and return a list of references ('Ref') of a record and the corresponding records ('Record').
+-- | Search a @RecordM@ 'Definition' given a 'Query, and return a list of
+-- references ('Ref') of a record and the corresponding records ('Record').
 --
--- The 'Record' type to search for is inferred from the usage of the return element.
--- When the information available isn't enough to correctly infer the search 'Record' type, an explicit type can be used to help the compiler.
+-- The 'Record' type to search for is inferred from the usage of the return
+-- element. When the information available isn't enough to correctly infer the
+-- search 'Record' type, an explicit type can be used to help the compiler.
 --
 -- ==== __Example__
 --
 -- @
--- dogs <- rmDefinitionSearch @DogsRecord "bobby"
+-- dogs <- definitionSearch @DogsRecord "bobby"
 --
--- rmDefinitionSearch (defaultRMQuery { _q = "id:123"
---                                    , _from = 1
---                                    , _size = 21
---                                    , _sort = Just \"id\"
---                                    , _ascending = Just True })
+-- definitionSearch
+--   defaultRMQuery
+--    { _q = "id:123"
+--    , _from = 1
+--    , _size = 21
+--    , _sort = Just \"id\"
+--    , _ascending = Just True }
 --
--- rmDefinitionSearch (Ref 11223)
---
+-- definitionSearch (byRef 11223)
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
 definitionSearch :: forall a m. MonadCob m => Record a => Query a -> m [(Ref a, a)]
-definitionSearch rmQuery = do
+definitionSearch = fmap (map (second value)) . definitionSearchV
+
+definitionSearchV :: forall a m. MonadCob m => Record a => Query a -> m [(Ref a, Versioned a)]
+definitionSearchV rmQuery = do
     logInfo $ "Searching definition " <> toLogStr (definition @a) <> " with " <> toLogStr (_q rmQuery)
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing
     let
@@ -88,14 +81,17 @@ definitionSearch rmQuery = do
         hits <- o' .: "hits"
         forM hits $ \h -> do
           src <- h .: "_source"
-          r <- parseJSON @(Ref a) src
-          a <- parseJSON @a src
+          r <- parseCobRef @a src
+          a <- parseVersioned (fromRecordM @a) src
           pure (r, a)
     parseOrThrowIO parser rbody
 
 -- | Stream a definition!
 streamDefinitionSearch :: forall a b m. MonadCob m => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
-streamDefinitionSearch rmQuery f = do
+streamDefinitionSearch rmQuery f = streamDefinitionSearchV @a @b @m rmQuery (f . fmap (second value))
+
+streamDefinitionSearchV :: forall a b m. MonadCob m => Record a => Query a -> (Streamly.Stream IO (Ref a, Versioned a) -> IO b) -> m b
+streamDefinitionSearchV rmQuery f = do
   logInfo $ "Streaming search definition " <> toLogStr (definition @a) <> " with " <> toLogStr (_q rmQuery)
   CobSession{clientEnv} <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
@@ -105,8 +101,8 @@ streamDefinitionSearch rmQuery f = do
       let
         parseRefA = withObject "streaming_search" $ \o -> do
           src <- o .: "_source"
-          r   <- parseJSON @(Ref a) src
-          a   <- parseJSON @a src
+          r   <- parseCobRef @a src
+          a   <- parseVersioned (fromRecordM @a) src
           pure (r, a)
       in
         f (Streamly.mapM (parseOrThrowIO parseRefA) stream))
@@ -116,12 +112,10 @@ streamDefinitionSearch rmQuery f = do
 --
 -- TODO: Use /recordm/instances/{id} instead of definitions/search?
 -- Difficulty of ^ is parsing
--- Otherwise:
--- rbody <- performReq (getInstance (fromInteger ref) Nothing) `catchError` throwError ("Couldn't find instance with id " <> show ref)
 getInstance :: forall a m. MonadCob m => Record a => Ref a -> m a
 getInstance ref = do
   logInfo $ "Fetching instance " <> toLogStr (show ref)
-  definitionSearch (defaultQuery { _q = "id:" <> show ref, _size = 1 }) >>= \case
+  definitionSearch (byRef ref) >>= \case
     [] -> liftIO $ fail ("Couldn't find instance with id " <> show ref)
     (_,x):_ -> pure x
 {-# INLINE getInstance #-}
@@ -182,12 +176,10 @@ addInstanceSync = addInstanceWith True
 -- @
 addInstanceWith :: forall a m. MonadCob m => Record a => Bool -> a -> m (Ref a)
 addInstanceWith waitForSearchAvailability record = do
-  logInfo $ "Creating instance in " <> toLogStr (definition @a) <> " for " <> toLogStr (encode record)
+  logInfo $ "Creating instance in " <> toLogStr (definition @a) <> " for " <> toLogStr (encodeRecord record)
   -- Last I checked (Nov. 2023), instance creation doesn't return a version
-  -- alongside the newly created ID, so we give it the initial version (which is 0).
-  Ref no_version refid <- performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)
-  assert (isNothing no_version) $
-    return (Ref (Just 0) refid)
+  -- alongside the newly created ID
+  performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)
 
 
 --------------------------------------------------------------------------------
@@ -200,87 +192,10 @@ addInstanceWith waitForSearchAvailability record = do
 --
 -- We don't do version checking! This will really delete the instance regardless of whether you were the last to update it.
 deleteInstance :: forall a m. MonadCob m => Ref a -> m ()
-deleteInstance r@(Ref _ ref) = do
+deleteInstance r@(Ref ref) = do
   logInfo $ "Deleting instance " <> toLogStr (show r)
   _ <- performReq $ Servant.deleteInstance ref (Just True)
   pure ()
-
--- | Like 'rmDefinitionSearch', but returns a lazy list of all
--- records, rather than a range.
---
--- ROMES:TODO: I think this is superseded by streamDefinition, right?
---
--- The search starts from the `from` field in the query, but ignores the `size` field
---
--- The return result is a list of all records that will only be fetched as needed;
---
--- Example
--- ======
---
--- @
--- 
--- @
---
---
--- The records in the list will only be fetched as needed, but operations such
--- as `!!` will unfortunately require that all items until the requested item
--- be forced (dev note: because we can't assume the number of records
--- available, we must fetch batches as needed until one turns to be empty: one
--- way or another we'll have to join lists of lists... so we can't get *just the requested item*, but rather all up until the requested one.
--- see more notes in the source code)
---
--- You should be careful using this abstraction, e.g. a function such as
--- `length` will force all values to be fetched. Furthermore, errors won't be
--- propagated as CobErrors, but rather as IOExceptions
---
--- Bottom line: this is a very convenient abstraction; use it wisely.
--- rmLazyDefinitionSearch :: forall a. Record a => Query a -> Cob IO [(Ref a, a)]
--- rmLazyDefinitionSearch rmQuery = do
---     ask >>= liftIO . go (_from rmQuery)
-
-    --
-    -- This commented only kind of works on the assumption that the number of records
-    -- doesn't change, which is false; I couldn't find a way to think about
-    -- this so I settled for the "take as you need" version
-    --
-    -- session <- ask
-    -- Count count <- rmDefinitionCount @a @q rmQuery
-    -- let records = map (unsafePerformIO . searchRange session) [0,batchSize..fromInteger count-1]
-    -- return $
-    --     flip map [0..fromInteger count-1] $ \x ->
-    --         case splitAt (x `mod` batchSize) (records !! (x `div` batchSize)) of
-    --           (_, i:_) -> i
-    --           _ -> error "bad"
-
-
-
-    -- where 
-    --     go :: Int -> CobSession -> IO [(Ref a, a)]
-    --     go from session = unsafeInterleaveIO $ do
-    --       searchRange session from >>= \case
-    --         [] -> return []
-    --         vs
-    --           | length vs < batchSize -- Don't fetch if this batch was smaller than expected
-    --           -> return vs
-    --           | otherwise
-    --           ->
-    --             (vs <>) <$> go (from + batchSize) session
-
-    --     batchSize = 2
-
-    --     searchRange :: CobSession -> Int -> IO [(Ref a, a)] 
-    --     searchRange session from = do
-    --         -- putStrLn ("Fetching things from " <> show from)
-    --         let request = (cobDefaultRequest session)
-    --                           { path = "/recordm/recordm/definitions/search/name/" <> fromString (encode $ definition @a)
-    --                           , queryString = renderRMQuery @a rmQuery {_from = from, _size = batchSize} }
-    --         rbody <- httpValidJSON' request userError
-    --         hits  <- getResponseHitsHits rbody userError          -- Get hits.hits from response body
-    --         let hitsSources = mapMaybe (parseMaybe (withObject "wO" (.: "_source"))) hits    -- Get _source from each hit
-    --         let ids = mapMaybe (parseMaybe parseJSON) hitsSources -- Get id from each _source
-    --         records <- (either (throwError . userError) return . parseEither parseJSON . Array . V.fromList) hitsSources  -- Parse record from each _source
-    --         return (zip ids records)                              -- Return list of (id, record)
-
 
 --------------------------------------------------------------------------------
 -- * Updating instances
@@ -288,32 +203,32 @@ deleteInstance r@(Ref _ ref) = do
 
 -- | Update all instances matching a query and return the updated records.
 --
--- This update is atomic! TODO: Should we retry instead of failing?
+-- This update is atomic!
 -- If the record is changed while the function is running, the record won't be updated and (ideally 'OutdatedVersion', but really) 'UnknownUpdateError' will be thrown
 --
--- This function might throw the following 'CobException's:
---  'UnknownUpdateError'
+-- This function might throw the following 'CobException's: 'UnknownUpdateError'
 --
 -- The resulting list of updated values doesn't necessarily reflect the order of the query results, I think
--- TODO: Consider not returning updated records?
 updateInstances :: forall a m. MonadCob m => Record a => Query a -> (a -> a) -> m [(Ref a, a)]
 updateInstances query f = do
+  cs <- ask
   logInfo $ "Updating instances of " <> toLogStr (definition @a) <> " matching " <> toLogStr (_q query)
-  CobSession{clientEnv} <- ask
-  streamDefinitionSearch query $ Streamly.toList . Streamly.parBuffered id . Streamly.mapM (updateInstance' clientEnv)
-    where
-      updateInstance' :: Servant.Client.ClientEnv -> (Ref a, a) -> IO (Ref a, a)
-      updateInstance' session (Ref version ref, a) =
-        let
-            updatedRecord = f a
-            req = Servant.updateInstances (Servant.UpdateSpec (definition @a) ("recordmInstanceId:" <> show ref <> maybe (error "updateInstances: All records streamed from a definition should have a version together with the instance id") (('@':) . show) version) updatedRecord)
-         in
-            Servant.Client.runClientM req session >>= \case
-              Left e -> throwIO e
-              Right u
-                -- TODO: We could have more precise errors using the other API, and possibly even automatically retry until successful.
-                | errorOS u > 0 -> throwIO (UnknownUpdateError $ Ref version ref)
-                | otherwise     -> pure (Ref (fmap (+1) version) ref, updatedRecord)
+  streamDefinitionSearchV query $ Streamly.toList . Streamly.parBuffered id . Streamly.mapM (\x -> runReaderT (updateInstance f x) cs)
+
+updateInstance :: MonadCob m => Record a => (a -> a) -> (Ref a, Versioned a) -> m (Ref a, a)
+updateInstance f (ref, Versioned{version, value}) = do
+  CobSession{clientEnv=session} <- ask
+  let updatedRecord = f value
+  let req = Servant.updateInstances (Servant.UpdateSpec ref Versioned{version, value=updatedRecord})
+  liftIO $ Servant.Client.runClientM req session >>= \case
+    Left e -> throwIO e
+    Right u
+      -- TODO: We could use more precise errors; at least throw a specific
+      -- error for not updating when the version was outdated. But I don't know
+      -- what these ints mean...
+      | errorOS u > 0 || updatedOS u <= 0 || forbiddenOS u > 0
+                   -> throwIO (UnknownUpdateError ref (show u))
+      | otherwise  -> pure (ref, updatedRecord)
 
 
 --------------------------------------------------------------------------------
@@ -356,7 +271,7 @@ uploadFile r fieldName contents = do
 newDefinition :: forall m. MonadCob m => Definition -> m DefinitionId
 newDefinition def = do
   logInfo $ "Creating new definition with name " <> toLogStr (defName def)
-  Ref _ r <- performReq $ Servant.newDefinition (ToRecM def)
+  Ref r <- performReq $ Servant.newDefinition (ToRecM def)
   pure (DefId (fromInteger r))
 
 deleteDefinition :: MonadCob m => DefinitionId -> m ()
