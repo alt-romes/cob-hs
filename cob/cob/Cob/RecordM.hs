@@ -40,16 +40,12 @@ import Cob.Ref
 import Cob.Log
 import Data.Maybe
 
--- TODO: Nested fields! # Creating an instance with duplicate fields https://learning.cultofbits.com/docs/cob-platform/developers/recordm-integration-resource/#creating-an-instance-with-duplicate-fields
-
--- TODO: Make Async versions of functions that receive a callback or return an async token???
+-- TODO: Nested fields! # Creating an instance with duplicate fields
+-- https://learning.cultofbits.com/docs/cob-platform/developers/recordm-integration-resource/#creating-an-instance-with-duplicate-fields
 
 -- TODO: Make rmGetInstance that searches directly for reference. Remove Ref as
 -- an instance of Record to find them or make body of search conditional on
 -- whether it's a ref or not..
-
-
--- ROMES:TODO: Add custom errors and document which functions throw which errors
 
 -- ROMES:TODO: Don't ignore sorting!
 
@@ -57,24 +53,27 @@ import Data.Maybe
 -- * Querying definitions
 --------------------------------------------------------------------------------
 
--- | Search a @RecordM@ 'Definition' given a 'Query, and return a list of references ('Ref') of a record and the corresponding records ('Record').
+-- | Search a @RecordM@ 'Definition' given a 'Query, and return a list of
+-- references ('Ref') of a record and the corresponding records ('Record').
 --
--- The 'Record' type to search for is inferred from the usage of the return element.
--- When the information available isn't enough to correctly infer the search 'Record' type, an explicit type can be used to help the compiler.
+-- The 'Record' type to search for is inferred from the usage of the return
+-- element. When the information available isn't enough to correctly infer the
+-- search 'Record' type, an explicit type can be used to help the compiler.
 --
 -- ==== __Example__
 --
 -- @
 -- dogs <- rmDefinitionSearch @DogsRecord "bobby"
 --
--- rmDefinitionSearch (defaultRMQuery { _q = "id:123"
---                                    , _from = 1
---                                    , _size = 21
---                                    , _sort = Just \"id\"
---                                    , _ascending = Just True })
+-- rmDefinitionSearch
+--   defaultRMQuery
+--    { _q = "id:123"
+--    , _from = 1
+--    , _size = 21
+--    , _sort = Just \"id\"
+--    , _ascending = Just True }
 --
--- rmDefinitionSearch (Ref 11223)
---
+-- rmDefinitionSearch (byRef 11223)
 -- @
 --
 -- @Note@: the @OverloadedStrings@ and @ScopedTypeVariables@ language extensions must be enabled for the example above
@@ -88,8 +87,8 @@ definitionSearch rmQuery = do
         hits <- o' .: "hits"
         forM hits $ \h -> do
           src <- h .: "_source"
-          r <- parseJSON @(Ref a) src
-          a <- parseJSON @a src
+          r <- parseCobRef @(Ref a) src
+          a <- fromRecordM @a src
           pure (r, a)
     parseOrThrowIO parser rbody
 
@@ -105,8 +104,8 @@ streamDefinitionSearch rmQuery f = do
       let
         parseRefA = withObject "streaming_search" $ \o -> do
           src <- o .: "_source"
-          r   <- parseJSON @(Ref a) src
-          a   <- parseJSON @a src
+          r   <- parseCobRef @(Ref a) src
+          a   <- fromRecordM @a src
           pure (r, a)
       in
         f (Streamly.mapM (parseOrThrowIO parseRefA) stream))
@@ -116,8 +115,6 @@ streamDefinitionSearch rmQuery f = do
 --
 -- TODO: Use /recordm/instances/{id} instead of definitions/search?
 -- Difficulty of ^ is parsing
--- Otherwise:
--- rbody <- performReq (getInstance (fromInteger ref) Nothing) `catchError` throwError ("Couldn't find instance with id " <> show ref)
 getInstance :: forall a m. MonadCob m => Record a => Ref a -> m a
 getInstance ref = do
   logInfo $ "Fetching instance " <> toLogStr (show ref)
@@ -182,7 +179,7 @@ addInstanceSync = addInstanceWith True
 -- @
 addInstanceWith :: forall a m. MonadCob m => Record a => Bool -> a -> m (Ref a)
 addInstanceWith waitForSearchAvailability record = do
-  logInfo $ "Creating instance in " <> toLogStr (definition @a) <> " for " <> toLogStr (encode record)
+  logInfo $ "Creating instance in " <> toLogStr (definition @a) <> " for " <> toLogStr (encodeRecord record)
   -- Last I checked (Nov. 2023), instance creation doesn't return a version
   -- alongside the newly created ID, so we give it the initial version (which is 0).
   Ref no_version refid <- performReq $ Servant.addInstance (AddSpec (definition @a) record waitForSearchAvailability)

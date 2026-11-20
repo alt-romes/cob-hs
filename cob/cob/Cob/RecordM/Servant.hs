@@ -32,6 +32,7 @@ import qualified Streamly.Data.Stream as Streamly
 import qualified Servant.Types.SourceT as Servant
 
 import Cob.Ref
+import Cob.RecordM.Record
 import Cob.RecordM.Definition
 import Data.Coerce (coerce)
 
@@ -131,9 +132,9 @@ instance ToHttpApiData SortParam where
   toQueryParam (SortParam ls) = T.pack $ L.intercalate "," $ map (\(f,d) -> f <> (':' : d)) ls
 
 data AddSpec a = AddSpec { _atype :: !String, _avalues :: !a, _waitForSearchAvailability :: !Bool }
-instance ToJSON a => ToJSON (AddSpec a) where
+instance Record a => ToJSON (AddSpec a) where
   toJSON (AddSpec t v w) = object [ "type" .= t
-                                  , "values" .= v
+                                  , "values" .= toRecordM v
                                   , "waitForSearchAvailability" .= w
                                   ]
 
@@ -145,10 +146,10 @@ instance ToJSON (DeleteSpec a) where
                                      ]
 
 data UpdateSpec a = UpdateSpec { _utype :: !String, _ucondition :: !String, _uvalues :: !a }
-instance ToJSON a => ToJSON (UpdateSpec a) where
+instance Record a => ToJSON (UpdateSpec a) where
   toJSON (UpdateSpec a b c) = object [ "type"      .= a
                                        , "condition" .= b
-                                       , "values"    .= c
+                                       , "values"    .= toRecordM c
                                        -- , "version"   .= d -- is done through the condition or could be done through the other (non-integration) api
                                        ]
 
