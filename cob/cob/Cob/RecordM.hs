@@ -18,13 +18,15 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 
-import qualified Streamly.Data.Stream as Streamly
-import qualified Streamly.Data.Stream.Prelude as Streamly
+import qualified Control.Concurrent.Async as Async
+import Control.Concurrent.QSem
 
 import qualified Servant.Client
 import qualified Servant.Client.Streaming
 import Servant.Multipart.API
 import Servant.Multipart.Client (genBoundary)
+import Servant.Types.SourceT (SourceT(..))
+import Control.Monad.Morph (hoist)
 
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as T
@@ -87,25 +89,25 @@ definitionSearchV rmQuery = do
     parseOrThrowIO parser rbody
 
 -- | Stream a definition!
-streamDefinitionSearch :: forall a b m. MonadCob m => Record a => Query a -> (Streamly.Stream IO (Ref a, a) -> IO b) -> m b
-streamDefinitionSearch rmQuery f = streamDefinitionSearchV @a @b @m rmQuery (f . fmap (second value))
+--
+-- Running the `SourceT` (e.g. using @runSourceToList@) issues the stream request to the server
+streamDefinitionSearch :: forall a m. (MonadCob m, Record a) => Query a -> SourceT m (Ref a, a)
+streamDefinitionSearch = fmap (second value) . streamDefinitionSearchV
 
-streamDefinitionSearchV :: forall a b m. MonadCob m => Record a => Query a -> (Streamly.Stream IO (Ref a, Versioned a) -> IO b) -> m b
-streamDefinitionSearchV rmQuery f = do
+streamDefinitionSearchV :: forall a m. (MonadCob m, Record a) => Query a -> SourceT m (Ref a, Versioned a)
+streamDefinitionSearchV rmQuery = SourceT $ \k -> do
   logInfo $ "Streaming search definition " <> toLogStr (definition @a) <> " with " <> toLogStr (_q rmQuery)
   CobSession{clientEnv} <- ask
   let req = streamSearchByName (definition @a) (Just (_q rmQuery)) Nothing
-  liftIO $ Servant.Client.Streaming.withClientM req clientEnv (\case
-    Left e -> throwIO e
-    Right stream ->
-      let
-        parseRefA = withObject "streaming_search" $ \o -> do
-          src <- o .: "_source"
-          r   <- parseCobRef @a src
-          a   <- parseVersioned (fromRecordM @a) src
-          pure (r, a)
-      in
-        f (Streamly.mapM (parseOrThrowIO parseRefA) stream))
+      parseRefA = withObject "streaming_search" $ \o -> do
+        src <- o .: "_source"
+        r   <- parseCobRef @a src
+        a   <- parseVersioned (fromRecordM @a) src
+        pure (r, a)
+  withRunInIO $ \run ->
+    Servant.Client.Streaming.withClientM req clientEnv $ \case
+      Left e -> throwIO e
+      Right stream -> unSourceT (parseSource parseRefA stream) (run . k . hoist liftIO)
 
 
 -- | Get an instance by id and fail if the instance isn't found
@@ -213,7 +215,10 @@ updateInstances :: forall a m. MonadCob m => Record a => Query a -> (a -> a) -> 
 updateInstances query f = do
   cs <- ask
   logInfo $ "Updating instances of " <> toLogStr (definition @a) <> " matching " <> toLogStr (_q query)
-  streamDefinitionSearchV query $ Streamly.toList . Streamly.parBuffered id . Streamly.mapM (\x -> runReaderT (updateInstance f x) cs)
+  matches <- runSourceToList (streamDefinitionSearchV query)
+  liftIO $ do
+    sem <- newQSem 8
+    Async.mapConcurrently (\x -> bracket_ (waitQSem sem) (signalQSem sem) (runReaderT (updateInstance f x) cs)) matches
 
 updateInstance :: MonadCob m => Record a => (a -> a) -> (Ref a, Versioned a) -> m (Ref a, a)
 updateInstance f (ref, Versioned{version, value}) = do

@@ -1,4 +1,3 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -8,7 +7,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 module Cob.RecordM.Servant where
 
 import qualified Data.Text as T
@@ -25,25 +23,9 @@ import qualified Servant.Client.Streaming as SC
 import Data.Aeson
 import qualified Data.ByteString.Lazy as BSL
 
-import qualified Streamly.Data.Stream as Streamly
-
-import qualified Servant.Types.SourceT as Servant
-
 import Cob.Ref
 import Cob.RecordM.Record
 import Cob.RecordM.Definition
-
--- TODO: Maybe use servant-streamly
-instance FromSourceIO a (Streamly.Stream IO a) where
-  fromSourceIO src = Servant.unSourceT src go
-   where
-    go :: Servant.StepT IO a -> IO (Streamly.Stream IO a)
-    go step = case step of
-      Servant.Stop             -> return Streamly.nil
-      Servant.Error e          -> return $ Streamly.fromEffect $ fail e
-      Servant.Skip  n          -> go n
-      Servant.Yield x nextStep -> Streamly.cons x <$> go nextStep
-      Servant.Effect nextStep  -> nextStep >>= go
 
 type RecordM a = "recordm" :> "recordm" :> a
 
@@ -67,7 +49,7 @@ type StreamSearch = "definitions" :> "search" :> "stream" :> (
 type StreamSearchCommon
   =  QueryParam "q" String
   :> QueryParam "sort" SortParam
-  :> StreamGet NewlineFraming JSON (Streamly.Stream IO Value)
+  :> StreamGet NewlineFraming JSON (SourceIO Value)
 
 type StructuredSearch     = "definitions" :> "search" :> QueryParam' '[Required, Strict] "def" String :> ReqBody '[JSON] Value :> Post '[JSON] Value
 type StructuredSearchById = "definitions" :> "search" :> QueryParam' '[Required, Strict] "defId" DefinitionId :> ReqBody '[JSON] Value :> Post '[JSON] Value
@@ -90,8 +72,8 @@ searchByName :: String       -> Maybe String -> Maybe Int -> Maybe Int -> Maybe 
 searchById   :: DefinitionId -> Maybe String -> Maybe Int -> Maybe Int -> Maybe SortParam -> C.ClientM Value
 (searchByName :<|> searchById) = C.client (Proxy @(RecordM Search))
 
-streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
-streamSearchById   :: DefinitionId -> Maybe String -> Maybe SortParam -> SC.ClientM (Streamly.Stream IO Value)
+streamSearchByName :: String -> Maybe String -> Maybe SortParam -> SC.ClientM (SourceIO Value)
+streamSearchById   :: DefinitionId -> Maybe String -> Maybe SortParam -> SC.ClientM (SourceIO Value)
 (streamSearchByName :<|> streamSearchById) = SC.client (Proxy @(RecordM StreamSearch))
 
 structuredSearchByName :: String       -> Value -> C.ClientM Value

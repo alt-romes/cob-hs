@@ -27,8 +27,6 @@ import System.Environment (lookupEnv)
 import System.IO (hPutStrLn, stderr)
 import System.Log.FastLogger (fromLogStr)
 
-import qualified Streamly.Data.Stream as Streamly
-import qualified Streamly.Data.Fold as Fold
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -342,7 +340,7 @@ testStreamSearch env = runMock env $ do
   _ <- addSync (sampleClient email)
   collected <- streamSearch
                   ("email" =: email :: Query SBClient)
-                  (Streamly.fold Fold.toList)
+                  runSourceToList
   liftCob $ do
     assertBool "streamSearch yields at least one element" (not (null collected))
     let emails = map (sbcEmail . snd) collected

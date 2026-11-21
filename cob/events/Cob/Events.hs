@@ -14,6 +14,8 @@ import Data.Bifunctor
 import qualified Data.List as L
 
 import Control.Monad.IO.Class
+import Control.Monad.Morph (hoist)
+import Servant.Types.SourceT (unSourceT, fromStepT)
 import Control.Monad.Reader
 import Control.Monad.RWS.Strict
 -- import Control.Monad.Free.Ap
@@ -22,11 +24,10 @@ import Control.Monad.Free.TH
 
 import Control.Exception
 import Cob.Exception
-import Cob.Utils (MonadCob)
+import Cob.Utils (MonadCob(..))
 
 import qualified Control.Concurrent.Async as A
 
-import qualified Streamly.Data.Stream as Streamly
 
 import qualified Cob.RecordM as RM
 import qualified Cob.UserM   as UM
@@ -60,7 +61,7 @@ runCobEvents conn scopeEv cs cob = unCobEvents (iterM cobRIO cob) (cs, conn)
   where
     cobRIO :: CobF (CobEvents s a) -> CobEvents s a
     cobRIO = \case
-        StreamSearch q f h -> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob) >>= h
+        StreamSearch q f h -> withRunInIO (\run -> run (unSourceT (RM.streamDefinitionSearch q) (liftIO . recurse . f . fromStepT . hoist (liftIO . run)))) >>= h
         Search q f  -> RM.definitionSearch q >>= f
         Get r f     -> RM.getInstance r >>= f
         Count q f   -> RM.definitionCount q >>= f
@@ -120,3 +121,5 @@ instance MonadReader CobSession (CobEvents s) where
   ask = CobEvents $ \(s,_) -> pure s
   local f (CobEvents g) = CobEvents $ \(s, c) -> g (f s, c)
 
+instance MonadCob (CobEvents s) where
+  withRunInIO f = CobEvents $ \e -> f (`unCobEvents` e)

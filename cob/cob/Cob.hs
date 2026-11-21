@@ -12,6 +12,9 @@ module Cob
 
   -- Cob.RecordM re-exported
   , FileUpload(..)
+
+  -- Streaming
+  , SourceT, runSourceToList
   ) where
 
 import Control.Concurrent
@@ -23,11 +26,12 @@ import Cob.RecordM.Record
 import Cob.Ref
 import Cob.Session
 import Cob.UserM.Entities
-import Cob.Utils (MonadCob)
+import Cob.Utils (MonadCob(..), runSourceToList)
 import Control.Exception
 import Control.Monad.Free
 import Control.Monad.Free.TH
 import Control.Monad.IO.Class
+import Control.Monad.Morph (hoist)
 import Control.Monad.Reader
 import Data.Bifunctor
 import Data.Either (lefts)
@@ -36,12 +40,12 @@ import qualified Cob.RecordM as RM
 import qualified Cob.UserM   as UM
 import qualified Control.Concurrent.Async as A
 import qualified Data.List as L
-import qualified Streamly.Data.Stream as Streamly
+import Servant.Types.SourceT (SourceT, unSourceT, fromStepT)
 
 type Cob = Free CobF
 
 data CobF next where
-  StreamSearch :: Record a => Query a -> (Streamly.Stream Cob (Ref a, a) -> Cob b) -> (b -> next) -> CobF next
+  StreamSearch :: Record a => Query a -> (SourceT Cob (Ref a, a) -> Cob b) -> (b -> next) -> CobF next
   Search       :: Record a => Query a -> ([(Ref a, a)] -> next) -> CobF next
   Get          :: Record a => Ref a   -> (a -> next) -> CobF next
   Count        :: Record a => Query a -> (Int -> next) -> CobF next
@@ -85,7 +89,7 @@ instance Functor CobF where
 
 makeFree_ ''CobF
 
-streamSearch :: Record a => Query a -> (Streamly.Stream Cob (Ref a, a) -> Cob b) -> Cob b
+streamSearch :: Record a => Query a -> (SourceT Cob (Ref a, a) -> Cob b) -> Cob b
 search       :: Record a => Query a -> Cob [(Ref a, a)]
 get          :: Record a => Ref a   -> Cob a
 count        :: Record a => Query a -> Cob Int
@@ -130,7 +134,7 @@ runCob cs = (`runReaderT` cs) . foldFree cobRIO
   where
     cobRIO :: MonadCob m => CobF ~> m
     cobRIO = \case
-        StreamSearch q f h -> h <$> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob)
+        StreamSearch q f h -> h <$> withRunInIO (\run -> run (unSourceT (RM.streamDefinitionSearch q) (liftIO . recurse . f . fromStepT . hoist (liftIO . run))))
         Search q f  -> f <$> RM.definitionSearch q
         Get r f     -> f <$> RM.getInstance r
         Count q f   -> f <$> RM.definitionCount q
@@ -184,7 +188,7 @@ mockCob delayInSeconds cs cobf = do
 
         nt :: MonadCob m => CobF ~> m
         nt = \case
-            StreamSearch q f h -> h <$> RM.streamDefinitionSearch q (recurse . f . Streamly.morphInner liftCob)
+            StreamSearch q f h -> h <$> withRunInIO (\run -> run (unSourceT (RM.streamDefinitionSearch q) (liftIO . recurse . f . fromStepT . hoist (liftIO . run))))
             Search q f  -> f <$> RM.definitionSearch q
             Get r f     -> f <$> RM.getInstance r
             Count q f   -> f <$> RM.definitionCount q

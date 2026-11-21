@@ -1,4 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Cob.Utils where
 
@@ -9,6 +8,7 @@ import Data.Foldable (toList)
 
 import Control.Monad.IO.Class
 import Control.Monad.Reader
+import Control.Monad.Except (runExceptT)
 
 import Control.Exception
 
@@ -19,10 +19,16 @@ import qualified Servant.Client
 import Servant.Client (ClientError(..), BaseUrl(..), Scheme(..))
 import Servant.Client.Core.Request (RequestF(..))
 import Servant.Client.Core.Response (ResponseF(..))
+import Servant.Types.SourceT
+import Servant.API.Stream (SourceIO)
 
 import Cob.Session
 
-type MonadCob m = (MonadIO m, MonadReader CobSession m)
+class (MonadIO m, MonadReader CobSession m) => MonadCob m where
+  withRunInIO :: ((forall a. m a -> IO a) -> IO b) -> m b
+
+instance MonadCob (ReaderT CobSession IO) where
+  withRunInIO f = ReaderT $ \cs -> f (`runReaderT` cs)
 
 -- | Perform a request on a Cob servant api
 performReq :: MonadCob m => Servant.Client.ClientM a -> m a
@@ -82,4 +88,12 @@ parseOrThrowIO parser x =
 
 newtype JSONParserError = JSONParserError String deriving Show
 instance Exception JSONParserError
+
+-- | Parse each element of a stream, throwing 'JSONParserError' on failure.
+parseSource :: (a -> Parser b) -> SourceIO a -> SourceIO b
+parseSource p = mapStepT (foreachYieldStep (\x next -> Effect ((`Yield` next) <$> parseOrThrowIO p x)))
+
+-- | Collect all elements of a stream, failing if the stream reports an error.
+runSourceToList :: MonadIO m => SourceT m a -> m [a]
+runSourceToList s = runExceptT (runSourceT s) >>= either (liftIO . fail) pure
 

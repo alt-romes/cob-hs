@@ -4,8 +4,6 @@ let
     overrides = self: super: {
 
       # Updated versions
-      streamly-core = pkgs.haskell.lib.doJailbreak super.streamly-core;
-      streamly = pkgs.haskell.lib.doJailbreak super.streamly;
       uuid = pkgs.haskell.lib.doJailbreak super.uuid;
       zip = pkgs.haskell.lib.doJailbreak super.zip;
       generics-sop =
