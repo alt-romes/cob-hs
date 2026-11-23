@@ -76,6 +76,7 @@ definitionSearch = fmap (map (second value)) . definitionSearchV
 definitionSearchV :: forall a m. MonadCob m => Record a => Query a -> m [(Ref a, Versioned a)]
 definitionSearchV rmQuery = do
     logInfo $ "Searching definition " <> toLogStr (definition @a) <> " with " <> toLogStr (_q rmQuery)
+    -- TODO: allow sorting query results
     rbody <- performReq $ searchByName (definition @a) (Just (_q rmQuery)) (Just (_from rmQuery)) (Just (_size rmQuery)) Nothing
     let
       parser = withObject "definition_search" $ \o -> do
