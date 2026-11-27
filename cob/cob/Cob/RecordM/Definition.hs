@@ -152,6 +152,9 @@ notDuplicable = mempty{specDuplicable = Last (Just False)}
 newtype Condition = Equals Text
   deriving Show
 
+condText :: Condition -> Text
+condText (Equals v) = "=" <> v
+
 -- | Only show the field when its parent field has the given value
 ifEquals :: Text -> FieldSpec
 ifEquals v = mempty{specCondition = Last (Just (Equals v))}
@@ -347,12 +350,12 @@ definitionValue Definition{..} =
         [ "name" .= f.fieldName
         , "description" .= descText (f ^. spec . description)
         , "duplicable" .= (f ^. spec . isDuplicable)
-        , "required" .= (if f ^. spec . isMandatory then "mandatory" else "" :: Text)
+        , "required" .= (if f ^. spec . isMandatory then Just "mandatory" else Nothing :: Maybe Text)
         , "order" .= order
         , "id" .= idText f.fieldId
         ]
         ++ [ "fields" .= subs | not (null subs) ]
-        ++ [ "condition" .= ("=" <> v) | Last (Just (Equals v)) <- [f.fieldSpec.specCondition] ]
+        ++ [ "condition" .= condText c | Last (Just c) <- [f.fieldSpec.specCondition] ]
 
 -- | Decode a 'Definition' as RecordM returns it.
 parseDefinition :: Value -> Aeson.Parser Definition
@@ -390,11 +393,12 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
     parseFieldDescriptionAeson t = either fail pure (runFieldDescriptionParser t)
 
     -- Only supports simple conditions for now, like "=Yes" or "=No"
-    parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
-    parseCondition = \case
-      Nothing -> pure Nothing
-      Just ('=':v) -> pure (Just (Equals (pack v)))
-      Just cond -> fail $ "Unexpected condition format: " ++ show cond
+    parseCondition :: Maybe Text -> Aeson.Parser (Maybe Condition)
+    parseCondition = traverse $ \t -> case Equals <$> T.stripPrefix "=" t of
+      Nothing -> fail $ "Unexpected condition format: " ++ show t
+      Just c
+        | condText c /= t -> fail $ "Condition " ++ show t ++ " would be sent back as " ++ show (condText c)
+        | otherwise -> pure c
 
     parseDefState :: Text -> Aeson.Parser DefinitionState
     parseDefState = \case

@@ -16,7 +16,7 @@
                             "id": "-100000003",
                             "name": "Sub",
                             "order": 3,
-                            "required": ""
+                            "required": null
                         },
                         {
                             "description": "$number",
@@ -24,13 +24,13 @@
                             "id": "-100000004",
                             "name": "Other",
                             "order": 4,
-                            "required": ""
+                            "required": null
                         }
                     ],
                     "id": "-100000002",
                     "name": "Shown if yes",
                     "order": 2,
-                    "required": ""
+                    "required": null
                 }
             ],
             "id": "-100000001",
@@ -44,7 +44,7 @@
             "id": "-100000005",
             "name": "Tags",
             "order": 5,
-            "required": ""
+            "required": null
         },
         {
             "description": "$ref(GOLDEN Owners,name:x)",
@@ -52,7 +52,7 @@
             "id": "-100000006",
             "name": "Owner",
             "order": 6,
-            "required": ""
+            "required": null
         },
         {
             "description": "$number $readonly Some text",
@@ -72,7 +72,7 @@
                     "id": "-100000009",
                     "name": "Note",
                     "order": 9,
-                    "required": ""
+                    "required": null
                 },
                 {
                     "description": "$number",
@@ -80,13 +80,13 @@
                     "id": "-100000010",
                     "name": "Score",
                     "order": 10,
-                    "required": ""
+                    "required": null
                 }
             ],
             "id": "-100000008",
             "name": "Details",
             "order": 8,
-            "required": ""
+            "required": null
         }
     ],
     "id": null,

@@ -7,7 +7,7 @@
             "id": "-100000001",
             "name": "Owner",
             "order": 1,
-            "required": ""
+            "required": null
         },
         {
             "description": "$instanceLabel",
@@ -24,7 +24,7 @@
                             "id": "-100000004",
                             "name": "Other",
                             "order": 4,
-                            "required": ""
+                            "required": null
                         },
                         {
                             "description": "$text",
@@ -32,13 +32,13 @@
                             "id": "-100000005",
                             "name": "Sub",
                             "order": 5,
-                            "required": ""
+                            "required": null
                         }
                     ],
                     "id": "-100000003",
                     "name": "Shown if yes",
                     "order": 3,
-                    "required": ""
+                    "required": null
                 }
             ],
             "id": "-100000002",
@@ -52,7 +52,7 @@
             "id": "-100000006",
             "name": "Tags",
             "order": 6,
-            "required": ""
+            "required": null
         },
         {
             "description": "$number $readonly Some text",
@@ -72,7 +72,7 @@
                     "id": "-100000009",
                     "name": "Score",
                     "order": 9,
-                    "required": ""
+                    "required": null
                 },
                 {
                     "description": "$text",
@@ -80,13 +80,13 @@
                     "id": "-100000010",
                     "name": "Note",
                     "order": 10,
-                    "required": ""
+                    "required": null
                 }
             ],
             "id": "-100000008",
             "name": "Details",
             "order": 8,
-            "required": ""
+            "required": null
         }
     ],
     "id": null,
