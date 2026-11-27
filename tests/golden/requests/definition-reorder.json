@@ -1,0 +1,96 @@
+{
+    "description": "A definition",
+    "fieldDefinitions": [
+        {
+            "description": "$ref(GOLDEN Owners,name:x)",
+            "duplicable": false,
+            "id": "-100000001",
+            "name": "Owner",
+            "order": 1,
+            "required": ""
+        },
+        {
+            "description": "$instanceLabel",
+            "duplicable": false,
+            "fields": [
+                {
+                    "condition": "=Yes",
+                    "description": "",
+                    "duplicable": false,
+                    "fields": [
+                        {
+                            "description": "$number",
+                            "duplicable": false,
+                            "id": "-100000004",
+                            "name": "Other",
+                            "order": 4,
+                            "required": ""
+                        },
+                        {
+                            "description": "$text",
+                            "duplicable": false,
+                            "id": "-100000005",
+                            "name": "Sub",
+                            "order": 5,
+                            "required": ""
+                        }
+                    ],
+                    "id": "-100000003",
+                    "name": "Shown if yes",
+                    "order": 3,
+                    "required": ""
+                }
+            ],
+            "id": "-100000002",
+            "name": "Name",
+            "order": 2,
+            "required": "mandatory"
+        },
+        {
+            "description": "$[A,B]",
+            "duplicable": true,
+            "id": "-100000006",
+            "name": "Tags",
+            "order": 6,
+            "required": ""
+        },
+        {
+            "description": "$number $readonly Some text",
+            "duplicable": true,
+            "id": "-100000007",
+            "name": "Both",
+            "order": 7,
+            "required": "mandatory"
+        },
+        {
+            "description": "Some details",
+            "duplicable": false,
+            "fields": [
+                {
+                    "description": "$number",
+                    "duplicable": false,
+                    "id": "-100000009",
+                    "name": "Score",
+                    "order": 9,
+                    "required": ""
+                },
+                {
+                    "description": "$text",
+                    "duplicable": false,
+                    "id": "-100000010",
+                    "name": "Note",
+                    "order": 10,
+                    "required": ""
+                }
+            ],
+            "id": "-100000008",
+            "name": "Details",
+            "order": 8,
+            "required": ""
+        }
+    ],
+    "id": null,
+    "name": "GOLDEN Kitchen",
+    "state": "enabled",
+    "version": null
+}

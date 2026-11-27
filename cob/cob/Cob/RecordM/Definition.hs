@@ -333,7 +333,8 @@ definitionValue Definition{..} =
     stateValue EnabledDefinition = "enabled"
 
     fieldValues :: Map FieldName Field -> State Int [Value]
-    fieldValues = mapM fieldValue . sortOn (.fieldOrder) . M.elems
+    fieldValues = mapM fieldValue . sortOn (.fieldOrder) {- sort by order before picking the new order value -}
+                                  . M.elems
 
     fieldValue :: Field -> State Int Value
     fieldValue f = do

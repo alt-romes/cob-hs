@@ -135,6 +135,14 @@ kitchenDefExisting = kitchenDef
   , defFieldDefinitions = M.map (\f -> f { fieldOrder = 100 - fieldOrder f }) (defFieldDefinitions kitchenDef)
   }
 
+-- | 'kitchenDef' with Owner moved first, Score moved before Note, and the
+-- subfields of "Shown if yes" reversed.
+kitchenDefReordered :: Definition
+kitchenDefReordered = kitchenDef
+  & field "Owner" %~ (\f -> f { fieldOrder = 0 })
+  & field "Details" . field "Score" %~ (\f -> f { fieldOrder = 0 })
+  & field "Name" . field "Shown if yes" . fields %~ M.map (\f -> f { fieldOrder = 100 - fieldOrder f })
+
 --------------------------------------------------------------------------------
 -- Tests
 --------------------------------------------------------------------------------
@@ -149,6 +157,7 @@ main = defaultMain $ testGroup "CoB JSON golden tests"
     , request "integration-delete"            (encDeleteSpec (DeleteSpec @Kitchen "GOLDEN Kitchen" "id:42" True))
     , request "definition-new"                (encDefinition kitchenDef)
     , request "definition-update"             (encDefinition kitchenDefExisting)
+    , request "definition-reorder"            (encDefinition kitchenDefReordered)
     , request "userm-create-user"             (encUser (User "jdoe" (Just "secret") "John Doe" "jdoe@example.invalid" Nothing (Just "JDOE")))
     , request "userm-group-users"             (encGroupUsers [1, 2])
     , request "userm-login"                   (encLogin (LoginData "jdoe" "secret"))
