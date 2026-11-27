@@ -272,8 +272,8 @@ uploadFile r fieldName contents = do
 -- * Definitions
 --------------------------------------------------------------------------------
 
--- | Create a RecordM 'Definition', typically where 'Definition' is created
--- using 'fromDSL' and 'DefinitionQ'.
+-- | Create a RecordM 'Definition', typically built with 'simpleDefinition'
+-- and the field lenses.
 newDefinition :: forall m. MonadCob m => Definition -> m DefinitionId
 newDefinition def = do
   logInfo $ "Creating new definition with name " <> toLogStr (defName def)

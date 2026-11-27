@@ -2,27 +2,29 @@
     "description": "A definition",
     "fieldDefinitions": [
         {
-            "description": "$instanceLabel",
+            "description": "Some details",
             "duplicable": false,
+            "fields": [
+                {
+                    "description": "$text",
+                    "duplicable": false,
+                    "id": "-100000002",
+                    "name": "Note",
+                    "order": 2,
+                    "required": ""
+                },
+                {
+                    "description": "$number",
+                    "duplicable": false,
+                    "id": "-100000003",
+                    "name": "Score",
+                    "order": 3,
+                    "required": ""
+                }
+            ],
             "id": "-100000001",
-            "name": "Name",
-            "order": 99,
-            "required": "mandatory"
-        },
-        {
-            "description": "$[A,B]",
-            "duplicable": true,
-            "id": "-100000002",
-            "name": "Tags",
-            "order": 98,
-            "required": ""
-        },
-        {
-            "description": "$ref(GOLDEN Owners,name:x)",
-            "duplicable": false,
-            "id": "-100000003",
-            "name": "Owner",
-            "order": 97,
+            "name": "Details",
+            "order": 1,
             "required": ""
         },
         {
@@ -30,43 +32,61 @@
             "duplicable": true,
             "id": "-100000004",
             "name": "Both",
-            "order": 96,
+            "order": 4,
             "required": "mandatory"
         },
         {
-            "description": "Some details",
+            "description": "$ref(GOLDEN Owners,name:x)",
             "duplicable": false,
-            "fields": [
-                {
-                    "description": "$text",
-                    "duplicable": false,
-                    "id": "-100000006",
-                    "name": "Note",
-                    "order": 6,
-                    "required": ""
-                },
-                {
-                    "description": "$number",
-                    "duplicable": false,
-                    "id": "-100000007",
-                    "name": "Score",
-                    "order": 7,
-                    "required": ""
-                }
-            ],
             "id": "-100000005",
-            "name": "Details",
-            "order": 95,
+            "name": "Owner",
+            "order": 5,
             "required": ""
         },
         {
-            "condition": "=Yes",
-            "description": "",
-            "duplicable": false,
-            "id": "-100000008",
-            "name": "Shown if yes",
-            "order": 92,
+            "description": "$[A,B]",
+            "duplicable": true,
+            "id": "-100000006",
+            "name": "Tags",
+            "order": 6,
             "required": ""
+        },
+        {
+            "description": "$instanceLabel",
+            "duplicable": false,
+            "fields": [
+                {
+                    "condition": "=Yes",
+                    "description": "",
+                    "duplicable": false,
+                    "fields": [
+                        {
+                            "description": "$text",
+                            "duplicable": false,
+                            "id": "-100000009",
+                            "name": "Sub",
+                            "order": 9,
+                            "required": ""
+                        },
+                        {
+                            "description": "$number",
+                            "duplicable": false,
+                            "id": "-100000010",
+                            "name": "Other",
+                            "order": 10,
+                            "required": ""
+                        }
+                    ],
+                    "id": "-100000008",
+                    "name": "Shown if yes",
+                    "order": 8,
+                    "required": ""
+                }
+            ],
+            "id": "-100000007",
+            "name": "Name",
+            "order": 7,
+            "required": "mandatory"
         }
     ],
     "id": 77,

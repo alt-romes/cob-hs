@@ -52,11 +52,11 @@ data SBClient = SBClient
 mkRecord ''SBClient "TEST Sandbox Clients" ["Email", "Name", "Kickstarter"]
 
 sbClientDef :: Definition
-sbClientDef = fromDSL "TEST Sandbox Clients" "Cob tests — clients" $ do
-  "Email"       |=! instanceLabel
-  "Name"        |=  ""
-  "Kickstarter" |=  list ["Yes", "No"]
-  pure ()
+sbClientDef =
+  simpleDefinition "TEST Sandbox Clients" "Cob tests — clients"
+    & field "Email"       . spec <>~ instanceLabel <> mandatory
+    & field "Name"        . spec <>~ ""
+    & field "Kickstarter" . spec <>~ list ["Yes", "No"]
 
 --------------------------------------------------------------------------------
 -- Test configuration
@@ -183,11 +183,11 @@ uniqueEmail env tag = do
   let stamp = show (truncate now :: Integer)
   return $ T.pack ("cob-tests+" <> tag <> "-" <> stamp <> "-" <> show n <> "@example.invalid")
 
--- | Name, description and requiredness of top-level fields, by order.
-describeFields :: Definition -> [(Text, Text, FieldRequired)]
-describeFields = map describeField . sortOn getFieldOrder . M.elems . defFieldDefinitions
+-- | Name, description and mandatoriness of top-level fields, by order.
+describeFields :: Definition -> [(Text, Text, Bool)]
+describeFields = map describeField . sortOn fieldOrder . M.elems . defFieldDefinitions
   where
-    describeField f = (fieldName f, descText (fieldDescription f), fieldRequired f)
+    describeField f = (fieldName f, descText (f ^. spec . description), f ^. spec . isMandatory)
 
 fieldNames :: Definition -> [Text]
 fieldNames = map (\(n, _, _) -> n) . describeFields
@@ -195,11 +195,11 @@ fieldNames = map (\(n, _, _) -> n) . describeFields
 fieldIds :: Definition -> [(Text, FieldName)]
 fieldIds d = [ (fieldName f, fieldId f) | f <- M.elems (defFieldDefinitions d) ]
 
-sbClientFields :: [(Text, Text, FieldRequired)]
+sbClientFields :: [(Text, Text, Bool)]
 sbClientFields =
-  [ ("Email",       "$instanceLabel", MandatoryField)
-  , ("Name",        "",               FieldNotRequired)
-  , ("Kickstarter", "$[Yes,No]",      FieldNotRequired)
+  [ ("Email",       "$instanceLabel", True)
+  , ("Name",        "",               False)
+  , ("Kickstarter", "$[Yes,No]",      False)
   ]
 
 sampleClient :: Text -> SBClient
@@ -223,65 +223,51 @@ testGetDefinition env = withDef env $ \did -> do
 testExtendDefinition :: TestEnv -> Assertion
 testExtendDefinition env = withDef env $ \did -> do
   before <- getDefinition did
-  _ <- updDefinition did (`extendFromDSL` do
-    "Extra" |= text
-    pure ())
+  _ <- updDefinition did (& field "Extra" . spec <>~ text)
   after <- getDefinition did
   liftIO $ do
-    describeFields after @?= sbClientFields ++ [("Extra", "$text", FieldNotRequired)]
+    describeFields after @?= sbClientFields ++ [("Extra", "$text", False)]
     assertBool "existing fields must keep their ids" $
       all (`elem` fieldIds after) (fieldIds before)
 
 testUpdDescriptions :: TestEnv -> Assertion
 testUpdDescriptions env = withDef env $ \did -> do
-  let setName f = if fieldName f == "Name" then f { fieldDescription = text } else f
-  _ <- updDefinition did $ \d -> d
-    { defDescription      = "Updated description"
-    , defFieldDefinitions = M.map setName (defFieldDefinitions d)
-    }
+  _ <- updDefinition did $ \d -> d { defDescription = "Updated description" }
+    & field "Name" . spec . description .~ "$text"
   d <- getDefinition did
   liftIO $ do
     defDescription d @?= "Updated description"
     describeFields d @?=
-      [ ("Email",       "$instanceLabel", MandatoryField)
-      , ("Name",        "$text",          FieldNotRequired)
-      , ("Kickstarter", "$[Yes,No]",      FieldNotRequired)
+      [ ("Email",       "$instanceLabel", True)
+      , ("Name",        "$text",          False)
+      , ("Kickstarter", "$[Yes,No]",      False)
       ]
 
 testRemoveField :: TestEnv -> Assertion
 testRemoveField env = withDef env $ \did -> do
-  _ <- updDefinition did (`extendFromDSL` do
-    "Extra" |= text
-    pure ())
-  _ <- updDefinition did $ \d ->
-    d { defFieldDefinitions = M.filter ((/= "Extra") . fieldName) (defFieldDefinitions d) }
+  _ <- updDefinition did (& field "Extra" . spec <>~ text)
+  _ <- updDefinition did $ \d -> d & fieldById (fieldId (d ^. field "Extra")) .~ Nothing
   d <- getDefinition did
   liftIO $ describeFields d @?= sbClientFields
 
 testSubfields :: TestEnv -> Assertion
 testSubfields env = withDef env $ \did -> do
-  _ <- updDefinition did (`extendFromDSL` do
-    _ <- "Details" |= "" |+ do
-      "Note"  |= text
-      "Score" |= number
-      pure []
-    pure ())
+  _ <- updDefinition did $ \d -> d
+    & field "Details" . field "Note"  . spec <>~ text
+    & field "Details" . field "Score" . spec <>~ number
   d <- getDefinition did
   liftIO $ do
     fieldNames d @?= ["Email", "Name", "Kickstarter", "Details"]
-    case filter ((== "Details") . fieldName) (M.elems (defFieldDefinitions d)) of
-      [details] ->
-        describeFields d { defFieldDefinitions = fieldFields details } @?=
-          [ ("Note",  "$text",   FieldNotRequired)
-          , ("Score", "$number", FieldNotRequired)
-          ]
-      _ -> assertFailure "expected exactly one Details field"
+    describeFields d { defFieldDefinitions = fieldFields (d ^. field "Details") } @?=
+      [ ("Note",  "$text",   False)
+      , ("Score", "$number", False)
+      ]
 
 testReorder :: TestEnv -> Assertion
 testReorder env = withDef env $ \did -> do
   let original = ["Email", "Name", "Kickstarter"]
       reorder names = void $ updDefinition did $ \d -> d
-        { defFieldDefinitions = M.map (\f -> f { fieldOrder = lookup (fieldName f) (zip names [0..]) }) (defFieldDefinitions d) }
+        { defFieldDefinitions = M.map (\f -> f { fieldOrder = fromMaybe (fieldOrder f) (lookup (fieldName f) (zip names [0..])) }) (defFieldDefinitions d) }
   before <- getDefinition did
   reorder (reverse original)
   reversed <- getDefinition did

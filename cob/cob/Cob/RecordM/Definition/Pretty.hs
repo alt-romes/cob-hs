@@ -6,6 +6,8 @@ module Cob.RecordM.Definition.Pretty
 import Data.List (sortOn, transpose)
 import qualified Data.Map as M
 import qualified Data.Text as T
+import Data.Monoid (Last(..))
+import Lens.Micro
 import Prettyprinter
 import Prettyprinter.Render.Terminal
 
@@ -25,15 +27,15 @@ prettyDefinition d = vsep
 fieldsTable :: Definition -> Doc AnsiStyle
 fieldsTable d = vsep $
   annotate underlined (cells header <+> "Description")
-    : [cells r <+> prettyFieldDescription (fieldDescription f) | (r, f) <- rows]
+    : [cells r <+> prettyFieldDescription (f ^. spec . description) | (r, f) <- rows]
   where
     header = ["ID", "Name", "Flags", "If"]
     rows =
-      [ ([getFieldId (fieldId f), replicate (2 * n) ' ' ++ T.unpack (fieldName f), flags f, maybe "" condText (fieldCondition f)], f)
+      [ ([idText (fieldId f), replicate (2 * n) ' ' ++ T.unpack (fieldName f), flags f, maybe "" condText (condition f)], f)
       | (n, _, f) <- allFields d ]
     widths = map (maximum . map length) (transpose (header : map fst rows))
     cells = hsep . zipWith (\w s -> pretty (s ++ replicate (w - length s) ' ')) widths
-    flags f = [if isMandatory f then 'M' else ' ', if fieldDuplicable f then 'D' else ' ']
+    flags f = [if f ^. spec . isMandatory then 'M' else ' ', if f ^. spec . isDuplicable then 'D' else ' ']
 
 prettyFieldDescription :: FieldDescription -> Doc AnsiStyle
 prettyFieldDescription (FieldDesc ps) = mconcat
@@ -43,18 +45,18 @@ prettyFieldDescription (FieldDesc ps) = mconcat
 prettyField :: Maybe FieldName -> Field -> Doc AnsiStyle
 prettyField p f = vsep [annotate bold (fill 12 k) <+> v | (k, v) <- rows]
   where
-    fd = fieldDescription f
+    fd = f ^. spec . description
     rows =
-      [ ("ID", pretty (getFieldId (fieldId f)))
+      [ ("ID", pretty (idText (fieldId f)))
       , ("Name", pretty (fieldName f))
-      , ("Parent", maybe "-" (pretty . getFieldId) p)
+      , ("Parent", maybe "-" (pretty . idText) p)
       , ("Keywords", hsep (map (annotate (color Cyan) . viaShow) (knownKws fd)))
       , ("Description", pretty (descText fd))
-      , ("Mandatory", yesNo (isMandatory f))
-      , ("Duplicable", yesNo (fieldDuplicable f))
-      , ("Condition", maybe "-" (pretty . condText) (fieldCondition f))
-      , ("Order", pretty (getFieldOrder f))
-      , ("Subfields", hsep [pretty (getFieldId (fieldId s)) <+> viaShow (fieldName s) | s <- sortOn getFieldOrder (M.elems (fieldFields f))])
+      , ("Mandatory", yesNo (f ^. spec . isMandatory))
+      , ("Duplicable", yesNo (f ^. spec . isDuplicable))
+      , ("Condition", maybe "-" (pretty . condText) (condition f))
+      , ("Order", pretty (fieldOrder f))
+      , ("Subfields", hsep [pretty (idText (fieldId s)) <+> viaShow (fieldName s) | s <- sortOn fieldOrder (M.elems (fieldFields f))])
       ]
 
 -- | Every field with its depth and parent, subfields right after their parent
@@ -63,13 +65,17 @@ allFields = go 0 Nothing . defFieldDefinitions
   where
     go n p fs = concat
       [ (n, p, f) : go (n + 1) (Just (fieldId f)) (fieldFields f)
-      | f <- sortOn getFieldOrder (M.elems fs) ]
+      | f <- sortOn fieldOrder (M.elems fs) ]
+
+idText :: FieldName -> String
+idText (ExistingField i) = show i
+idText (NewField _) = "new"
+
+condition :: Field -> Maybe Condition
+condition f = getLast (specCondition (fieldSpec f))
 
 condText :: Condition -> String
-condText (Equals _ v) = '=' : T.unpack v
-
-isMandatory :: Field -> Bool
-isMandatory f = fieldRequired f == MandatoryField
+condText (Equals v) = '=' : T.unpack v
 
 yesNo :: Bool -> Doc ann
 yesNo b = if b then "yes" else "no"

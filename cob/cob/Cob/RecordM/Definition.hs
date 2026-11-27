@@ -1,16 +1,30 @@
 {-# LANGUAGE GHC2021 #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DerivingVia #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 module Cob.RecordM.Definition
   ( -- * Static Definition
-    Definition(..), Field(..), FieldDescription(..), DescPart(..), Condition(..), DefinitionState(..), FieldRequired(..)
-  , simpleDefinition, field
-  , FieldName, getFieldOrder, getFieldId
+    Definition(..), Field(..), FieldSpec(..), FieldDescription(..), DescPart(..), Condition(..), DefinitionState(..)
+  , FieldName(..), simpleDefinition
+
+    -- * Building and editing definitions with lenses
+    --
+    -- | The @'field'@ lens will find a field by name, or create a new field if none by that name exists.
+    -- If there are multiple sibling fields with the same name, we fail at runtime with an ambiguity error.
+    --
+    -- @
+    -- simpleDefinition "Kitchen" "A definition"
+    --   & field "Name" . spec <>~ instanceLabel <> mandatory
+    --   & field "Details" . field "Note" . spec <>~ text
+    --   & fieldById (ExistingField 42) .~ Nothing
+    -- @
+  , HasFields(..), field, fieldById, spec
+  , description, isMandatory, isDuplicable
+  , mandatory, notMandatory, duplicable, notDuplicable, ifEquals
+  , (&), (^.), (.~), (%~), (<>~)
 
     -- * Keywords
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
@@ -22,24 +36,19 @@ module Cob.RecordM.Definition
 
     -- ** Debugging
   , parseFieldDescription, parseKeyword
-
-  , -- * Modifying and constructing definition using lenses.
-  , (&), (%~), Endo(..)
   ) where
 
 import Data.String
 import Data.Aeson
-import Data.Functor.Identity
+import Control.Monad.State (State, evalState, get, modify)
+import Data.List (sortOn)
 import Data.Monoid
+import GHC.Generics (Generic, Generically(..))
+import GHC.Stack (HasCallStack)
 import Lens.Micro
-import Control.Monad.State
-import Control.Monad.Reader
 import Data.Text (Text, pack, unpack)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Control.Monad.Free
-import Control.Monad.Free.TH
-import Data.Bifunctor
 import Data.Maybe
 import qualified Data.Text as T
 
@@ -49,12 +58,11 @@ import Servant.API (ToHttpApiData(toUrlPiece))
 import qualified Data.Aeson.Types as Aeson (Parser)
 import Data.Void
 
-import Text.Megaparsec
+import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char (string, char)
 import Data.Functor (($>))
 import Data.Proxy
 import Data.Char (isSpace, isAlphaNum)
--- import Text.Megaparsec.Debug
 
 -- | A Definition Id
 newtype DefinitionId = DefId Int
@@ -71,8 +79,6 @@ data Definition
     , defState :: DefinitionState
     , defDescription :: Text
     , defFieldDefinitions :: Map FieldName Field
-      -- ^ Keyed by 'NewField' for fields created with the DSL, otherwise by
-      -- the 'ExistingField' id picked up from the server.
     , defVersion :: Maybe Integer
       -- ^ The "version", when the definition already exists.
       -- For atomic updates, like @'Ref'@'s version
@@ -94,12 +100,22 @@ data Field
     }
     deriving Show
 
+-- | Monoidal specification of a RecordM field.
+--
+-- The @'Last'@ fields mean the last mappend wins, e.g.
+-- @'mandatory' <> 'notMandatory'@ means @'notMandatory'@
 data FieldSpec = FieldSpec
   { specDescription :: FieldDescription
   , specMandatory   :: Last Bool
   , specDuplicable  :: Last Bool
   , specCondition   :: Last Condition
+    -- ^ Shown only when the parent field has this value
   }
+  deriving Show
+  deriving Generic
+  deriving (Semigroup, Monoid) via Generically FieldSpec
+
+instance IsString FieldSpec where fromString s = mempty{specDescription = fromString s}
 
 -- | The description keeps its parts in order, so that 'descText' gives back
 -- exactly the text it was parsed from.
@@ -120,8 +136,6 @@ descText (FieldDesc ps) = T.unwords [either id kwText (partEither p) | p <- ps]
 knownKws :: FieldDescription -> [Keyword]
 knownKws (FieldDesc ps) = [k | KwPart k <- ps]
 
--- | Abstract type representing a definition's field name.
--- Useful for defining conditionals (e.g. see '(===)').
 data FieldName
   = ExistingField Int
   -- ^ The id of a field which exists in the server
@@ -129,32 +143,22 @@ data FieldName
   -- ^ A field created here, doesn't have a number id yet.
   deriving (Eq, Ord, Show)
 
--- -- | New fields are ordered by declaration.
--- getFieldOrder :: Field -> Int
--- getFieldOrder Field{fieldOrder = Just o} = o
--- getFieldOrder Field{fieldId = NewField n} = n
--- getFieldOrder Field{fieldId = ExistingField i} = i
---
--- -- | The id sent to the server. New fields take negative ids.
--- getFieldId :: FieldName -> String
--- getFieldId (ExistingField i) = show i
--- getFieldId (NewField n) = show (-100000000 - n)
+mandatory, notMandatory, duplicable, notDuplicable :: FieldSpec
+mandatory     = mempty{specMandatory = Last (Just True)}
+notMandatory  = mempty{specMandatory = Last (Just False)}
+duplicable    = mempty{specDuplicable = Last (Just True)}
+notDuplicable = mempty{specDuplicable = Last (Just False)}
 
-data Condition
-  = Equals
-     { lhs :: Text -- ???
-     , rhs :: Text
-     }
+newtype Condition = Equals Text
   deriving Show
+
+-- | Only show the field when its parent field has the given value
+ifEquals :: Text -> FieldSpec
+ifEquals v = mempty{specCondition = Last (Just (Equals v))}
 
 data DefinitionState
   = EnabledDefinition
   deriving Show
-
-data FieldRequired
-  = MandatoryField
-  | FieldNotRequired
-  deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- $ Keywords
@@ -177,7 +181,7 @@ data Keyword
           -- ^ This reference can be of any type.
           -- Use coerce to make it a query ()
           }
-  | ReferencesKw { referencesKwDefName :: Text
+  | ReferencesKw { referencesKwDefName :: Text
                  , referencesKwFieldName :: Text
                  }
 
@@ -198,36 +202,36 @@ kwText = \case
     ListKw labels def -> keyword ("[" <> T.intercalate "," [l <> if Just l == def then "*" else "" | l <- labels] <> "]")
     RefKw{refKwDefName=defName, refKwQuery=query}
       -> keyword ("ref(" <> defName <> "," <> pack (_q query) <> ")")
-    ReferencesKw {referencesKwDefName, referencesKwFieldName}
+    ReferencesKw {referencesKwDefName, referencesKwFieldName}
       -> keyword ("references(" <> referencesKwDefName <> "," <> referencesKwFieldName <> ")")
    where
     keyword = ("$" <>)
 
-instanceLabel, instanceDescription, readOnly, number, datetime, date, time, text :: FieldDescription
-instanceLabel       = kwDesc InstanceLabelKw
-instanceDescription = kwDesc InstanceDescriptionKw
-readOnly            = kwDesc ReadOnlyKw
-number              = kwDesc NumberKw
-datetime            = kwDesc DateTimeKw
-date                = kwDesc DateKw
-time                = kwDesc TimeKw
-text                = kwDesc TextKw
+instanceLabel, instanceDescription, readOnly, number, datetime, date, time, text :: FieldSpec
+instanceLabel       = kwSpec InstanceLabelKw
+instanceDescription = kwSpec InstanceDescriptionKw
+readOnly            = kwSpec ReadOnlyKw
+number              = kwSpec NumberKw
+datetime            = kwSpec DateTimeKw
+date                = kwSpec DateKw
+time                = kwSpec TimeKw
+text                = kwSpec TextKw
 
-list :: [Text] -> FieldDescription
-list ls = kwDesc (ListKw ls Nothing)
+list :: [Text] -> FieldSpec
+list ls = kwSpec (ListKw ls Nothing)
 
 -- | A list with a default option
-listDefault :: [Text] -> Text -> FieldDescription
-listDefault ls def = kwDesc (ListKw ls (Just def))
+listDefault :: [Text] -> Text -> FieldSpec
+listDefault ls def = kwSpec (ListKw ls (Just def))
 
-dollarRef :: Text -> Query a -> FieldDescription
-dollarRef t q = kwDesc (RefKw t (coerce {-refkw holds a typeless ref-} q))
+dollarRef :: Text -> Query a -> FieldSpec
+dollarRef t q = kwSpec (RefKw t (coerce {-refkw holds a typeless ref-} q))
 
-dollarReferences :: Text -> Text -> FieldDescription
-dollarReferences t q = kwDesc (ReferencesKw t q)
+dollarReferences :: Text -> Text -> FieldSpec
+dollarReferences t q = kwSpec (ReferencesKw t q)
 
-kwDesc :: Keyword -> FieldDescription
-kwDesc kw = FieldDesc [KwPart kw]
+kwSpec :: Keyword -> FieldSpec
+kwSpec kw = mempty{specDescription = FieldDesc [KwPart kw]}
 
 --------------------------------------------------------------------------------
 -- * Creating and editing
@@ -244,53 +248,82 @@ simpleDefinition name descr
     , defVersion = Nothing
     }
 
-field :: FieldName -> Lens' Definition Field
-field name = lens get_field set_field where
+-- | Things with (sub)fields: a 'Definition' and each 'Field'
+class HasFields s where
+  fields :: Lens' s (Map FieldName Field)
 
-  get_field def = case M.lookup name def.defFieldDefinitions of
-    Nothing -> new_field def name
-    Just existing -> existing
+instance HasFields Definition where
+  fields = lens (.defFieldDefinitions) (\d fs -> d{defFieldDefinitions = fs})
 
-  new_field _ (ExistingField i) = error $ "existing field " ++ show i ++ " was not found in definition fields lookup"
-  new_field d (NewField name) = Field
-    { fieldName = name
-    , fieldDescription = mempty
-    , fieldDuplicable = False
-    , fieldRequired = FieldNotRequired
-    , fieldFields = mempty
-    , fieldCondition = Nothing
-    , fieldId = NewField name
-    , fieldOrder = getNextOrderId d
-    }
+instance HasFields Field where
+  fields = lens (.fieldFields) (\f fs -> f{fieldFields = fs})
 
-  -- overwrites existing field with that name if .~ set instead of %~.
-  -- that's also why most operators are Field -> Field functions.
-  -- if you want to use .~, you'll need to apply them to something.
-  set_field def f = M.insert name f def.defFieldDefinitions
+-- | The field with this id, if any. Setting 'Nothing' removes it.
+fieldById :: HasFields s => FieldName -> Lens' s (Maybe Field)
+fieldById k = fields . lens (M.lookup k) (\fs mf -> M.alter (const mf) k fs)
 
-named :: Text -> Lens' Definition Field
-
--- | Allow creating new fields with @"My new field"  instanceLabel <> 
-instance IsString _ where
-
--- | Pick the next available order id to append a new field to the definition
-getNextOrderId :: Definition -> Int
-getNextOrderId d = go (M.elems d.defFieldDefinitions)
+-- | Find an existing field by name amongst these fields or create a new one
+-- with this name. It can be applied to the top-level definition or to a
+-- field's sub-fields. 'field' and 'fieldById' are the primary way by which
+-- fields are created and modified on definitions:
+--
+-- @
+-- def
+-- -- (1)
+-- & field "First" . spec <>~ mandatory <> duplicate <> instanceLabel
+-- -- (2)
+-- & field "Name" . field "Shown if yes" %~ \f -> f
+--     & spec <>~ ifEquals "Yes" <> readOnly
+--     & field "Sub" . spec <>~ text
+--     & field "Other" . spec <>~ number
+-- @
+--
+-- where
+--  (1) create or find field "First" and augment (<>~) its spec with @mandatory@, @duplicate@, and @$instanceLabel@.
+--  (2) create field "Name", subfield "Shown if yes", and update the subfield
+--  to have a condition @=Yes@ and @$readonly@, plus two more sub-sub-fields.
+--
+-- Fails if several siblings have the same name; use 'fieldById' to refer to a
+-- field by its id specifically.
+field :: (HasCallStack, HasFields s) => Text -> Lens' s Field
+field name = fields . lens get_field set_field
   where
-    go :: [Field] -> Int
-    go fs = maximum [ max f.fieldOrder (go (M.elems f.fieldFields)) | f <- fs ]
+    get_field fs = case filter ((== name) . (.fieldName)) (M.elems fs) of
+      [] -> new_field fs
+      [f] -> f
+      dups -> error $ "field: ambiguous name " ++ show name ++ ", use fieldById with one of " ++ show (map (.fieldId) dups)
+    set_field fs f = M.insert f.fieldId f fs
+    new_field fs = Field
+      { fieldName = name
+      , fieldSpec = mempty
+      , fieldFields = mempty
+      , fieldId = NewField name
+      , fieldOrder = 1 + maximum (0 : map (.fieldOrder) (M.elems fs))
+      }
+
+spec :: Lens' Field FieldSpec
+spec = lens (.fieldSpec) (\f s -> f{fieldSpec = s})
+
+description :: Lens' FieldSpec FieldDescription
+description = lens (.specDescription) (\s d -> s{specDescription = d})
+
+isMandatory, isDuplicable :: Lens' FieldSpec Bool
+isMandatory  = lens (fromMaybe False . getLast . (.specMandatory))  (\s b -> s{specMandatory = Last (Just b)})
+isDuplicable = lens (fromMaybe False . getLast . (.specDuplicable)) (\s b -> s{specDuplicable = Last (Just b)})
 
 --------------------------------------------------------------------------------
 -- * RecordM JSON representation
 --------------------------------------------------------------------------------
 
 -- | Encode a 'Definition' as RecordM expects it when creating or updating one.
+--
+-- Fields are numbered in pre-order, siblings sorted by 'fieldOrder'.
 definitionValue :: Definition -> Value
 definitionValue Definition{..} =
   object
     [ "name" .= defName
     , "description" .= defDescription
-    , "fieldDefinitions" .= map fieldValue (M.elems defFieldDefinitions)
+    , "fieldDefinitions" .= evalState (fieldValues defFieldDefinitions) 0
     , "state" .= stateValue defState
     , "version" .= defVersion
     , "id" .= defId
@@ -299,22 +332,26 @@ definitionValue Definition{..} =
     stateValue :: DefinitionState -> Text
     stateValue EnabledDefinition = "enabled"
 
-    fieldValue :: Field -> Value
-    fieldValue f@Field{..} =
-      object $
-        [ "name" .= fieldName
-        , "description" .= descText fieldDescription
-        , "duplicable" .= fieldDuplicable
-        , "required" .= requiredValue fieldRequired
-        , "order" .= getFieldOrder f
-        , "id" .= getFieldId fieldId
-        ]
-        ++ [ "fields" .= map fieldValue (M.elems fieldFields) | not (M.null fieldFields) ]
-        ++ [ "condition" .= ("=" <> rhs) | Just Equals{rhs} <- [fieldCondition] ]
+    fieldValues :: Map FieldName Field -> State Int [Value]
+    fieldValues = mapM fieldValue . sortOn (.fieldOrder) . M.elems
 
-    requiredValue :: FieldRequired -> Text
-    requiredValue MandatoryField = "mandatory"
-    requiredValue FieldNotRequired = ""
+    fieldValue :: Field -> State Int Value
+    fieldValue f = do
+      order <- modify (+1) >> get
+      subs <- fieldValues f.fieldFields
+      let -- RecordM takes negative ids for new fields
+          idText (ExistingField i) = show i
+          idText (NewField _) = show (-100000000 - order)
+      pure $ object $
+        [ "name" .= f.fieldName
+        , "description" .= descText (f ^. spec . description)
+        , "duplicable" .= (f ^. spec . isDuplicable)
+        , "required" .= (if f ^. spec . isMandatory then "mandatory" else "" :: Text)
+        , "order" .= order
+        , "id" .= idText f.fieldId
+        ]
+        ++ [ "fields" .= subs | not (null subs) ]
+        ++ [ "condition" .= ("=" <> v) | Last (Just (Equals v)) <- [f.fieldSpec.specCondition] ]
 
 -- | Decode a 'Definition' as RecordM returns it.
 parseDefinition :: Value -> Aeson.Parser Definition
@@ -338,38 +375,35 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
     parseField :: Object -> Aeson.Parser (FieldName, Field)
     parseField fieldDef = do
       fieldName <- fieldDef .: "name"
-      fieldDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
-      fieldDuplicable <- fieldDef .: "duplicable"
-      fieldRequired <- parseFieldRequired =<< fieldDef .: "required"
+      specDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
+      specDuplicable <- Last . Just <$> fieldDef .: "duplicable"
+      specMandatory <- Last . Just <$> (parseFieldRequired =<< fieldDef .: "required")
+      specCondition <- Last <$> (parseCondition =<< fieldDef .:? "condition")
       fieldId <- ExistingField <$> fieldDef .: "id"
       fieldOrder <- fieldDef .: "order"
-
       fieldFields <- parseFields =<< fieldDef .: "fields"
-      fieldCondition <- parseCondition =<< fieldDef .:? "condition"
-
+      let fieldSpec = FieldSpec{..}
       return (fieldId, Field{..})
 
     parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
     parseFieldDescriptionAeson t = either fail pure (runFieldDescriptionParser t)
 
+    -- Only supports simple conditions for now, like "=Yes" or "=No"
     parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
-    parseCondition Nothing = pure Nothing
-    parseCondition (Just cond) = do
-      -- Only supports simple conditions for now, like "=Yes" or "=No"
-      -- TODO: seems horrible, need to fix!
-      case cond of
-        ('=':rhs) -> return $ Just (Equals "" (pack rhs))
-        _ -> fail $ "Unexpected condition format: " ++ show cond
+    parseCondition = \case
+      Nothing -> pure Nothing
+      Just ('=':v) -> pure (Just (Equals (pack v)))
+      Just cond -> fail $ "Unexpected condition format: " ++ show cond
 
     parseDefState :: Text -> Aeson.Parser DefinitionState
     parseDefState = \case
       "enabled" -> return EnabledDefinition
       s -> fail $ "Unexpected DefinitionState: " ++ show s
 
-    parseFieldRequired :: Maybe Text -> Aeson.Parser FieldRequired
+    parseFieldRequired :: Maybe Text -> Aeson.Parser Bool
     parseFieldRequired = \case
-      Just "mandatory" -> return MandatoryField
-      Nothing -> return FieldNotRequired
+      Just "mandatory" -> return True
+      Nothing -> return False
       Just r -> fail $ "Unexpected required value: " ++ show r
 
 --------------------------------------------------------------------------------

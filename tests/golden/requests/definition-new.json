@@ -4,6 +4,35 @@
         {
             "description": "$instanceLabel",
             "duplicable": false,
+            "fields": [
+                {
+                    "condition": "=Yes",
+                    "description": "",
+                    "duplicable": false,
+                    "fields": [
+                        {
+                            "description": "$text",
+                            "duplicable": false,
+                            "id": "-100000003",
+                            "name": "Sub",
+                            "order": 3,
+                            "required": ""
+                        },
+                        {
+                            "description": "$number",
+                            "duplicable": false,
+                            "id": "-100000004",
+                            "name": "Other",
+                            "order": 4,
+                            "required": ""
+                        }
+                    ],
+                    "id": "-100000002",
+                    "name": "Shown if yes",
+                    "order": 2,
+                    "required": ""
+                }
+            ],
             "id": "-100000001",
             "name": "Name",
             "order": 1,
@@ -12,25 +41,25 @@
         {
             "description": "$[A,B]",
             "duplicable": true,
-            "id": "-100000002",
+            "id": "-100000005",
             "name": "Tags",
-            "order": 2,
+            "order": 5,
             "required": ""
         },
         {
             "description": "$ref(GOLDEN Owners,name:x)",
             "duplicable": false,
-            "id": "-100000003",
+            "id": "-100000006",
             "name": "Owner",
-            "order": 3,
+            "order": 6,
             "required": ""
         },
         {
             "description": "$number $readonly Some text",
             "duplicable": true,
-            "id": "-100000004",
+            "id": "-100000007",
             "name": "Both",
-            "order": 4,
+            "order": 7,
             "required": "mandatory"
         },
         {
@@ -40,31 +69,22 @@
                 {
                     "description": "$text",
                     "duplicable": false,
-                    "id": "-100000006",
+                    "id": "-100000009",
                     "name": "Note",
-                    "order": 6,
+                    "order": 9,
                     "required": ""
                 },
                 {
                     "description": "$number",
                     "duplicable": false,
-                    "id": "-100000007",
+                    "id": "-100000010",
                     "name": "Score",
-                    "order": 7,
+                    "order": 10,
                     "required": ""
                 }
             ],
-            "id": "-100000005",
-            "name": "Details",
-            "order": 5,
-            "required": ""
-        },
-        {
-            "condition": "=Yes",
-            "description": "",
-            "duplicable": false,
             "id": "-100000008",
-            "name": "Shown if yes",
+            "name": "Details",
             "order": 8,
             "required": ""
         }

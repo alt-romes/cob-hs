@@ -115,23 +115,24 @@ kitchenNoOptionals = kitchen
 kitchenDef :: Definition
 kitchenDef =
   simpleDefinition "GOLDEN Kitchen" "A definition"
-    & "Name"  .~ instanceLabel
-    & "Tags"  .~ list ["A", "B"] <> mandatory
-    & "Owner" .~ dollarRef "GOLDEN Owners" ("name:x" :: Query ())
-    & "Both"  .~ mandatory <> number <> readOnly <> "Some text"
-    & "Details" .~ "Some details"
-        [ "Note" |= text
-        , "Score" |= number
-        ]
-    & conditional ("Name" === "Yes")
-        [ "Shown if yes" |= "" ]
+    & field "Name"  . spec <>~ instanceLabel <> mandatory
+    & field "Tags"  . spec <>~ list ["A", "B"] <> duplicable
+    & field "Owner" . spec <>~ dollarRef "GOLDEN Owners" ("name:x" :: Query ())
+    & field "Both"  . spec <>~ number <> readOnly <> "Some text" <> mandatory <> duplicable
+    & field "Details" . spec <>~ "Some details"
+    & field "Details" . field "Note"  . spec <>~ text
+    & field "Details" . field "Score" . spec <>~ number
+    & field "Name" . field "Shown if yes" %~ \f -> f
+        & spec <>~ ifEquals "Yes"
+        & field "Sub" . spec <>~ text
+        & field "Other" . spec <>~ number
 
 -- | 'kitchenDef' as if it already existed upstream, with its top-level fields reversed.
 kitchenDefExisting :: Definition
 kitchenDefExisting = kitchenDef
   { defId               = Just (DefId 77)
   , defVersion          = Just 5
-  , defFieldDefinitions = M.map (\f -> f { fieldOrder = Just (100 - getFieldOrder f) }) (defFieldDefinitions kitchenDef)
+  , defFieldDefinitions = M.map (\f -> f { fieldOrder = 100 - fieldOrder f }) (defFieldDefinitions kitchenDef)
   }
 
 --------------------------------------------------------------------------------
