@@ -5,30 +5,33 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 module Cob.RecordM.Definition
   ( -- * Static Definition
     Definition(..), Field(..), FieldDescription(..), DescPart(..), Condition(..), DefinitionState(..), FieldRequired(..)
-  , simpleDefinition, simpleField
-    -- * Definition Quoting (DSL)
-  , FieldName, getFieldOrder, getFieldId, DefinitionQ, fromDSL, runDSL, extendFromDSL
-  , (|=), (|+), (|=!), (|=*), (|=!*), mandatory, duplicable
-  , (===), (?)
-    -- ** Keywords
+  , simpleDefinition, field
+  , FieldName, getFieldOrder, getFieldId
+
+    -- * Keywords
   , Keyword(..), instanceLabel, instanceDescription, readOnly, number
   , datetime, date, time, text, list, listDefault, dollarRef, dollarReferences
+
     -- * RecordM JSON representation
   , DefinitionId(..), definitionValue, parseDefinition
-    -- * Utils
-  , descText, knownKws, rawDesc
+  , descText, knownKws
+
     -- ** Debugging
   , parseFieldDescription, parseKeyword
+
+  , -- * Modifying and constructing definition using lenses.
+  , (&), (%~), Endo(..)
   ) where
 
 import Data.String
 import Data.Aeson
 import Data.Functor.Identity
+import Data.Monoid
+import Lens.Micro
 import Control.Monad.State
 import Control.Monad.Reader
 import Data.Text (Text, pack, unpack)
@@ -79,58 +82,67 @@ data Definition
 data Field
   = Field
     { fieldName :: Text
-    , fieldDescription :: FieldDescription
-    , fieldDuplicable :: Bool
-    , fieldRequired :: FieldRequired
+    , fieldSpec :: FieldSpec
     , fieldFields :: Map FieldName Field
-    , fieldCondition :: Maybe Condition
     , fieldId :: FieldName
-    , fieldOrder :: Maybe Int
-      -- ^ Nothing for new fields. See 'getFieldOrder'.
-      -- You can update the order of the fields to re-order them in RecordM
+    , fieldOrder :: Int
+      -- ^ You can update the order of the fields to re-order them in RecordM
       -- upstream. (e.g. you can set fields with order 0,1,2 to have order
-      -- 2,1,0 respectively, and they'll be reversed in RecordM)
+      -- 2,1,0 respectively, and they'll be reversed in RecordM).
+      --
+      -- New fields get the next order id available.
     }
     deriving Show
 
--- | A description is kept as its parts in order, so that 'descText' gives
--- back exactly the text it was parsed from.
-newtype FieldDescription = FieldDesc [DescPart]
+data FieldSpec = FieldSpec
+  { specDescription :: FieldDescription
+  , specMandatory   :: Last Bool
+  , specDuplicable  :: Last Bool
+  , specCondition   :: Last Condition
+  }
 
+-- | The description keeps its parts in order, so that 'descText' gives back
+-- exactly the text it was parsed from.
+newtype FieldDescription = FieldDesc [DescPart]
 data DescPart = KwPart Keyword | RawPart Text
 
-instance Show FieldDescription where show = unpack . descText
-instance IsString FieldDescription where fromString s = FieldDesc [RawPart (pack s) | not (null s)]
-instance Semigroup FieldDescription where
-  FieldDesc a <> FieldDesc b = FieldDesc (a ++ [RawPart " " | not (null a || null b)] ++ b)
-instance Monoid FieldDescription where mempty = FieldDesc []
+instance IsString  FieldDescription where fromString = either error id . runFieldDescriptionParser . T.pack
+instance Show      FieldDescription where show = unpack . descText
+instance Semigroup FieldDescription where FieldDesc a <> FieldDesc b = FieldDesc (a ++ b)
+instance Monoid    FieldDescription where mempty = FieldDesc []
 
 descText :: FieldDescription -> Text
-descText (FieldDesc ps) = T.concat [either id kwText (partEither p) | p <- ps]
+descText (FieldDesc ps) = T.unwords [either id kwText (partEither p) | p <- ps]
+  where
+    partEither (KwPart k) = Right k
+    partEither (RawPart t) = Left t
 
 knownKws :: FieldDescription -> [Keyword]
 knownKws (FieldDesc ps) = [k | KwPart k <- ps]
 
-rawDesc :: FieldDescription -> Text
-rawDesc (FieldDesc ps) = joinWords [T.strip t | RawPart t <- ps]
+-- | Abstract type representing a definition's field name.
+-- Useful for defining conditionals (e.g. see '(===)').
+data FieldName
+  = ExistingField Int
+  -- ^ The id of a field which exists in the server
+  | NewField Text
+  -- ^ A field created here, doesn't have a number id yet.
+  deriving (Eq, Ord, Show)
 
-partEither :: DescPart -> Either Text Keyword
-partEither (KwPart k) = Right k
-partEither (RawPart t) = Left t
-
-joinWords :: [Text] -> Text
-joinWords = T.unwords . filter (not . T.null)
+-- -- | New fields are ordered by declaration.
+-- getFieldOrder :: Field -> Int
+-- getFieldOrder Field{fieldOrder = Just o} = o
+-- getFieldOrder Field{fieldId = NewField n} = n
+-- getFieldOrder Field{fieldId = ExistingField i} = i
+--
+-- -- | The id sent to the server. New fields take negative ids.
+-- getFieldId :: FieldName -> String
+-- getFieldId (ExistingField i) = show i
+-- getFieldId (NewField n) = show (-100000000 - n)
 
 data Condition
   = Equals
-     { lhs :: Text
-     , rhs :: Text
-     }
-  deriving Show
-
-data UnresolvedCondition
-  = UnrEquals
-     { lhs :: FieldName
+     { lhs :: Text -- ???
      , rhs :: Text
      }
   deriving Show
@@ -168,8 +180,9 @@ data Keyword
   | ReferencesKw { referencesKwDefName :: Text
                  , referencesKwFieldName :: Text
                  }
+
 instance IsString Keyword where fromString = RawKw . fromString
-instance Show Keyword where show = unpack . kwText
+instance Show     Keyword where show = unpack . kwText
 
 kwText :: Keyword -> Text
 kwText = \case
@@ -217,294 +230,8 @@ kwDesc :: Keyword -> FieldDescription
 kwDesc kw = FieldDesc [KwPart kw]
 
 --------------------------------------------------------------------------------
--- * The Definition Builder DSL / Monad
+-- * Creating and editing
 --------------------------------------------------------------------------------
-{-| 
-
-The definition builder DSL allows one to programatically create definitions.
-
-== ** Example **
-
-@
-rodrigoTeste = do
-  nomeField <- "Nome" := "$instanceLabel"
-  "Teste2" := ""
-  mandatory "Mandatory" "$readonly"
-  "Mandatory2" :=!!! "$readonly"
-  dupable "Dupable" "$instanceField"
-  "Dupable2" :=*** "$instanceField"
-
-  "Sub Field" :== "Descrip.." do
-    "Its SubField" :== "..." do
-      "Sub Sub" := ""
-      "Sibling Sub Sub" := ""
-    "Sibling Sub
-
-  Conditional :== "" do
-    if nomeField === "RODRIGO" then do
-        "Condition True" := ""
-        "Condition True 2" := ""
-    else if nomeField === "TESTE"
-@
--}
-
--- | Abstract type representing a definition's field name.
--- Useful for defining conditionals (e.g. see '(===)').
-data FieldName
-  = ExistingField Int
-  -- ^ The id of a field which exists in the server
-  | NewField Int
-  -- ^ A field created with the DSL, numbered in declaration order
-  deriving (Eq, Ord, Show)
-
--- | New fields are ordered by declaration.
-getFieldOrder :: Field -> Int
-getFieldOrder Field{fieldOrder = Just o} = o
-getFieldOrder Field{fieldId = NewField n} = n
-getFieldOrder Field{fieldId = ExistingField i} = i
-
--- | The id sent to the server. New fields take negative ids.
-getFieldId :: FieldName -> String
-getFieldId (ExistingField i) = show i
-getFieldId (NewField n) = show (-100000000 - n)
-
-type DefinitionQ = DefinitionQM ()
-type DefinitionQM = Free DefinitionQF
-
-data DefinitionQF next
-  = Declare Text FieldDescription (FieldName -> next)
-  -- ^ A field
-  | AddSubs FieldName (DefinitionQM [FieldName]) ([FieldName] -> next)
-  -- ^ A field with sub-fields
-  | Mandatory FieldName next
-  -- ^ Make a field mandatory
-  | Duplicable FieldName next
-  -- ^ Make a field duplicable
-  | IfCondition UnresolvedCondition (DefinitionQM [FieldName]) ([FieldName] -> next)
-  deriving Functor
-
-$(makeFree ''DefinitionQF)
-
--- | Declare a field
-(|=) :: Text -> FieldDescription -> DefinitionQM FieldName
-(|=) = declare
-
--- | Declare subfields for a field.
---
--- Typically used as
---
--- @
--- "This Field" |= "This description" |+ do
---    "Sub Field" |= "Desc..."
---    return []
--- @
-(|+) :: DefinitionQM FieldName -> DefinitionQM [FieldName] -> DefinitionQM (FieldName, [FieldName])
-(|+) decl subs = do
-  field <- decl
-  subfields <- addSubs field subs
-  return (field, subfields)
-infixr 0 |+
-
--- | Declare a mandatory field
-(|=!) :: Text -> FieldDescription -> DefinitionQM FieldName
-(|=!) lhs rhs = do
-  field <- declare lhs rhs
-  mandatory field
-  return field
-
--- | Declare a duplicable field
-(|=*) :: Text -> FieldDescription -> DefinitionQM FieldName
-(|=*) lhs rhs = do
-  field <- declare lhs rhs
-  duplicable field
-  return field
-  
--- | Declare a duplicable and mandatory field
-(|=!*) :: Text -> FieldDescription -> DefinitionQM FieldName
-(|=!*) lhs rhs = do
-  field <- declare lhs rhs
-  mandatory field
-  duplicable field
-  return field
-
--- | Declare fields under a condition
-(===) :: FieldName -> Text -> DefinitionQM [FieldName] -> DefinitionQM [FieldName]
-(===) lhs rhs = ifCondition (lhs `UnrEquals` rhs)
-
--- | Syntax sugar for defining conditionals, between @'(===)'@ and the @do@ block.
---
--- @
--- fieldName === "Something" ? do
---    "Field A" |= "$instanceLabel"
---    "Field B" |= "$instanceDescription"
--- @
-(?) :: (DefinitionQM [FieldName] -> DefinitionQM [FieldName]) -> DefinitionQM [FieldName] -> DefinitionQM [FieldName]
-(?) = ($)
-infixr 0 ?
-
--- Generated:
--- mandatory   :: FieldName -> DefinitionQ
--- duplicable  :: FieldName -> DefinitionQ
-
-
---------------------------------------------------------------------------------
--- Interpreter
---------------------------------------------------------------------------------
-
-fromDSL :: Text
-        -- ^ Definition Name
-        -> Text
-        -- ^ Definition Description
-        -> DefinitionQ
-        -- ^ Definition quote (DSL building a definition)
-        -> Definition
-        -- ^ The resulting definition
-fromDSL defName defDescription defQ
-  = snd $ runDSL defName defDescription defQ
-
-runDSL :: Text
-        -- ^ Definition Name
-        -> Text
-        -- ^ Definition Description
-        -> DefinitionQM a
-        -- ^ Definition quote (DSL building a definition)
-        -> (a, Definition)
-        -- ^ The resulting definition and computation result
-runDSL defName defDescription defQ
-  = runIdentity $
-    runFresh $
-    runStateT
-      (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
-      (simpleDefinition defName defDescription)
-
-extendFromDSL
-  :: Definition
-  -- ^ The Definition to update
-  -> DefinitionQ
-  -- ^ Definition quote (DSL extending an existing definition)
-  -> Definition
-  -- ^ The resulting definition
-extendFromDSL def defQ
-  = snd $
-    (evalState . (\(Fresh f) -> f))
-      (runStateT
-         (evalStateT (runReaderT (interpret defQ) []) (mempty, Nothing))
-         def)
-    (1 + maximum (0 : map getFieldOrder (allFields def.defFieldDefinitions)))
-  where
-    allFields = concatMap (\f -> f : allFields f.fieldFields) . M.elems
-
-interpret :: DefinitionQM a -> Interpreter a
-interpret = iterM algebra
-
-algebra :: DefinitionQF (Interpreter a) -> Interpreter a
-algebra = \case
-  Declare field descr f -> do
-    fname <- fresh
-    path <- ask
-    currentCond <- gets snd
-    let field_data = (simpleField fname field descr){fieldCondition = currentCond}
-    lift $ modify (first $ M.insert fname path)
-    lift . lift $
-      modify (addField path field_data)
-    f fname
-  AddSubs field subs next -> do
-    -- Concat is fine, we never have that many nested fields
-    subsNames <-
-      local (++ [field]) $
-        interpret subs
-    next subsNames
-
-  Mandatory field f -> do
-    paths <- lift $ gets fst
-    lift . lift $ modify $
-      modifyField (fromMaybe (error "field not found in paths") $ M.lookup field paths) field (\fi -> fi{fieldRequired = MandatoryField})
-    f
-  Duplicable field f -> do
-    paths <- lift $ gets fst
-    lift . lift $ modify $
-      modifyField (fromMaybe (error "field not found in paths") $ M.lookup field paths) field (\fi -> fi{fieldDuplicable = True})
-    f
-  IfCondition cond under f -> do
-    cond' <- resolve cond
-    modify (second $ const $ Just cond')
-    fieldNames <- interpret under
-    f fieldNames
-  where
-    resolve :: UnresolvedCondition -> Interpreter Condition
-    resolve = \case
-      UnrEquals lhs rhs -> do
-        paths <- lift $ gets fst
-        let pathToLhs = paths M.! lhs
-        defin <- lift . lift $ get
-        return $ Equals (fieldName $ findField pathToLhs lhs defin.defFieldDefinitions) rhs
-
-    findField :: [FieldName] -> FieldName -> Map FieldName Field -> Field
-    findField [] f m = m M.! f
-    findField (p:ps) f m = findField ps f (fieldFields (m M.! p))
-  
-type Interpreter a
-  = ReaderT [FieldName]
-      (StateT (Map FieldName [FieldName], Maybe Condition {- The current conditional in effect -})
-           -- \^ The path to each FieldName in the Definition, and the current path
-           -- Example:
-           -- 
-           -- Field A:
-           --   Field B:
-           --     Field C:
-           --       -- Current Path == [A,B,C]
-           -- 
-           -- path to C == [A,B]
-           (StateT Definition (Fresh Identity))) a
-
-fresh :: Interpreter FieldName
-fresh = do
-  i <- lift . lift . lift $ get
-  lift . lift . lift $ modify' (+1)
-  return (NewField i)
-
---------------------------------------------------------------------------------
--- Utils: Definition
---------------------------------------------------------------------------------
-
-addField :: [FieldName]
-         -- ^ Path at which to add the field.
-         -- If empty, add at definition root (fieldDefinitions),
-         -- otherwise, traverse the maps and add at the corresponding sub-field.
-         -> Field
-         -- ^ The (sub)-field to add.
-         -> Definition -> Definition
-addField path new_field def =
-  let fields' = editFieldMap path (M.insert new_field.fieldId new_field) def.defFieldDefinitions
-   in def{defFieldDefinitions = fields'}
-
-modifyField :: [FieldName]
-            -- ^ Path to field
-            -> FieldName
-            -- ^ Actual Field
-            -> (Field -> Field) -> Definition -> Definition
-modifyField path fid upd def =
-  let fields' = editFieldMap path (M.adjust upd fid) def.defFieldDefinitions
-   in def{defFieldDefinitions = fields'}
-
-editFieldMap :: [FieldName]
-             -- ^ Path to field
-             -> (Map FieldName Field -> Map FieldName Field)
-             -- ^ Function to update Field Map at that path
-             -> Map FieldName Field
-             -- ^ Map to update
-             -> Map FieldName Field
-             -- ^ Updated map
-editFieldMap [] upd field_map = upd field_map
-editFieldMap (path:paths) upd field_map
-  = case M.lookup path field_map of
-      Nothing -> error $ "Couldn't find path " ++ show path ++ " in " ++ show field_map
-      Just field0 ->
-        let field1 = field0{fieldFields =
-              editFieldMap paths upd field0.fieldFields}
-         in M.insert path field1 field_map
-
-  
 
 simpleDefinition :: Text -> Text -> Definition
 simpleDefinition name descr
@@ -517,28 +244,41 @@ simpleDefinition name descr
     , defVersion = Nothing
     }
 
-simpleField :: FieldName -> Text -> FieldDescription -> Field
-simpleField fid name descr
-  = Field
+field :: FieldName -> Lens' Definition Field
+field name = lens get_field set_field where
+
+  get_field def = case M.lookup name def.defFieldDefinitions of
+    Nothing -> new_field def name
+    Just existing -> existing
+
+  new_field _ (ExistingField i) = error $ "existing field " ++ show i ++ " was not found in definition fields lookup"
+  new_field d (NewField name) = Field
     { fieldName = name
-    , fieldDescription = descr
+    , fieldDescription = mempty
     , fieldDuplicable = False
     , fieldRequired = FieldNotRequired
     , fieldFields = mempty
     , fieldCondition = Nothing
-    , fieldId = fid
-    , fieldOrder = Nothing
+    , fieldId = NewField name
+    , fieldOrder = getNextOrderId d
     }
 
---------------------------------------------------------------------------------
--- Util: Fresh
---------------------------------------------------------------------------------
+  -- overwrites existing field with that name if .~ set instead of %~.
+  -- that's also why most operators are Field -> Field functions.
+  -- if you want to use .~, you'll need to apply them to something.
+  set_field def f = M.insert name f def.defFieldDefinitions
 
-newtype Fresh m a = Fresh (StateT Int m a)
-  deriving (Functor, Applicative, Monad, MonadState Int)
+named :: Text -> Lens' Definition Field
 
-runFresh :: Monad m => Fresh m a -> m a
-runFresh (Fresh f) = evalStateT f 1
+-- | Allow creating new fields with @"My new field"  instanceLabel <> 
+instance IsString _ where
+
+-- | Pick the next available order id to append a new field to the definition
+getNextOrderId :: Definition -> Int
+getNextOrderId d = go (M.elems d.defFieldDefinitions)
+  where
+    go :: [Field] -> Int
+    go fs = maximum [ max f.fieldOrder (go (M.elems f.fieldFields)) | f <- fs ]
 
 --------------------------------------------------------------------------------
 -- * RecordM JSON representation
@@ -610,12 +350,7 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
       return (fieldId, Field{..})
 
     parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
-    parseFieldDescriptionAeson t =
-      case runParser parseFieldDescription "" t of
-        Left e -> fail $ "Failed to parse description " ++ show t ++ ":\n" ++ errorBundlePretty e
-        Right d
-          | descText d /= t -> fail $ "Description " ++ show t ++ " would be sent back as " ++ show (descText d)
-          | otherwise -> return d
+    parseFieldDescriptionAeson t = either fail pure (runFieldDescriptionParser t)
 
     parseCondition :: Maybe String -> Aeson.Parser (Maybe Condition)
     parseCondition Nothing = pure Nothing
@@ -640,6 +375,13 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
 --------------------------------------------------------------------------------
 -- ** Parsing keywords (with Megaparsec)
 --------------------------------------------------------------------------------
+
+runFieldDescriptionParser :: Text -> Either String FieldDescription
+runFieldDescriptionParser t = case runParser parseFieldDescription "runFieldDescriptionParser" t of
+  Left e -> Left $ "Failed to parse description " ++ show t ++ ":\n" ++ errorBundlePretty e
+  Right d
+    | descText d /= t -> Left $ "Description " ++ show t ++ " would be sent back as " ++ show (descText d)
+    | otherwise -> Right d
 
 parseFieldDescription :: Parsec Void Text FieldDescription
 parseFieldDescription =
@@ -682,4 +424,3 @@ parseReferencesKeyword = do
   fieldName <- manyTill anySingle (lookAhead (char ')'))
   char ')'
   return $ ReferencesKw (tokensToChunk (Proxy @Text) defName) (tokensToChunk (Proxy @Text) fieldName)
-

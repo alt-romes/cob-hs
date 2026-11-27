@@ -113,19 +113,18 @@ kitchenNoOptionals = kitchen
   }
 
 kitchenDef :: Definition
-kitchenDef = fromDSL "GOLDEN Kitchen" "A definition" $ do
-  name <- "Name" |=! instanceLabel
-  _ <- "Tags" |=* list ["A", "B"]
-  _ <- "Owner" |= dollarRef "GOLDEN Owners" ("name:x" :: Query ())
-  _ <- "Both" |=!* (number <> readOnly <> "Some text")
-  _ <- "Details" |= "Some details" |+ do
-    _ <- "Note" |= text
-    _ <- "Score" |= number
-    pure []
-  _ <- name === "Yes" ? do
-    _ <- "Shown if yes" |= ""
-    pure []
-  pure ()
+kitchenDef =
+  simpleDefinition "GOLDEN Kitchen" "A definition"
+    & "Name"  .~ instanceLabel
+    & "Tags"  .~ list ["A", "B"] <> mandatory
+    & "Owner" .~ dollarRef "GOLDEN Owners" ("name:x" :: Query ())
+    & "Both"  .~ mandatory <> number <> readOnly <> "Some text"
+    & "Details" .~ "Some details"
+        [ "Note" |= text
+        , "Score" |= number
+        ]
+    & conditional ("Name" === "Yes")
+        [ "Shown if yes" |= "" ]
 
 -- | 'kitchenDef' as if it already existed upstream, with its top-level fields reversed.
 kitchenDefExisting :: Definition

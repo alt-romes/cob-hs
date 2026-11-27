@@ -49,7 +49,7 @@ prettyField p f = vsep [annotate bold (fill 12 k) <+> v | (k, v) <- rows]
       , ("Name", pretty (fieldName f))
       , ("Parent", maybe "-" (pretty . getFieldId) p)
       , ("Keywords", hsep (map (annotate (color Cyan) . viaShow) (knownKws fd)))
-      , ("Description", pretty (rawDesc fd))
+      , ("Description", pretty (descText fd))
       , ("Mandatory", yesNo (isMandatory f))
       , ("Duplicable", yesNo (fieldDuplicable f))
       , ("Condition", maybe "-" (pretty . condText) (fieldCondition f))
