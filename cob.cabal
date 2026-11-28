@@ -109,7 +109,7 @@ library cob-events
 test-suite cob-tests
     type: exitcode-stdio-1.0
     main-is: Main.hs
-    build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson, string-qq,
+    build-depends: base, cob, tasty, tasty-hunit, tasty-expected-failure, mtl, text, aeson, string-qq,
                    directory, time, fast-logger, containers
     hs-source-dirs: tests
     default-language: GHC2021

@@ -14,7 +14,7 @@ import Control.Applicative ((<|>))
 import Control.Monad (forM_, void, (<=<))
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, runReaderT)
-import Data.Aeson (FromJSON, Object, Value(..), eitherDecodeFileStrict', withObject, (.:))
+import Data.Aeson (FromJSON, Key, Object, Value(..), eitherDecodeFileStrict', withObject, (.:))
 import Data.Aeson.Types (Parser, parseEither)
 import qualified Data.Aeson.KeyMap as KM
 import Data.IORef
@@ -34,6 +34,7 @@ import System.Log.FastLogger (fromLogStr)
 
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.ExpectedFailure (expectFail)
 
 import Cob
 import Cob.RecordM (getDefinition, updDefinition)
@@ -78,6 +79,9 @@ sbClientDef =
 -- The definition is overwritten with 'sbClientDef' before the tests run, and
 -- the definition tests modify it further (restoring it afterwards), so the
 -- token only needs permission to modify (and add instances to) it.
+--
+-- In fact, the token should ONLY have permissions for that definition
+-- including `definition:update:<id>` to modify it.
 --
 -- Path: COB_TEST_CONFIG env var, defaulting to `tests/cob-test.json`.
 --------------------------------------------------------------------------------
@@ -163,6 +167,9 @@ allTests env = dependentTestGroup "Cob integration tests" AllFinish
     , testCase "Adding a field with subfields"             $ testSubfields        env
     , testCase "Reordering fields and back"                $ testReorder          env
     , testCase "RecordM reads conditions as we do"         $ testConditions       env
+    , testCase "RecordM derives the keys we don't send"    $ testDerivedKeys      env
+    , expectFail $
+      testCase "RecordM doesn't derive required"           $ testRequiredNotDerived env
     ]
   , testGroup "Records (mockCob)" (recordTests env)
   ]
@@ -325,6 +332,58 @@ visibilityOf n v = case [ o | o <- objects v, KM.lookup "name" o == Just (String
 
     ops = [ ("Equal", Equal), ("NotEqual", NotEqual), ("HigherThan", Greater)
           , ("HigherThanOrEqual", GreaterEq), ("LowerThan", Lower), ("LowerThanOrEqual", LowerEq) ]
+
+-- | Sending a definition without its 'derivedKeys' leaves RecordM in the same
+-- state as sending it back whole, as RecordM's own UI does.
+testDerivedKeys :: TestEnv -> Assertion
+testDerivedKeys = sentAsWhole id
+
+-- | 'required' isn't derived, so sending it without it must not be the same.
+testRequiredNotDerived :: TestEnv -> Assertion
+testRequiredNotDerived = sentAsWhole (withoutKey "required")
+
+-- | Sending the definition as we encode it, after the given change, leaves
+-- RecordM in the same state as sending it back whole.
+sentAsWhole :: (Value -> Value) -> TestEnv -> Assertion
+sentAsWhole change env = withDef env $ \did -> do
+  _ <- updDefinition did derivedDef
+  whole <- performReq (Servant.getDefinition did)
+  _ <- performReq (Servant.updDefinition did whole)
+  viaWhole <- performReq (Servant.getDefinition did)
+  ours <- definitionValue <$> getDefinition did
+  _ <- performReq (Servant.updDefinition did (change ours))
+  viaOurs <- performReq (Servant.getDefinition did)
+  liftIO $ do
+    assertBool "every derived key must have a non-trivial value in some field" $
+      all (\k -> any (`notElem` [Null, Bool False, Array mempty]) (valuesAt k viaOurs)) (filter (/= "_links") derivedKeys)
+    withoutKey "version" viaOurs @?= withoutKey "version" viaWhole
+
+-- | Remove the given key, at any depth
+withoutKey :: Key -> Value -> Value
+withoutKey k = \case
+  Object o -> Object (KM.map (withoutKey k) (KM.delete k o))
+  Array a -> Array (fmap (withoutKey k) a)
+  v -> v
+
+-- | Exercises every one of the 'derivedKeys'
+derivedDef :: Definition -> Definition
+derivedDef d = d
+  & field "Group" . spec <>~ "$group"
+  & field "Group" . field "Kind" %~ (\f -> f
+      & spec <>~ listDefault ["A", "B"] "A" <> "$radio"
+      & field "Only A" . spec <>~ ifCondition "=A"
+      & field "Not B" . spec <>~ ifCondition "!B")
+  & field "Group" . field "Other" . spec <>~ ifCondition "Kind=B"
+  & field "Group" . field "Either" . spec <>~ ifCondition "(Kind=A || Kind=B) && Secret!"
+  & field "Secret" . spec <>~ "$restricted(cob-tests)" <> mandatory
+  & field "Items" %~ (\f -> f & spec <>~ duplicable & field "Item" . spec <>~ text)
+
+-- | Every value of the given key, at any depth
+valuesAt :: Key -> Value -> [Value]
+valuesAt k = \case
+  Object o -> maybe id (:) (KM.lookup k o) (concatMap (valuesAt k) (KM.elems o))
+  Array a -> concatMap (valuesAt k) a
+  _ -> []
 
 --------------------------------------------------------------------------------
 -- Record tests
