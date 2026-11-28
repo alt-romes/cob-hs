@@ -69,7 +69,12 @@ applyEdit :: Edit -> Definition -> Definition
 applyEdit = \case
   SetName _ n -> \d -> d{defName = n}
   SetDesc _ t -> \d -> d{defDescription = t}
+  SetField ps _ Nothing (Just f) -> let f' = renew f in fieldAt ps (fieldId f') ?~ f'
   SetField ps k _ new -> fieldAt ps k .~ new
+
+-- | The field and its subfields, to be created anew
+renew :: Field -> Field
+renew f = f{fieldId = NewField (fieldName f)} & fields %~ M.fromList . map ((\g -> (fieldId g, g)) . renew) . M.elems
 
 invEdit :: Edit -> Edit
 invEdit = \case
@@ -101,8 +106,8 @@ resolve d = \case
 -- | Give new fields the ids the server assigned to them
 settle :: Definition -> Edit -> Edit
 settle d = \case
-  SetField ps (NewField n) Nothing (Just _)
-    | f : _ <- sortOn (Down . fieldId) [f | (ps', f) <- allFields d, ps' == ps, fieldName f == n]
+  SetField ps _ Nothing (Just new)
+    | f : _ <- sortOn (Down . fieldId) [f | (ps', f) <- allFields d, ps' == ps, fieldName f == fieldName new]
     -> SetField ps (fieldId f) Nothing (Just f)
   e -> e
 
