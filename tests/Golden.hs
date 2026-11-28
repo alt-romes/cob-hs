@@ -7,6 +7,7 @@
 module Main (main) where
 
 import Data.Aeson
+import Data.Aeson.Types (parseEither)
 import Data.Aeson.Encode.Pretty (Config(..), defConfig, encodePretty')
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map as M
@@ -162,11 +163,24 @@ main = defaultMain $ testGroup "CoB JSON golden tests"
     , request "userm-create-user"             (encUser (User "jdoe" (Just "secret") "John Doe" "jdoe@example.invalid" Nothing (Just "JDOE")))
     , request "userm-group-users"             (encGroupUsers [1, 2])
     , request "userm-login"                   (encLogin (LoginData "jdoe" "secret"))
+    , roundtrip "definition-anonymized"
     , testGroup "conditions" conditionTests
     ]
 
 requests :: FilePath
 requests = "tests/golden/requests"
+
+-- | A definition GETten from RecordM must be encoded back exactly as it came
+-- (RecordM's PUTs back what it GETs whole except for modifications).
+-- 'parseDefinition' checks this at runtime as soon as a definition is parsed.
+--
+-- This gives us confidence that our PUTs are not erasing data, especially for
+-- things we didn't touch. But it also increases confidence that the stuff we
+-- will touch will be written correctly.
+roundtrip :: String -> TestTree
+roundtrip name = testCase ("roundtrip " ++ name) $ do
+  Just v <- decodeFileStrict ("tests/fixtures" </> name <.> "json")
+  either assertFailure (const (pure ())) (parseEither parseDefinition v)
 
 -- | Groupings as reported by RecordM's @visibilityCondition@
 conditionTests :: [TestTree]

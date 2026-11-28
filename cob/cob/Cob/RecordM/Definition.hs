@@ -38,11 +38,12 @@ module Cob.RecordM.Definition
   , descText, knownKws
 
     -- ** Debugging
-  , parseFieldDescription, parseKeyword
+  , parseFieldDescription, parseKeyword, derivedKeys
   ) where
 
 import Data.String
 import Data.Aeson
+import qualified Data.Aeson.KeyMap as KM
 import Control.Monad.State (State, evalState, get, modify)
 import Data.List (sortOn)
 import Data.Monoid
@@ -366,8 +367,26 @@ definitionValue Definition{..} =
         ]
 
 -- | Decode a 'Definition' as RecordM returns it.
+--
+-- At parse-runtime, we'll check the 'definitionValue' of the parsed result
+-- matches exactly the sent result (except for the 'derivedKeys'), so that
+-- updating a definition never loses something we didn't parse or don't know
+-- how to encode.
 parseDefinition :: Value -> Aeson.Parser Definition
-parseDefinition = withObject "Definition" $ \jsonDef -> do
+parseDefinition v = do
+  d <- parseDefinitionFields v
+  if definitionValue d == withoutDerived v
+    then pure d
+    else fail "The definition would not be sent back as it came"
+  where
+    withoutDerived :: Value -> Value
+    withoutDerived = \case
+      Object o -> Object (KM.map withoutDerived (foldr KM.delete o derivedKeys))
+      Array a  -> Array (fmap withoutDerived a)
+      x        -> x
+
+parseDefinitionFields :: Value -> Aeson.Parser Definition
+parseDefinitionFields = withObject "Definition" $ \jsonDef -> do
 
   -- def
   defId   <- Just . DefId <$> jsonDef .: "id"
@@ -415,6 +434,14 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
       Just "mandatory" -> return True
       Nothing -> return False
       Just r -> fail $ "Unexpected required value: " ++ show r
+
+-- | Keys we don't have to send in RecordM PUTs because they are re-derived
+-- from the others (e.g. @restricted@ is derived from a @$restricted(...)@ in
+-- the description).
+derivedKeys :: [Key]
+derivedKeys =
+  [ "_links", "configuration", "visibilityCondition", "rootField", "duplicablePath"
+  , "defaultValue", "restricted", "descendents" ]
 
 --------------------------------------------------------------------------------
 -- ** Parsing keywords (with Megaparsec)
