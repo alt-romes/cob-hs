@@ -82,6 +82,7 @@ data Definition
     , defName :: Text
     , defState :: DefinitionState
     , defDescription :: Text
+    , defDuplicable :: Maybe Bool
     , defFieldDefinitions :: Map FieldName Field
     , defVersion :: Maybe Integer
       -- ^ The "version", when the definition already exists.
@@ -121,21 +122,22 @@ data FieldSpec = FieldSpec
 
 instance IsString FieldSpec where fromString s = mempty{specDescription = fromString s}
 
--- | The description keeps its parts in order, so that 'descText' gives back
--- exactly the text it was parsed from.
+-- | The description keeps its parts in order, whitespace included, so that
+-- 'descText' gives back exactly the text it was parsed from.
 newtype FieldDescription = FieldDesc [DescPart]
 data DescPart = KwPart Keyword | RawPart Text
 
 instance IsString  FieldDescription where fromString = either error id . runFieldDescriptionParser . T.pack
 instance Show      FieldDescription where show = unpack . descText
-instance Semigroup FieldDescription where FieldDesc a <> FieldDesc b = FieldDesc (a ++ b)
+-- | Non-empty descriptions are separated by a space
+instance Semigroup FieldDescription where
+  FieldDesc a <> FieldDesc b
+    | null a || null b = FieldDesc (a ++ b)
+    | otherwise = FieldDesc (a ++ RawPart " " : b)
 instance Monoid    FieldDescription where mempty = FieldDesc []
 
 descText :: FieldDescription -> Text
-descText (FieldDesc ps) = T.unwords [either id kwText (partEither p) | p <- ps]
-  where
-    partEither (KwPart k) = Right k
-    partEither (RawPart t) = Left t
+descText (FieldDesc ps) = T.concat [case p of KwPart k -> kwText k; RawPart t -> t | p <- ps]
 
 knownKws :: FieldDescription -> [Keyword]
 knownKws (FieldDesc ps) = [k | KwPart k <- ps]
@@ -204,7 +206,7 @@ kwText = \case
     DateKw -> keyword "date"
     TimeKw -> keyword "time"
     TextKw -> keyword "text"
-    ListKw labels def -> keyword ("[" <> T.intercalate "," [l <> if Just l == def then "*" else "" | l <- labels] <> "]")
+    ListKw labels def -> keyword ("[" <> T.intercalate "," [(if Just l == def then "*" else "") <> l | l <- labels] <> "]")
     RefKw{refKwDefName=defName, refKwQuery=query}
       -> keyword ("ref(" <> defName <> "," <> pack (_q query) <> ")")
     ReferencesKw {referencesKwDefName, referencesKwFieldName}
@@ -249,6 +251,7 @@ simpleDefinition name descr
     , defName = name
     , defDescription = descr
     , defState = EnabledDefinition
+    , defDuplicable = Nothing
     , defFieldDefinitions = mempty
     , defVersion = Nothing
     }
@@ -303,7 +306,7 @@ field name = fields . lens get_field set_field
       , fieldSpec = mempty
       , fieldFields = mempty
       , fieldId = NewField name
-      , fieldOrder = 1 + maximum (0 : map (.fieldOrder) (M.elems fs))
+      , fieldOrder = 1 + maximum (-1 : map (.fieldOrder) (M.elems fs))
       }
 
 spec :: Lens' Field FieldSpec
@@ -322,12 +325,13 @@ isDuplicable = lens (fromMaybe False . getLast . (.specDuplicable)) (\s b -> s{s
 
 -- | Encode a 'Definition' as RecordM expects it when creating or updating one.
 --
--- Fields are numbered in pre-order, siblings sorted by 'fieldOrder'.
+-- Fields are numbered in pre-order from 0, siblings sorted by 'fieldOrder'.
 definitionValue :: Definition -> Value
 definitionValue Definition{..} =
   object
     [ "name" .= defName
     , "description" .= defDescription
+    , "duplicable" .= defDuplicable
     , "fieldDefinitions" .= evalState (fieldValues defFieldDefinitions) 0
     , "state" .= stateValue defState
     , "version" .= defVersion
@@ -343,21 +347,23 @@ definitionValue Definition{..} =
 
     fieldValue :: Field -> State Int Value
     fieldValue f = do
-      order <- modify (+1) >> get
+      order <- get <* modify (+1)
       subs <- fieldValues f.fieldFields
-      let -- RecordM takes negative ids for new fields
-          idText (ExistingField i) = show i
-          idText (NewField _) = show (-100000000 - order)
-      pure $ object $
+      let desc = descText (f ^. spec . description)
+          -- RecordM takes negative ids for new fields
+          fid = case f.fieldId of
+            ExistingField i -> i
+            NewField _ -> -100000000 - order
+      pure $ object
         [ "name" .= f.fieldName
-        , "description" .= descText (f ^. spec . description)
+        , "description" .= (if T.null desc then Nothing else Just desc)
         , "duplicable" .= (f ^. spec . isDuplicable)
         , "required" .= (if f ^. spec . isMandatory then Just "mandatory" else Nothing :: Maybe Text)
         , "order" .= order
-        , "id" .= idText f.fieldId
+        , "id" .= fid
+        , "fields" .= subs
+        , "condition" .= fmap condText (getLast f.fieldSpec.specCondition)
         ]
-        ++ [ "fields" .= subs | not (null subs) ]
-        ++ [ "condition" .= condText c | Last (Just c) <- [f.fieldSpec.specCondition] ]
 
 -- | Decode a 'Definition' as RecordM returns it.
 parseDefinition :: Value -> Aeson.Parser Definition
@@ -367,6 +373,7 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
   defId   <- Just . DefId <$> jsonDef .: "id"
   defName <- jsonDef .: "name"
   defDescription <- jsonDef .:? "description" .!= ""
+  defDuplicable <- jsonDef .:? "duplicable"
   defState <- parseDefState =<< jsonDef .: "state"
   defVersion <- jsonDef .: "version"
 
@@ -381,7 +388,7 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
     parseField :: Object -> Aeson.Parser (FieldName, Field)
     parseField fieldDef = do
       fieldName <- fieldDef .: "name"
-      specDescription <- parseFieldDescriptionAeson =<< fieldDef .:? "description" .!= ""
+      specDescription <- maybe (pure mempty) parseFieldDescriptionAeson =<< fieldDef .: "description"
       specDuplicable <- Last . Just <$> fieldDef .: "duplicable"
       specMandatory <- Last . Just <$> (parseFieldRequired =<< fieldDef .: "required")
       specCondition <- Last <$> (parseCondition =<< fieldDef .:? "condition")
@@ -434,9 +441,9 @@ parseKeyword = (char '$' *>) $
   <|> named "date" DateKw
   <|> named "time" TimeKw
   <|> named "text" TextKw
-  <|> parseListKeyword
-  <|> parseReferencesKeyword
-  <|> parseRefKeyword
+  <|> try parseListKeyword
+  <|> try parseReferencesKeyword
+  <|> try parseRefKeyword
   <|> (RawKw <$> takeWhileP Nothing (not . isSpace)) -- fallback
   where
     named n k = try (string n <* notFollowedBy (satisfy isAlphaNum)) $> k
@@ -444,8 +451,8 @@ parseKeyword = (char '$' *>) $
 parseListKeyword :: Parsec Void Text Keyword
 parseListKeyword = do
   items <- char '[' *> sepBy1 (takeWhile1P Nothing (`notElem` [',', ']'])) (char ',') <* char ']'
-  let labels = map (\l -> fromMaybe l (T.stripSuffix "*" l)) items
-  return $ ListKw labels (T.stripSuffix "*" =<< listToMaybe (filter ("*" `T.isSuffixOf`) items))
+  let labels = map (\l -> fromMaybe l (T.stripPrefix "*" l)) items
+  return $ ListKw labels (T.stripPrefix "*" =<< listToMaybe (filter ("*" `T.isPrefixOf`) items))
 
 parseRefKeyword :: Parsec Void Text Keyword
 parseRefKeyword = do
