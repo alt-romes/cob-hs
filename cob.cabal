@@ -111,6 +111,7 @@ test-suite cob-tests
     main-is: Main.hs
     build-depends: base, cob, tasty, tasty-hunit, tasty-expected-failure, mtl, text, aeson, string-qq,
                    directory, time, fast-logger, containers
+    other-modules: Sandbox
     hs-source-dirs: tests
     default-language: GHC2021
 

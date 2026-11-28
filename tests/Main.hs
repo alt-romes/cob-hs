@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DuplicateRecordFields #-}
@@ -14,20 +13,16 @@ import Control.Applicative ((<|>))
 import Control.Monad (forM_, void, (<=<))
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, runReaderT)
-import Data.Aeson (FromJSON, Key, Object, Value(..), eitherDecodeFileStrict', withObject, (.:))
+import Data.Aeson (Key, Object, Value(..), withObject, (.:))
 import Data.Aeson.Types (Parser, parseEither)
 import qualified Data.Aeson.KeyMap as KM
 import Data.IORef
-import Data.List (sortOn)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import GHC.Generics (Generic)
-import System.Directory (doesFileExist)
-import System.Environment (lookupEnv)
 import System.IO (hPutStrLn, stderr)
 import System.Log.FastLogger (fromLogStr)
 
@@ -44,6 +39,8 @@ import qualified Cob.RecordM.Servant as Servant
 import Cob.Utils (performReq)
 import Cob.RecordM.TH
 
+import Sandbox
+
 --------------------------------------------------------------------------------
 -- Test schema
 --------------------------------------------------------------------------------
@@ -59,65 +56,13 @@ data SBClient = SBClient
   } deriving Show
 mkRecord ''SBClient "TEST Sandbox Clients" ["Email", "Name", "Kickstarter"]
 
-sbClientDef :: Definition
-sbClientDef =
-  simpleDefinition "TEST Sandbox Clients" "Cob tests — clients"
-    & field "Email"       . spec <>~ instanceLabel <> mandatory
-    & field "Name"        . spec <>~ ""
-    & field "Kickstarter" . spec <>~ list ["Yes", "No"]
-
---------------------------------------------------------------------------------
--- Test configuration
---
--- JSON file with the following shape:
---
---   {
---     "host":         "test.cultofbits.com",
---     "token":        "…",
---     "definitionId": 123
---   }
---
--- The definition is overwritten with 'sbClientDef' before the tests run, and
--- the definition tests modify it further (restoring it afterwards), so the
--- token only needs permission to modify (and add instances to) it.
---
--- In fact, the token should ONLY have permissions for that definition
--- including `definition:update:<id>` to modify it.
---
--- Path: COB_TEST_CONFIG env var, defaulting to `tests/cob-test.json`.
---------------------------------------------------------------------------------
-
-data TestConfig = TestConfig
-  { host         :: String
-  , token        :: String
-  , definitionId :: Int
-  } deriving (Generic)
-
-instance FromJSON TestConfig
-
-readConfig :: FilePath -> IO (Either String TestConfig)
-readConfig fp = do
-  exists <- doesFileExist fp
-  if not exists
-    then return (Left ("file not found: " <> fp))
-    else eitherDecodeFileStrict' fp
-
-setupDefinition :: CobSession -> DefinitionId -> IO ()
-setupDefinition s did = void (runReaderT (updDefinition did setFields) s)
-  where
-    setFields d = d
-      { defName             = defName sbClientDef
-      , defDescription      = defDescription sbClientDef
-      , defFieldDefinitions = defFieldDefinitions sbClientDef
-      }
-
 --------------------------------------------------------------------------------
 -- Entry point
 --------------------------------------------------------------------------------
 
 main :: IO ()
 main = do
-  path <- fromMaybe "tests/cob-test.json" <$> lookupEnv "COB_TEST_CONFIG"
+  path <- configPath
   ecfg <- readConfig path
   case ecfg of
     Left err -> do
@@ -202,25 +147,6 @@ uniqueEmail env tag = do
   now <- getPOSIXTime
   let stamp = show (truncate now :: Integer)
   return $ T.pack ("cob-tests+" <> tag <> "-" <> stamp <> "-" <> show n <> "@example.invalid")
-
--- | Name, description and mandatoriness of top-level fields, by order.
-describeFields :: Definition -> [(Text, Text, Bool)]
-describeFields = map describeField . sortOn fieldOrder . M.elems . defFieldDefinitions
-  where
-    describeField f = (fieldName f, descText (f ^. spec . description), f ^. spec . isMandatory)
-
-fieldNames :: Definition -> [Text]
-fieldNames = map (\(n, _, _) -> n) . describeFields
-
-fieldIds :: Definition -> [(Text, FieldName)]
-fieldIds d = [ (fieldName f, fieldId f) | f <- M.elems (defFieldDefinitions d) ]
-
-sbClientFields :: [(Text, Text, Bool)]
-sbClientFields =
-  [ ("Email",       "$instanceLabel", True)
-  , ("Name",        "",               False)
-  , ("Kickstarter", "$[Yes,No]",      False)
-  ]
 
 sampleClient :: Text -> SBClient
 sampleClient e = SBClient
