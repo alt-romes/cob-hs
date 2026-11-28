@@ -5,7 +5,7 @@ module Main (main) where
 
 import Control.Exception (finally)
 import Control.Monad.Reader (runReaderT)
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, isPrefixOf)
 import Data.Text (Text)
 import System.Exit (ExitCode(..))
 import System.IO (hPutStrLn, stderr)
@@ -54,6 +54,12 @@ tests env = dependentTestGroup "cobsh" AllFinish $ map (\(n, t) -> testCase n (r
   , ("undo reverts changes in reverse order",    testUndo)
   , ("undo restores a deleted field",            testUndoDelete)
   , ("history lists the changes",                testHistory)
+  , ("lines lists the fields with their ids",    testLines)
+  , ("apply of the same lines changes nothing",  testApplyUnchanged)
+  , ("apply --dry-run changes nothing",          testApplyDryRun)
+  , ("apply edits, adds and deletes fields",     testApplyEdits)
+  , ("apply reorders fields",                    testApplyReorder)
+  , ("apply refuses moving to another parent",   testApplyMove)
   ]
 
 --------------------------------------------------------------------------------
@@ -79,6 +85,18 @@ repl env ls = do
   assertEqual "cobsh shell failed" ExitSuccess code
   assertBool ("cobsh shell errors: " ++ err) (null err)
   pure out
+
+-- | The definition's fields as lines to edit
+fieldLines :: Env -> IO [String]
+fieldLines env = lines <$> cobsh_ env ["lines"]
+
+-- | Make the fields those of the lines, as the vim plugin does
+apply :: Env -> [String] -> [String] -> IO (ExitCode, String, String)
+apply env args ls = cobsh env ("apply" : args) (unlines ls)
+
+-- | The line without its id
+withoutId :: String -> String
+withoutId = drop 1 . dropWhile (/= ' ')
 
 current :: Env -> IO Definition
 current env = runReaderT (getDefinition (envDefId env)) (envSession env)
@@ -196,3 +214,57 @@ testHistory :: Env -> Assertion
 testHistory env = do
   out <- repl env ["new Extra", "name Renamed", "history"]
   mapM_ (contains out) ["1. definition", "2. definition", "+ field", "\"Extra\"", "name: \"TEST Sandbox Clients\" -> \"Renamed\""]
+
+testLines :: Env -> Assertion
+testLines env = do
+  ls <- fieldLines env
+  assertBool ("lines must start with their ids: " ++ show ls) (all ("/" `isPrefixOf`) ls)
+  map withoutId ls @?= ["Email*: $instanceLabel", "Name:", "Kickstarter: $[Yes,No]"]
+
+testApplyUnchanged :: Env -> Assertion
+testApplyUnchanged env = do
+  before <- current env
+  (code, out, _) <- apply env [] =<< fieldLines env
+  code @?= ExitSuccess
+  contains out "Nothing to change"
+  after <- current env
+  defVersion after @?= defVersion before
+
+testApplyDryRun :: Env -> Assertion
+testApplyDryRun env = do
+  before <- current env
+  ls <- fieldLines env
+  (code, out, _) <- apply env ["--dry-run"] (ls ++ ["Notes: $text"])
+  code @?= ExitSuccess
+  contains out "+ field new \"Notes\" $text"
+  after <- current env
+  defVersion after @?= defVersion before
+
+testApplyEdits :: Env -> Assertion
+testApplyEdits env = do
+  [email, name, _kickstarter] <- fieldLines env
+  (code, _, err) <- apply env []
+    [ email, "  Confirmed*: $[Yes,No]"
+    , takeWhile (/= ' ') name ++ " Full name+: some text"
+    , "", "Notes: $text" ]
+  assertEqual err ExitSuccess code
+  ls <- fieldLines env
+  map withoutId ls @?= ["Email*: $instanceLabel", "  Confirmed*: $[Yes,No]", "Full name+: some text", "Notes: $text"]
+  take 1 ls @?= [email]
+
+testApplyReorder :: Env -> Assertion
+testApplyReorder env = do
+  ls <- fieldLines env
+  (code, _, err) <- apply env [] (reverse ls)
+  assertEqual err ExitSuccess code
+  ls' <- fieldLines env
+  ls' @?= reverse ls
+
+testApplyMove :: Env -> Assertion
+testApplyMove env = do
+  [email, name, kickstarter] <- fieldLines env
+  let (i, rest) = break (== ' ') name
+  (code, _, err) <- apply env [] [email, i ++ "   " ++ drop 1 rest, kickstarter]
+  code @?= ExitFailure 1
+  contains err "fields can't be moved to another parent"
+  fieldsAfter env [] sbClientFields

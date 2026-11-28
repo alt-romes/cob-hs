@@ -13,13 +13,15 @@ import Data.Bifunctor
 import Data.Char
 import Data.Group
 import Data.IORef
-import Data.List (dropWhileEnd, sortOn)
+import Data.List (dropWhileEnd, sort, sortOn)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid (Last(..))
 import Data.Ord (Down(..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import Data.Tree (Forest, Tree(..))
 import GHC.Generics (Generic)
 import Lens.Micro
 import Options.Applicative
@@ -45,7 +47,7 @@ import Cob.RecordM.Definition
 -- Language
 --------------------------------------------------------------------------------
 
-data Cmd = Modify DefMod | Undo | Info | ShowField FieldRef | Log
+data Cmd = Modify DefMod | Apply Bool | Undo | Info | ShowField FieldRef | Log | Lines
 
 data FieldRef = ById Int | ByName Text
 
@@ -177,6 +179,100 @@ instance Act Change Definition where
   Change es • d = foldl' (flip applyEdit) d es
 
 --------------------------------------------------------------------------------
+-- Fields as text, one per line
+--------------------------------------------------------------------------------
+
+-- | @/ID@, then the field indented under its parent as @Name*+: description@,
+-- with @*@ when mandatory and @+@ when duplicable
+fieldLines :: Definition -> Either String [Text]
+fieldLines d = sequence
+  [ if T.any (== '\n') (desc f) then Left ("Field " ++ idText (fieldId f) ++ " has a multi-line description") else Right $
+      "/" <> T.pack (idText (fieldId f)) <> " " <> T.replicate (length ps) "  " <> fieldName f
+        <> T.pack (['*' | mandatory' f] ++ ['+' | duplicable' f]) <> ":" <> (if T.null (desc f) then "" else " " <> desc f)
+  | (ps, f) <- allFields d ]
+  where desc f = descText (f ^. spec . description)
+
+-- | A field as written on a line
+data FieldLine = FieldLine
+  { lineId :: Maybe Int
+  , lineName :: Text
+  , lineMandatory, lineDuplicable :: Bool
+  , lineDesc :: FieldDescription
+  }
+
+-- | The fields of the lines, under the field above with less indentation
+parseLines :: [Text] -> Either String (Forest FieldLine)
+parseLines ls = forest <$> traverse parseLine (filter (not . T.all isSpace) ls)
+  where
+    forest = \case
+      [] -> []
+      (n, l) : rest -> let (kids, rest') = span ((> n) . fst) rest in Node l (forest kids) : forest rest'
+
+-- | A line with its indentation
+parseLine :: Text -> Either String (Int, FieldLine)
+parseLine l = do
+  let (lineId, body) = case T.stripPrefix "/" l of
+        Just r | (i, b) <- T.span isDigit r, Just n <- readMaybe (T.unpack i), Just b' <- T.stripPrefix " " b -> (Just n, b')
+        _ -> (Nothing, l)
+      (indent, rest) = T.span (== ' ') body
+      (lhs, rhs) = T.breakOn ":" rest
+      flags = T.takeWhileEnd (`elem` ['*', '+']) lhs
+      t = T.drop 1 rhs
+      txt = fromMaybe t (T.stripPrefix " " t)
+  when (T.null rhs) $ Left ("Expected `Name: description`, got " ++ show l)
+  lineDesc <- first errorBundlePretty (parse parseFieldDescription "" txt)
+  when (descText lineDesc /= txt) $ Left ("Description " ++ show txt ++ " would be sent as " ++ show (descText lineDesc))
+  pure (T.length indent, FieldLine
+    { lineId, lineDesc
+    , lineName = T.dropWhileEnd (`elem` ['*', '+']) lhs
+    , lineMandatory = T.elem '*' flags
+    , lineDuplicable = T.elem '+' flags })
+
+withLine :: FieldLine -> Field -> Field
+withLine l f = f{fieldName = lineName l}
+  & spec . description .~ lineDesc l
+  & spec . isMandatory .~ lineMandatory l
+  & spec . isDuplicable .~ lineDuplicable l
+
+-- | The edits making the fields under these parents those of the lines.
+-- Fields keep their parent; new ones go after the existing ones.
+diffFields :: [FieldName] -> M.Map FieldName Field -> Forest FieldLine -> Either String [Edit]
+diffFields ps fs ts = do
+  let ids = [ExistingField i | Node FieldLine{lineId = Just i} _ <- ts]
+      orders = M.fromList (zip ids (sort [fieldOrder f | Just f <- map (`M.lookup` fs) ids]))
+      next = 1 + maximum (-1 : map fieldOrder (M.elems fs))
+  forM_ ids \k -> unless (M.member k fs && length (filter (== k) ids) == 1) $
+    Left ("Field " ++ idText k ++ " is not under its parent, or is there twice: fields can't be moved to another parent nor copied")
+  uniqueNames ts
+  edits <- forM (zip [next ..] ts) \(o, t@(Node l kids)) -> case lineId l of
+    Nothing -> do
+      f <- newField o t
+      pure [SetField ps (fieldId f) Nothing (Just f)]
+    Just i -> do
+      let k = ExistingField i
+          f = fs M.! k
+          f' = (withLine l f){fieldOrder = orders M.! k}
+      subs <- diffFields (ps ++ [k]) (f ^. fields) kids
+      pure ([SetField ps k (Just f) (Just f') | not (null (fieldDiff f f'))] ++ subs)
+  pure ([SetField ps k (Just f) Nothing | (k, f) <- M.toList fs, k `notElem` ids] ++ concat edits)
+
+-- | A new field and its subfields, which must be new too
+newField :: Int -> Tree FieldLine -> Either String Field
+newField o (Node l kids) = do
+  forM_ (lineId l) \i -> Left ("Field " ++ show i ++ " can't be moved under a new field")
+  uniqueNames kids
+  subs <- zipWithM newField [0 ..] kids
+  pure $ withLine l Field
+    { fieldName = lineName l, fieldSpec = mempty, fieldId = NewField (lineName l), fieldOrder = o
+    , fieldFields = M.fromList [(fieldId s, s) | s <- subs] }
+
+-- | New fields must not share their name with a sibling
+uniqueNames :: Forest FieldLine -> Either String ()
+uniqueNames ts = forM_ [n | Node FieldLine{lineId = Nothing, lineName = n} _ <- ts] \n ->
+  when (length (filter (== n) names) > 1) $ Left ("There are several fields named " ++ show n)
+  where names = map (lineName . rootLabel) ts
+
+--------------------------------------------------------------------------------
 -- Command line
 --------------------------------------------------------------------------------
 
@@ -193,6 +289,9 @@ lineP = Line
     , cmd "desc" "Set the definition's description" (Modify . Desc <$> strArgument (metavar "TEXT"))
     , cmd "new" "Add a field" (fmap Modify . New <$> strArgument (metavar "NAME") <*> many (argument kwReader (metavar "KEYWORD..." <> completeWith keywords)))
     , cmd "delete" "Delete a field" (Modify . Delete <$> refArg)
+    , cmd "lines" "Print the fields as lines to edit, one per line" (pure Lines)
+    , cmd "apply" "Make the fields those of the lines read from stdin, as printed by `lines`"
+        (Apply <$> switch (long "dry-run" <> help "Only show what would change"))
     , cmd "undo" "Revert the last change" (pure Undo)
     , cmd "history" "List the changes made in this session" (pure Log)
     ]))
@@ -259,15 +358,19 @@ fieldLabel f = pretty (idText (fieldId f)) <+> quote (fieldName f)
 fieldDiff :: Field -> Field -> [Doc AnsiStyle]
 fieldDiff o n = concat
   [ ["name:" <+> quote (fieldName n) | fieldName o /= fieldName n]
-  , [added ("+" <> viaShow k) | k <- kws n, not (any (sameKw k) (kws o))]
-  , [removed ("-" <> viaShow k) | k <- kws o, not (any (sameKw k) (kws n))]
+  , plus, minus
   , ["desc:" <+> quote (raw n) | raw o /= raw n]
+  , ["desc:" <+> quote (full n) | null plus, null minus, raw o == raw n, full o /= full n]
   , ["mandatory:" <+> yesNo (mandatory' n) | mandatory' o /= mandatory' n]
   , ["duplicable:" <+> yesNo (duplicable' n) | duplicable' o /= duplicable' n]
+  , ["moved" | fieldOrder o /= fieldOrder n]
   ]
   where
+    plus = [added ("+" <> viaShow k) | k <- kws n, not (any (sameKw k) (kws o))]
+    minus = [removed ("-" <> viaShow k) | k <- kws o, not (any (sameKw k) (kws n))]
     kws = knownKws . (^. spec . description)
     raw = rawText . (^. spec . description)
+    full = descText . (^. spec . description)
 
 mandatory', duplicable' :: Field -> Bool
 mandatory' = (^. spec . isMandatory)
@@ -277,10 +380,13 @@ prettyEdit :: Edit -> Doc AnsiStyle
 prettyEdit = \case
   SetName o n -> "name:" <+> removed (quote o) <+> "->" <+> added (quote n)
   SetDesc o n -> "desc:" <+> removed (quote o) <+> "->" <+> added (quote n)
-  SetField _ _ Nothing (Just f) -> added ("+ field" <+> fieldLabel f <+> descDoc (f ^. spec . description))
-  SetField _ _ (Just f) Nothing -> removed ("- field" <+> fieldLabel f)
+  SetField ps _ Nothing (Just f) -> added ("+ field" <+> fieldLabel f <+> descDoc (f ^. spec . description)) <> under ps
+  SetField ps _ (Just f) Nothing -> removed ("- field" <+> fieldLabel f) <> under ps
   SetField _ _ (Just o) (Just n) -> "field" <+> fieldLabel o <> ":" <+> hsep (fieldDiff o n)
   SetField _ _ Nothing Nothing -> mempty
+
+under :: [FieldName] -> Doc ann
+under ps = if null ps then mempty else " under" <+> pretty (idText (last ps))
 
 fieldsTable :: Definition -> Doc AnsiStyle
 fieldsTable d = vsep $ annotate underlined (row "ID" "Name" "Flags" <+> "Description")
@@ -343,10 +449,14 @@ runCmd Env{session, activeDef, changes} = \case
     es <- either fail pure . (`resolve` m) =<< cob (getDefinition i)
     let summary = vsep (map prettyEdit es)
     ok <- if any isDel es then confirm (nest 2 (vsep ["Delete from definition" <+> viaShow i <> ":", summary]) <> "\nProceed?") else pure True
-    if null es || not ok then pure (if ok then "Nothing to change" else "Aborted") else do
-      d' <- cob (updDefinition i (Change es •))
-      modifyIORef changes ((i, Change (map (settle d') es)) :)
-      pure summary
+    if null es || not ok then pure (if ok then "Nothing to change" else "Aborted") else summary <$ commit i es
+  Apply dry -> withActive \i -> do
+    ts <- either fail pure . parseLines . T.lines =<< T.getContents
+    d <- cob (getDefinition i)
+    es <- either fail pure (diffFields [] (d ^. fields) ts)
+    let summary = vsep (map prettyEdit es)
+    if null es then pure "Nothing to change" else if dry then pure summary else summary <$ commit i es
+  Lines -> withActive \i -> vsep . map pretty <$> (either fail pure . fieldLines =<< cob (getDefinition i))
   Undo -> readIORef changes >>= \case
     [] -> fail "Nothing to undo"
     (i, c) : h -> do
@@ -364,6 +474,9 @@ runCmd Env{session, activeDef, changes} = \case
   where
     cob m = runReaderT m session
     withActive k = maybe (fail "No active definition: use `-d ID` first") k =<< readIORef activeDef
+    commit i es = do
+      d' <- cob (updDefinition i (Change es •))
+      modifyIORef changes ((i, Change (map (settle d') es)) :)
     isDel = \case SetField _ _ (Just _) Nothing -> True; _ -> False
 
 confirm :: Doc ann -> IO Bool
