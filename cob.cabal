@@ -127,7 +127,7 @@ executable cobsh
     main-is:          Main.hs
     build-depends:    base, cob, haskeline, megaparsec, text, aeson, mtl, containers, groups,
                       prettyprinter, prettyprinter-ansi-terminal, directory, filepath, process,
-                      optparse-applicative, shellwords
+                      optparse-applicative, shellwords, acts >= 0.3, microlens
     hs-source-dirs:   app
     default-language: GHC2021
     ghc-options:      -Wall

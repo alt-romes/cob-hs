@@ -7,6 +7,7 @@ module Main where
 import Control.Exception
 import Control.Monad
 import Control.Monad.Reader
+import Data.Act
 import Data.Aeson (FromJSON, eitherDecodeFileStrict')
 import Data.Bifunctor
 import Data.Char
@@ -15,11 +16,14 @@ import Data.IORef
 import Data.List (dropWhileEnd, sortOn)
 import qualified Data.Map as M
 import Data.Maybe
+import Data.Monoid (Last(..))
+import Data.Ord (Down(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
+import Lens.Micro
 import Options.Applicative
-import Prettyprinter (Doc, Pretty(..), (<+>), align, annotate, defaultLayoutOptions, hsep, layoutPretty, nest, parens, unAnnotate, viaShow, vsep)
+import Prettyprinter (Doc, Pretty(..), (<+>), align, annotate, defaultLayoutOptions, hcat, hsep, layoutPretty, nest, parens, unAnnotate, viaShow, vsep)
 import Prettyprinter.Render.Terminal (AnsiStyle, Color(..), bold, color, renderStrict, underlined)
 import qualified ShellWords
 import System.Console.Haskeline
@@ -41,101 +45,112 @@ import Cob.RecordM.Definition
 -- Language
 --------------------------------------------------------------------------------
 
-data Cmd = Modify DefModification | Undo | Info | ShowField FieldRef | Log
+data Cmd = Modify DefMod | Undo | Info | ShowField FieldRef | Log
 
 data FieldRef = ById Int | ByName Text
 
-data DefModification
-  = SetName Text
-  | SetDesc Text
-  | NewField Text [Keyword]
+data DefMod
+  = Name Text
+  | Desc Text
+  | New Text [Keyword]
   | ModField FieldRef [FieldMod]
-  | DeleteField FieldRef
+  | Delete FieldRef
 
-data FieldMod = AddKw Keyword | DelKw Keyword | FName Text | FDesc Text | FMandatory Bool | FDuplicable Bool
+data FieldMod = AddKw Keyword | DelKw Keyword | FName Text | FDesc FieldDescription | FMandatory Bool | FDuplicable Bool
 
--- | A self-contained, invertible edit to a 'Definition'
+-- | Sets a part of a 'Definition', remembering what was there before
 data Edit
-  = Rename Text Text
-  | Redescribe Text Text
-  | AddNew Text FieldDescription
-  | DropNew Text FieldDescription
-  | SetField Field Field
-  | DelField (Maybe FieldName) Field
-  | PutField (Maybe FieldName) Field
+  = SetName Text Text
+  | SetDesc Text Text
+  | SetField [FieldName] FieldName (Maybe Field) (Maybe Field)
+  -- ^ The field with this id under these parents
 
 applyEdit :: Edit -> Definition -> Definition
 applyEdit = \case
-  Rename _ n -> \d -> d{defName = n}
-  Redescribe _ t -> \d -> d{defDescription = t}
-  AddNew n fd -> \d -> extendFromDSL d (void (n |= fd))
-  DropNew n _ -> \d ->
-    let fs = defFieldDefinitions d
-     in d{defFieldDefinitions = maybe fs ((`M.delete` fs) . fst) (M.lookupMax (M.filter ((== n) . fieldName) fs))}
-  SetField _ new -> onField (fieldId new) \f -> new{fieldFields = fieldFields f}
-  DelField _ f -> onFieldMaps (M.delete (fieldId f))
-  PutField Nothing f -> \d -> d{defFieldDefinitions = M.insert (fieldId f) f (defFieldDefinitions d)}
-  PutField (Just p) f -> onField p \pf -> pf{fieldFields = M.insert (fieldId f) f (fieldFields pf)}
+  SetName _ n -> \d -> d{defName = n}
+  SetDesc _ t -> \d -> d{defDescription = t}
+  SetField ps k _ new -> fieldAt ps k .~ new
 
 invEdit :: Edit -> Edit
 invEdit = \case
-  Rename o n -> Rename n o
-  Redescribe o n -> Redescribe n o
-  AddNew n fd -> DropNew n fd
-  DropNew n fd -> AddNew n fd
-  SetField o n -> SetField n o
-  DelField p f -> PutField p f
-  PutField p f -> DelField p f
+  SetName o n -> SetName n o
+  SetDesc o n -> SetDesc n o
+  SetField ps k o n -> SetField ps k n o
+
+-- | The field with this id under this path of parent ids
+fieldAt :: HasFields s => [FieldName] -> FieldName -> Traversal' s (Maybe Field)
+fieldAt [] k = fieldById k
+fieldAt (p : ps) k = fieldById p . _Just . fieldAt ps k
 
 -- | Fill in the old values of the modification, dropping no-ops
-resolve :: Definition -> DefModification -> Either String [Edit]
+resolve :: Definition -> DefMod -> Either String [Edit]
 resolve d = \case
-  SetName n -> pure [Rename (defName d) n | defName d /= n]
-  SetDesc t -> pure [Redescribe (defDescription d) t | defDescription d /= t]
-  NewField n kws -> pure [AddNew n (FieldDesc kws "")]
+  Name n -> pure [SetName (defName d) n | defName d /= n]
+  Desc t -> pure [SetDesc (defDescription d) t | defDescription d /= t]
+  New n kws
+    | any ((== n) . fieldName) (d ^. fields) -> Left ("Field " ++ show n ++ " already exists")
+    | otherwise -> pure [SetField [] (NewField n) Nothing (Just (d ^. field n & spec . description .~ foldMap kwDesc kws))]
   ModField r fms -> do
-    (_, f) <- lookupField r d
+    (ps, f) <- lookupField r d
     let f' = foldl' (flip modField) f fms
-    pure [SetField f f' | not (null (fieldDiff f f'))]
-  DeleteField r -> pure . uncurry DelField <$> lookupField r d
+    pure [SetField ps (fieldId f) (Just f) (Just f') | not (null (fieldDiff f f'))]
+  Delete r -> do
+    (ps, f) <- lookupField r d
+    pure [SetField ps (fieldId f) (Just f) Nothing]
+
+-- | Give new fields the ids the server assigned to them
+settle :: Definition -> Edit -> Edit
+settle d = \case
+  SetField ps (NewField n) Nothing (Just _)
+    | f : _ <- sortOn (Down . fieldId) [f | (ps', f) <- allFields d, ps' == ps, fieldName f == n]
+    -> SetField ps (fieldId f) Nothing (Just f)
+  e -> e
 
 modField :: FieldMod -> Field -> Field
 modField = \case
-  AddKw kw -> onDesc \fd -> fd{knownKws = knownKws fd ++ [kw | not (any (sameKw kw) (knownKws fd))]}
-  DelKw kw -> onDesc \fd -> fd{knownKws = filter (not . sameKw kw) (knownKws fd)}
+  AddKw k -> spec . description %~ \fd -> if any (sameKw k) (knownKws fd) then fd else fd <> kwDesc k
+  DelKw k -> spec . description %~ dropKw k
   FName n -> \f -> f{fieldName = n}
-  FDesc t -> onDesc \fd -> fd{rawDesc = t}
-  FMandatory b -> \f -> f{fieldRequired = if b then MandatoryField else FieldNotRequired}
-  FDuplicable b -> \f -> f{fieldDuplicable = b}
-  where onDesc g f = f{fieldDescription = g (fieldDescription f)}
+  FDesc t -> spec . description %~ \fd -> foldMap kwDesc (knownKws fd) <> t
+  FMandatory b -> spec . isMandatory .~ b
+  FDuplicable b -> spec . isDuplicable .~ b
+
+kwDesc :: Keyword -> FieldDescription
+kwDesc k = FieldDesc [KwPart k]
+
+-- | Drop the keyword along with the blanks separating it from the rest
+dropKw :: Keyword -> FieldDescription -> FieldDescription
+dropKw k (FieldDesc ps) = FieldDesc (dropWhileEnd blank (go ps))
+  where
+    go = \case
+      KwPart k' : rest | sameKw k k' -> go (dropWhile blank rest)
+      p : rest -> p : go rest
+      [] -> []
+    blank = \case RawPart t -> T.all isSpace t; KwPart _ -> False
+
+-- | The description without its keywords
+rawText :: FieldDescription -> Text
+rawText (FieldDesc ps) = T.unwords (T.words (T.concat [t | RawPart t <- ps]))
 
 sameKw :: Keyword -> Keyword -> Bool
 sameKw a b = show a == show b
 
--- | Modify the maps of fields at every depth
-onFieldMaps :: (M.Map FieldName Field -> M.Map FieldName Field) -> Definition -> Definition
-onFieldMaps g d = d{defFieldDefinitions = go (defFieldDefinitions d)}
-  where go = fmap (\f -> f{fieldFields = go (fieldFields f)}) . g
-
-onField :: FieldName -> (Field -> Field) -> Definition -> Definition
-onField i g = onFieldMaps (M.adjust g i)
-
--- | Every field with its depth and parent, subfields right after their parent
-allFields :: Definition -> [(Int, Maybe FieldName, Field)]
-allFields = go 0 Nothing . defFieldDefinitions
+-- | Every field with the ids of its parents, subfields right after their parent
+allFields :: Definition -> [([FieldName], Field)]
+allFields = go [] . (^. fields)
   where
-    go n p fs = concat
-      [ (n, p, f) : go (n + 1) (Just (fieldId f)) (fieldFields f)
-      | f <- sortOn getFieldOrder (M.elems fs) ]
+    go ps fs = concat
+      [ (ps, f) : go (ps ++ [fieldId f]) (f ^. fields)
+      | f <- sortOn fieldOrder (M.elems fs) ]
 
-lookupField :: FieldRef -> Definition -> Either String (Maybe FieldName, Field)
-lookupField r d = case [(p, f) | (_, p, f) <- allFields d, matches f] of
+lookupField :: FieldRef -> Definition -> Either String ([FieldName], Field)
+lookupField r d = case [x | x@(_, f) <- allFields d, matches f] of
   [x] -> Right x
   [] -> Left ("No field " ++ name)
-  xs -> Left ("Ambiguous field " ++ name ++ ", use one of the ids " ++ unwords [getFieldId (fieldId f) | (_, f) <- xs])
+  xs -> Left ("Ambiguous field " ++ name ++ ", use one of the ids " ++ unwords [idText (fieldId f) | (_, f) <- xs])
   where
     (matches, name) = case r of
-      ById i -> ((== show i) . getFieldId . fieldId, show i)
+      ById i -> ((== ExistingField i) . fieldId, show i)
       ByName n -> ((== T.toCaseFold n) . T.toCaseFold . fieldName, show n)
 
 --------------------------------------------------------------------------------
@@ -152,10 +167,9 @@ instance Monoid Change where
 instance Group Change where
   invert (Change es) = Change (reverse (map invEdit es))
 
--- | @act (s <> t) = act s . act t@ and @act (invert c) . act c = id@,
--- the latter for definitions the change was resolved against.
-act :: Change -> Definition -> Definition
-act (Change es) d = foldl' (flip applyEdit) d es
+-- | @invert c • c • d = d@ for definitions @d@ the change was resolved against
+instance Act Change Definition where
+  Change es • d = foldl' (flip applyEdit) d es
 
 --------------------------------------------------------------------------------
 -- Command line
@@ -170,10 +184,10 @@ lineP = Line
   <*> optional (hsubparser (mconcat
     [ cmd "info" "Show the definition and its fields (flags: M mandatory, D duplicable)" (pure Info)
     , cmd "field" "Show or modify a field" (fieldCmd <$> refArg <*> many fieldModP)
-    , cmd "name" "Rename the definition" (Modify . SetName <$> strArgument (metavar "NAME"))
-    , cmd "desc" "Set the definition's description" (Modify . SetDesc <$> strArgument (metavar "TEXT"))
-    , cmd "new" "Add a field" (fmap Modify . NewField <$> strArgument (metavar "NAME") <*> many (argument kwReader (metavar "KEYWORD..." <> completeWith keywords)))
-    , cmd "delete" "Delete a field" (Modify . DeleteField <$> refArg)
+    , cmd "name" "Rename the definition" (Modify . Name <$> strArgument (metavar "NAME"))
+    , cmd "desc" "Set the definition's description" (Modify . Desc <$> strArgument (metavar "TEXT"))
+    , cmd "new" "Add a field" (fmap Modify . New <$> strArgument (metavar "NAME") <*> many (argument kwReader (metavar "KEYWORD..." <> completeWith keywords)))
+    , cmd "delete" "Delete a field" (Modify . Delete <$> refArg)
     , cmd "undo" "Revert the last change" (pure Undo)
     , cmd "history" "List the changes made in this session" (pure Log)
     ]))
@@ -189,7 +203,7 @@ fieldModP = asum
   [ AddKw <$> option kwReader (long "add" <> short 'a' <> metavar "KEYWORD" <> help "Add a keyword, such as $number" <> completeWith keywords)
   , DelKw <$> option kwReader (long "remove" <> short 'r' <> metavar "KEYWORD" <> help "Remove a keyword" <> completeWith keywords)
   , FName <$> strOption (long "name" <> metavar "NAME" <> help "Rename the field")
-  , FDesc <$> strOption (long "desc" <> metavar "TEXT" <> help "Set the description following the keywords")
+  , FDesc <$> option descReader (long "desc" <> metavar "TEXT" <> help "Set the description following the keywords")
   , FMandatory <$> (flag' True (long "mandatory" <> help "Make the field mandatory") <|> flag' False (long "optional" <> help "Make the field optional"))
   , FDuplicable <$> (flag' True (long "duplicable" <> help "Make the field duplicable") <|> flag' False (long "single" <> help "Make the field not duplicable"))
   ]
@@ -197,6 +211,9 @@ fieldModP = asum
 -- | A keyword, with or without the leading @$@
 kwReader :: ReadM Keyword
 kwReader = eitherReader \s -> first errorBundlePretty (parse (parseKeyword <* eof) "" (T.pack ('$' : dropWhile (== '$') s)))
+
+descReader :: ReadM FieldDescription
+descReader = eitherReader (first errorBundlePretty . parse parseFieldDescription "" . T.pack)
 
 keywords :: [String]
 keywords = map show [InstanceLabelKw, InstanceDescriptionKw, ReadOnlyKw, NumberKw, DateTimeKw, DateKw, TimeKw, TextKw]
@@ -225,8 +242,13 @@ quote = viaShow
 yesNo :: Bool -> Doc ann
 yesNo b = if b then "yes" else "no"
 
+idText :: FieldName -> String
+idText = \case
+  ExistingField i -> show i
+  NewField _ -> "new"
+
 fieldLabel :: Field -> Doc ann
-fieldLabel f = pretty (getFieldId (fieldId f)) <+> quote (fieldName f)
+fieldLabel f = pretty (idText (fieldId f)) <+> quote (fieldName f)
 
 -- | What changes from the first field to the second
 fieldDiff :: Field -> Field -> [Doc AnsiStyle]
@@ -236,39 +258,40 @@ fieldDiff o n = concat
   , [removed ("-" <> viaShow k) | k <- kws o, not (any (sameKw k) (kws n))]
   , ["desc:" <+> quote (raw n) | raw o /= raw n]
   , ["mandatory:" <+> yesNo (mandatory' n) | mandatory' o /= mandatory' n]
-  , ["duplicable:" <+> yesNo (fieldDuplicable n) | fieldDuplicable o /= fieldDuplicable n]
+  , ["duplicable:" <+> yesNo (duplicable' n) | duplicable' o /= duplicable' n]
   ]
   where
-    kws = knownKws . fieldDescription
-    raw = rawDesc . fieldDescription
+    kws = knownKws . (^. spec . description)
+    raw = rawText . (^. spec . description)
 
-mandatory' :: Field -> Bool
-mandatory' f = fieldRequired f == MandatoryField
+mandatory', duplicable' :: Field -> Bool
+mandatory' = (^. spec . isMandatory)
+duplicable' = (^. spec . isDuplicable)
 
 prettyEdit :: Edit -> Doc AnsiStyle
 prettyEdit = \case
-  Rename o n -> "name:" <+> removed (quote o) <+> "->" <+> added (quote n)
-  Redescribe o n -> "desc:" <+> removed (quote o) <+> "->" <+> added (quote n)
-  AddNew n fd -> added ("+ field" <+> quote n <+> pretty fd)
-  DropNew n _ -> removed ("- field" <+> quote n)
-  SetField o n -> "field" <+> fieldLabel o <> ":" <+> hsep (fieldDiff o n)
-  DelField _ f -> removed ("- field" <+> fieldLabel f)
-  PutField _ f -> added ("+ field" <+> fieldLabel f)
+  SetName o n -> "name:" <+> removed (quote o) <+> "->" <+> added (quote n)
+  SetDesc o n -> "desc:" <+> removed (quote o) <+> "->" <+> added (quote n)
+  SetField _ _ Nothing (Just f) -> added ("+ field" <+> fieldLabel f <+> descDoc (f ^. spec . description))
+  SetField _ _ (Just f) Nothing -> removed ("- field" <+> fieldLabel f)
+  SetField _ _ (Just o) (Just n) -> "field" <+> fieldLabel o <> ":" <+> hsep (fieldDiff o n)
+  SetField _ _ Nothing Nothing -> mempty
 
 fieldsTable :: Definition -> Doc AnsiStyle
 fieldsTable d = vsep $ annotate underlined (row "ID" "Name" "Flags" <+> "Description")
-  : [ row (getFieldId (fieldId f)) (replicate (2 * n) ' ' ++ T.unpack (fieldName f)) (flags f) <+> descDoc (fieldDescription f)
-    | (n, _, f) <- fs ]
+  : [ row (idText (fieldId f)) (indent ps ++ T.unpack (fieldName f)) (flags f) <+> descDoc (f ^. spec . description)
+    | (ps, f) <- fs ]
   where
     fs = allFields d
+    indent ps = replicate (2 * length ps) ' '
     row i nm fl = pretty (replicate (idW - length i) ' ' ++ i) <+> pretty (padR nameW nm) <+> pretty (padR 5 fl)
-    idW = maximum (2 : [length (getFieldId (fieldId f)) | (_, _, f) <- fs])
-    nameW = maximum (4 : [2 * n + T.length (fieldName f) | (n, _, f) <- fs])
+    idW = maximum (2 : [length (idText (fieldId f)) | (_, f) <- fs])
+    nameW = maximum (4 : [length (indent ps) + T.length (fieldName f) | (ps, f) <- fs])
     padR w s = s ++ replicate (w - length s) ' '
-    flags f = [if mandatory' f then 'M' else ' ', if fieldDuplicable f then 'D' else ' ']
+    flags f = [if mandatory' f then 'M' else ' ', if duplicable' f then 'D' else ' ']
 
 descDoc :: FieldDescription -> Doc AnsiStyle
-descDoc fd = hsep (map (kwDoc . viaShow) (knownKws fd) ++ [pretty (rawDesc fd) | not (T.null (rawDesc fd))])
+descDoc (FieldDesc ps) = hcat [case p of KwPart k -> kwDoc (viaShow k); RawPart t -> pretty t | p <- ps]
 
 defInfo :: Definition -> Doc AnsiStyle
 defInfo d = vsep
@@ -278,21 +301,21 @@ defInfo d = vsep
   , fieldsTable d
   ]
 
-fieldInfo :: (Maybe FieldName, Field) -> Doc AnsiStyle
-fieldInfo (p, f) = vsep [annotate bold (pretty (k ++ replicate (12 - length k) ' ')) <+> v | (k, v) <- rows]
+fieldInfo :: ([FieldName], Field) -> Doc AnsiStyle
+fieldInfo (ps, f) = vsep [annotate bold (pretty (k ++ replicate (12 - length k) ' ')) <+> v | (k, v) <- rows]
   where
-    fd = fieldDescription f
+    fd = f ^. spec . description
     rows =
-      [ ("ID", pretty (getFieldId (fieldId f)))
+      [ ("ID", pretty (idText (fieldId f)))
       , ("Name", pretty (fieldName f))
-      , ("Parent", maybe "-" (pretty . getFieldId) p)
+      , ("Parent", maybe "-" (pretty . idText) (listToMaybe (reverse ps)))
       , ("Keywords", hsep (map (kwDoc . viaShow) (knownKws fd)))
-      , ("Description", pretty (rawDesc fd))
+      , ("Description", pretty (rawText fd))
       , ("Mandatory", yesNo (mandatory' f))
-      , ("Duplicable", yesNo (fieldDuplicable f))
-      , ("Condition", maybe "-" (\(Equals _ v) -> "=" <> pretty v) (fieldCondition f))
-      , ("Order", pretty (getFieldOrder f))
-      , ("Subfields", hsep (map fieldLabel (sortOn getFieldOrder (M.elems (fieldFields f)))))
+      , ("Duplicable", yesNo (duplicable' f))
+      , ("Condition", maybe "-" (pretty . condText) (getLast (specCondition (fieldSpec f))))
+      , ("Order", pretty (fieldOrder f))
+      , ("Subfields", hsep (map fieldLabel (sortOn fieldOrder (M.elems (f ^. fields)))))
       ]
 
 --------------------------------------------------------------------------------
@@ -316,14 +339,14 @@ runCmd Env{session, activeDef, changes} = \case
     let summary = vsep (map prettyEdit es)
     ok <- if any isDel es then confirm (nest 2 (vsep ["Delete from definition" <+> viaShow i <> ":", summary]) <> "\nProceed?") else pure True
     if null es || not ok then pure (if ok then "Nothing to change" else "Aborted") else do
-      _ <- cob (updDefinition i (act (Change es)))
-      modifyIORef changes ((i, Change es) :)
+      d' <- cob (updDefinition i (Change es •))
+      modifyIORef changes ((i, Change (map (settle d') es)) :)
       pure summary
   Undo -> readIORef changes >>= \case
     [] -> fail "Nothing to undo"
     (i, c) : h -> do
-      let Change es = invert c
-      _ <- cob (updDefinition i (act (Change es)))
+      let c'@(Change es) = invert c
+      _ <- cob (updDefinition i (c' •))
       writeIORef changes h
       pure (nest 2 (vsep (("Reverted in definition" <+> viaShow i <> ":") : map prettyEdit es)))
   Info -> withActive (fmap defInfo . cob . getDefinition)
@@ -336,7 +359,7 @@ runCmd Env{session, activeDef, changes} = \case
   where
     cob m = runReaderT m session
     withActive k = maybe (fail "No active definition: use `-d ID` first") k =<< readIORef activeDef
-    isDel = \case DelField{} -> True; _ -> False
+    isDel = \case SetField _ _ (Just _) Nothing -> True; _ -> False
 
 confirm :: Doc ann -> IO Bool
 confirm q = do
