@@ -34,7 +34,8 @@ import System.Log.FastLogger (fromLogStr)
 
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Tasty.ExpectedFailure (expectFail)
+import Test.Tasty.ExpectedFailure (expectFail, wrapTest)
+import Test.Tasty.Runners (Result(..), resultSuccessful)
 
 import Cob
 import Cob.RecordM (getDefinition, updDefinition)
@@ -168,7 +169,7 @@ allTests env = dependentTestGroup "Cob integration tests" AllFinish
     , testCase "Reordering fields and back"                $ testReorder          env
     , testCase "RecordM reads conditions as we do"         $ testConditions       env
     , testCase "RecordM derives the keys we don't send"    $ testDerivedKeys      env
-    , expectFail $
+    , quietExpectFail $
       testCase "RecordM doesn't derive required"           $ testRequiredNotDerived env
     ]
   , testGroup "Records (mockCob)" (recordTests env)
@@ -189,6 +190,11 @@ recordTests env =
 --------------------------------------------------------------------------------
 -- Test helpers
 --------------------------------------------------------------------------------
+
+-- | Like 'expectFail', but without the output of the expected failure
+quietExpectFail :: TestTree -> TestTree
+quietExpectFail = wrapTest (fmap quiet) . expectFail
+  where quiet r = if resultSuccessful r then r { resultDescription = "" } else r
 
 uniqueEmail :: TestEnv -> String -> IO Text
 uniqueEmail env tag = do
