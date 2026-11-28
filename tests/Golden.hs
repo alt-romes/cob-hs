@@ -15,6 +15,7 @@ import System.FilePath ((</>), (<.>))
 
 import Test.Tasty
 import Test.Tasty.Golden
+import Test.Tasty.HUnit
 
 import Cob.Ref
 import Cob.RecordM.DateTime
@@ -123,7 +124,7 @@ kitchenDef =
     & field "Details" . field "Note"  . spec <>~ text
     & field "Details" . field "Score" . spec <>~ number
     & field "Name" . field "Shown if yes" %~ \f -> f
-        & spec <>~ ifEquals "Yes"
+        & spec <>~ ifCondition "=Yes"
         & field "Sub" . spec <>~ text
         & field "Other" . spec <>~ number
 
@@ -161,10 +162,34 @@ main = defaultMain $ testGroup "CoB JSON golden tests"
     , request "userm-create-user"             (encUser (User "jdoe" (Just "secret") "John Doe" "jdoe@example.invalid" Nothing (Just "JDOE")))
     , request "userm-group-users"             (encGroupUsers [1, 2])
     , request "userm-login"                   (encLogin (LoginData "jdoe" "secret"))
+    , testGroup "conditions" conditionTests
     ]
 
 requests :: FilePath
 requests = "tests/golden/requests"
+
+-- | Groupings as reported by RecordM's @visibilityCondition@
+conditionTests :: [TestTree]
+conditionTests =
+  [ parses "Name=1 && Name=2 || Name=3"   (Or [And [name "1", name "2"], name "3"])
+  , parses "Name=1 || Name=2 && Name=3"   (Or [name "1", And [name "2", name "3"]])
+  , parses "(Name=1 || Name=2) && Name=3" (And [Or [name "1", name "2"], name "3"])
+  , parses "Name=1 && (Name=2 || Name=3)" (And [name "1", Or [name "2", name "3"]])
+  , parses "Name=1 && Name=2 && Name=3"   (And [name "1", name "2", name "3"])
+  , parses "Name=1&&Name=2"               (And [name "1", name "2"])
+  , parses "=Yes && Name!"                (And [Compare Nothing Equal ["Yes"], Compare (Just "Name") NotEqual [""]])
+  , parses "=InProcess,Sent"              (Compare Nothing Equal ["InProcess", "Sent"])
+  , parses "Client Type>=3"               (Compare (Just "Client Type") GreaterEq ["3"])
+  , testCase "built conditions render with the needed parentheses" $
+      condText (Condition (And [Or [name "1", name "2"], name "3"]) Nothing) @?= "(Name=1 || Name=2) && Name=3"
+  , testCase "stale source text is not sent" $
+      condText (Condition (name "2") (Just "Name=1")) @?= "Name=2"
+  ]
+  where
+    name v = Compare (Just "Name") Equal [v]
+    parses t e = testCase (show t) $ do
+      fmap condExpr (parseCondText t) @?= Just e
+      fmap condText (parseCondText t) @?= Just t
 
 request :: String -> BSL.ByteString -> TestTree
 request name enc = goldenVsString name (requests </> name <.> "json") (pure (normalise enc))

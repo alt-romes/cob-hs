@@ -31,7 +31,7 @@ fieldsTable d = vsep $
   where
     header = ["ID", "Name", "Flags", "If"]
     rows =
-      [ ([idText (fieldId f), replicate (2 * n) ' ' ++ T.unpack (fieldName f), flags f, maybe "" condText (condition f)], f)
+      [ ([idText (fieldId f), replicate (2 * n) ' ' ++ T.unpack (fieldName f), flags f, maybe "" (T.unpack . condText) (condition f)], f)
       | (n, _, f) <- allFields d ]
     widths = map (maximum . map length) (transpose (header : map fst rows))
     cells = hsep . zipWith (\w s -> pretty (s ++ replicate (w - length s) ' ')) widths
@@ -73,9 +73,6 @@ idText (NewField _) = "new"
 
 condition :: Field -> Maybe Condition
 condition f = getLast (specCondition (fieldSpec f))
-
-condText :: Condition -> String
-condText (Equals v) = '=' : T.unpack v
 
 yesNo :: Bool -> Doc ann
 yesNo b = if b then "yes" else "no"

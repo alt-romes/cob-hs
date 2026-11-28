@@ -23,6 +23,7 @@ library
                       Cob.RecordM.Aggregation,
                       Cob.RecordM.Dashboard,
                       Cob.RecordM.Definition,
+                      Cob.RecordM.Definition.Condition,
                       Cob.RecordM.Definition.Pretty,
                       Cob.RecordM.Query,
                       Cob.RecordM.Record,
@@ -116,7 +117,7 @@ test-suite cob-tests
 test-suite cob-golden
     type: exitcode-stdio-1.0
     main-is: Golden.hs
-    build-depends: base, cob, tasty, tasty-golden, aeson, aeson-pretty,
+    build-depends: base, cob, tasty, tasty-golden, tasty-hunit, aeson, aeson-pretty,
                    bytestring, text, filepath, containers
     hs-source-dirs: tests
     default-language: GHC2021

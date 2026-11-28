@@ -7,8 +7,11 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 module Cob.RecordM.Definition
   ( -- * Static Definition
-    Definition(..), Field(..), FieldSpec(..), FieldDescription(..), DescPart(..), Condition(..), DefinitionState(..)
+    Definition(..), Field(..), FieldSpec(..), FieldDescription(..), DescPart(..), DefinitionState(..)
   , FieldName(..), simpleDefinition
+
+    -- * Conditions
+  , Condition(..), CondExpr(..), CmpOp(..), condText, parseCondText
 
     -- * Building and editing definitions with lenses
     --
@@ -23,7 +26,7 @@ module Cob.RecordM.Definition
     -- @
   , HasFields(..), field, fieldById, spec
   , description, isMandatory, isDuplicable
-  , mandatory, notMandatory, duplicable, notDuplicable, ifEquals
+  , mandatory, notMandatory, duplicable, notDuplicable, ifCondition
   , (&), (^.), (.~), (%~), (<>~)
 
     -- * Keywords
@@ -53,6 +56,7 @@ import Data.Maybe
 import qualified Data.Text as T
 
 import Cob.RecordM.Query
+import Cob.RecordM.Definition.Condition
 import Data.Coerce
 import Servant.API (ToHttpApiData(toUrlPiece))
 import qualified Data.Aeson.Types as Aeson (Parser)
@@ -109,7 +113,7 @@ data FieldSpec = FieldSpec
   , specMandatory   :: Last Bool
   , specDuplicable  :: Last Bool
   , specCondition   :: Last Condition
-    -- ^ Shown only when the parent field has this value
+    -- ^ Shown only when the condition holds
   }
   deriving Show
   deriving Generic
@@ -149,15 +153,13 @@ notMandatory  = mempty{specMandatory = Last (Just False)}
 duplicable    = mempty{specDuplicable = Last (Just True)}
 notDuplicable = mempty{specDuplicable = Last (Just False)}
 
-newtype Condition = Equals Text
-  deriving Show
-
-condText :: Condition -> Text
-condText (Equals v) = "=" <> v
-
--- | Only show the field when its parent field has the given value
-ifEquals :: Text -> FieldSpec
-ifEquals v = mempty{specCondition = Last (Just (Equals v))}
+-- | Only show the field when the condition holds, e.g. @ifCondition "=Yes"@
+-- (the parent field is @Yes@) or @ifCondition "Kind=A || Kind=B"@.
+-- Fails if the condition doesn't parse.
+ifCondition :: HasCallStack => Text -> FieldSpec
+ifCondition t = case parseCondText t of
+  Just c -> mempty{specCondition = Last (Just c)}
+  Nothing -> error $ "ifCondition: can't parse condition " ++ show t
 
 data DefinitionState
   = EnabledDefinition
@@ -276,7 +278,7 @@ fieldById k = fields . lens (M.lookup k) (\fs mf -> M.alter (const mf) k fs)
 -- & field "First" . spec <>~ mandatory <> duplicate <> instanceLabel
 -- -- (2)
 -- & field "Name" . field "Shown if yes" %~ \f -> f
---     & spec <>~ ifEquals "Yes" <> readOnly
+--     & spec <>~ ifCondition "=Yes" <> readOnly
 --     & field "Sub" . spec <>~ text
 --     & field "Other" . spec <>~ number
 -- @
@@ -392,13 +394,9 @@ parseDefinition = withObject "Definition" $ \jsonDef -> do
     parseFieldDescriptionAeson :: Text -> Aeson.Parser FieldDescription
     parseFieldDescriptionAeson t = either fail pure (runFieldDescriptionParser t)
 
-    -- Only supports simple conditions for now, like "=Yes" or "=No"
     parseCondition :: Maybe Text -> Aeson.Parser (Maybe Condition)
-    parseCondition = traverse $ \t -> case Equals <$> T.stripPrefix "=" t of
-      Nothing -> fail $ "Unexpected condition format: " ++ show t
-      Just c
-        | condText c /= t -> fail $ "Condition " ++ show t ++ " would be sent back as " ++ show (condText c)
-        | otherwise -> pure c
+    parseCondition = traverse $ \t ->
+      maybe (fail $ "Unexpected condition format: " ++ show t) pure (parseCondText t)
 
     parseDefState :: Text -> Aeson.Parser DefinitionState
     parseDefState = \case

@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -9,10 +10,13 @@ module Main where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, finally, handle)
-import Control.Monad (void)
+import Control.Applicative ((<|>))
+import Control.Monad (forM_, void, (<=<))
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, runReaderT)
-import Data.Aeson (FromJSON, eitherDecodeFileStrict')
+import Data.Aeson (FromJSON, Object, Value(..), eitherDecodeFileStrict', withObject, (.:))
+import Data.Aeson.Types (Parser, parseEither)
+import qualified Data.Aeson.KeyMap as KM
 import Data.IORef
 import Data.List (sortOn)
 import qualified Data.Map as M
@@ -34,6 +38,8 @@ import Test.Tasty.HUnit
 import Cob
 import Cob.RecordM (getDefinition, updDefinition)
 import Cob.RecordM.Definition
+import qualified Cob.RecordM.Servant as Servant
+import Cob.Utils (performReq)
 import Cob.RecordM.TH
 
 --------------------------------------------------------------------------------
@@ -156,6 +162,7 @@ allTests env = dependentTestGroup "Cob integration tests" AllFinish
     , testCase "Removing a field"                          $ testRemoveField      env
     , testCase "Adding a field with subfields"             $ testSubfields        env
     , testCase "Reordering fields and back"                $ testReorder          env
+    , testCase "RecordM reads conditions as we do"         $ testConditions       env
     ]
   , testGroup "Records (mockCob)" (recordTests env)
   ]
@@ -277,6 +284,47 @@ testReorder env = withDef env $ \did -> do
     fieldNames reversed @?= reverse original
     fieldNames after    @?= original
     fieldIds after      @?= fieldIds before
+
+testConditions :: TestEnv -> Assertion
+testConditions env = withDef env $ \did -> do
+  _ <- updDefinition did $ \d -> foldl
+    (\d' (i, c) -> d' & field "Name" . field (condField i) . spec <>~ ifCondition c) d (zip [0 ..] cases)
+  v <- performReq (Servant.getDefinition did)
+  liftIO $ forM_ (zip [0 ..] cases) $ \(i, c) ->
+    assertEqual (T.unpack c) (Right (condExpr <$> parseCondText c)) (Just <$> visibilityOf (condField i) v)
+  where
+    condField i = "Cond " <> T.pack (show (i :: Int))
+    cases =
+      [ "Name=1 && Name=2 || Name=3", "Name=1 || Name=2 && Name=3"
+      , "(Name=1 || Name=2) && Name=3", "Name=1 && (Name=2 || Name=3)"
+      , "Name=1 && Name=2 && Name=3", "Name=1&&Name=2", "=Yes && Name!", "=a,b"
+      , "Name>1", "Name>=1", "Name<1", "Name<=1" ]
+
+-- | The @visibilityCondition@ RecordM derived for the field with this name
+visibilityOf :: Text -> Value -> Either String CondExpr
+visibilityOf n v = case [ o | o <- objects v, KM.lookup "name" o == Just (String n) ] of
+  o : _ -> parseEither (visibility <=< (.: "visibilityCondition")) o
+  []    -> Left ("no field " <> show n)
+  where
+    objects = \case
+      Object o -> o : concatMap objects (KM.elems o)
+      Array a  -> concatMap objects a
+      _        -> []
+
+    visibility :: Value -> Parser CondExpr
+    visibility = withObject "visibilityCondition" $ \o -> o .: "type" >>= \case
+      "And" -> And <$> (mapM visibility =<< o .: "conditions")
+      "Or"  -> Or  <$> (mapM visibility =<< o .: "conditions")
+      t     -> Compare <$> (matcher =<< o .: "matcher") <*> maybe (fail (T.unpack t)) pure (lookup t ops)
+                       <*> (o .: "value" <|> (pure <$> o .: "value"))
+
+    matcher :: Object -> Parser (Maybe Text)
+    matcher m = m .: "type" >>= \case
+      ("Parent" :: Text) -> pure Nothing
+      _ -> Just <$> m .: "name"
+
+    ops = [ ("Equal", Equal), ("NotEqual", NotEqual), ("HigherThan", Greater)
+          , ("HigherThanOrEqual", GreaterEq), ("LowerThan", Lower), ("LowerThanOrEqual", LowerEq) ]
 
 --------------------------------------------------------------------------------
 -- Record tests
