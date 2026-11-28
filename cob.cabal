@@ -115,6 +115,16 @@ test-suite cob-tests
     hs-source-dirs: tests
     default-language: GHC2021
 
+test-suite cobsh-tests
+    type: exitcode-stdio-1.0
+    main-is: Cobsh.hs
+    other-modules: Sandbox
+    build-depends: base, cob, tasty, tasty-hunit, mtl, text, aeson, directory, containers, process
+    build-tool-depends: cob:cobsh
+    hs-source-dirs: tests
+    default-language: GHC2021
+    ghc-options: -Wall
+
 test-suite cob-golden
     type: exitcode-stdio-1.0
     main-is: Golden.hs
